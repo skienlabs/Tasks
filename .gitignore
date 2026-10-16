@@ -6,5 +6,5 @@ dist/
 *.db-wal
 .env
 # Your Firebase config stays on the server, not in git
-config/firebase-config.json
+**/config/firebase-config.json
 .DS_Store

@@ -1,0 +1,32 @@
+name: CI
+
+# Runs tests and a container build on every push / pull request. Never deploys.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Server tests
+        working-directory: web/server
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+
+      - name: Client build
+        working-directory: web/client
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Docker build
+        run: docker build -t tasks-ci web
