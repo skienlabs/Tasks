@@ -367,7 +367,9 @@ export default function DayView({
   return (
     <Box
       sx={{
-        maxWidth: wide ? 1140 : 760, mx: 'auto', px: { xs: 1.5, sm: 3 }, pt: { xs: 2, sm: 3 }, pb: 14,
+        maxWidth: wide ? 1140 : 760, mx: 'auto', px: { xs: 1.5, sm: 3 }, pt: { xs: 2, sm: 3 },
+        // Phones: room for the bottom bar (72) + the + button (56) + spacing.
+        pb: { xs: 'calc(176px + env(safe-area-inset-bottom))', md: 14 },
         display: 'grid', gridTemplateColumns: wide ? 'minmax(0, 1fr) 300px' : '1fr', gap: 4,
       }}
     >

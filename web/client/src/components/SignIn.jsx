@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Alert, Box, Button, CircularProgress, Divider, IconButton, InputAdornment, Link, TextField, Typography,
 } from '@mui/material';
@@ -91,15 +91,17 @@ export default function SignIn({ variant, error, onError }) {
     setMode(m);
   };
 
+  const attempt = useRef(0);
   const run = async (kind, fn) => {
+    const mine = ++attempt.current; // only the newest attempt updates the screen
     onError?.('');
     setBusy(kind);
     try {
       await fn();
     } catch (err) {
-      onError?.(err.message);
+      if (mine === attempt.current) onError?.(err.message);
     } finally {
-      setBusy('');
+      if (mine === attempt.current) setBusy('');
     }
   };
 
@@ -148,7 +150,9 @@ export default function SignIn({ variant, error, onError }) {
       size="large"
       fullWidth
       onClick={() => run('google', signInWithGoogle)}
-      disabled={Boolean(busy)}
+      // Stays clickable while the popup is open: Firebase only reports a closed popup after
+      // ~10s, and clicking again simply replaces the previous popup request.
+      disabled={busy === 'email'}
       startIcon={busy === 'google' ? <CircularProgress size={18} /> : <GoogleG />}
       sx={(t) => ({
         height: 48, color: 'text.primary', borderColor: t.tokens.outline, fontSize: 15,
@@ -234,7 +238,7 @@ export default function SignIn({ variant, error, onError }) {
           type="submit"
           variant="contained"
           size="large"
-          disabled={Boolean(busy)}
+          disabled={busy === 'email'}
           startIcon={busy === 'email' ? <CircularProgress size={18} color="inherit" /> : null}
           sx={{ height: 48, fontSize: 15 }}
         >

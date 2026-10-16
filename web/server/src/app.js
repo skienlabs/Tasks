@@ -26,6 +26,7 @@ const TAG_LOGO = {
   ],
 };
 const MAX_TAGS = 50;
+const TIMESTAMP = { type: 'integer', minimum: 0 };
 
 const PUBLIC_PATHS = new Set(['/api/health', '/api/config']);
 
@@ -40,16 +41,31 @@ function assertDate(value, name) {
   if (!isValidDate(value)) throw new HttpError(400, `${name} must be a real date (YYYY-MM-DD)`);
 }
 
-function cleanName(name) {
-  const n = name.replace(/\s+/g, ' ').trim();
-  if (!n) throw new HttpError(400, 'Name cannot be empty');
-  return n;
+// Control characters (except tab/newline) and zero-width characters are dropped.
+const INVISIBLE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B-\u200D\u2060\uFEFF]/g;
+
+function cleanLine(value, what) {
+  const s = value.toWellFormed().normalize('NFC').replace(INVISIBLE, '').replace(/\s+/g, ' ').trim();
+  if (!s) throw new HttpError(400, `${what} cannot be empty`);
+  return s;
 }
 
-function cleanTitle(title) {
-  const t = title.replace(/\s+/g, ' ').trim();
-  if (!t) throw new HttpError(400, 'Title cannot be empty');
-  return t;
+const cleanName = (name) => cleanLine(name, 'Name');
+const cleanTitle = (title) => cleanLine(title, 'Title');
+const cleanNotes = (notes) => notes.toWellFormed().normalize('NFC').replace(INVISIBLE, '').replace(/\r\n?/g, '\n').trim();
+
+/** Logo must really be a PNG, JPEG or WebP image of the type it claims. */
+function assertLogo(logo) {
+  if (logo == null) return;
+  const [, type, b64] = logo.match(/^data:image\/(png|jpeg|webp);base64,(.*)$/) || [];
+  if (!type || b64.length % 4 !== 0) throw new HttpError(400, 'Logo is not a valid image');
+  const buf = Buffer.from(b64, 'base64');
+  const ok = {
+    png: buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+    jpeg: buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff,
+    webp: buf.length > 12 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP',
+  }[type];
+  if (!ok) throw new HttpError(400, 'Logo is not a valid image');
 }
 
 export function buildApp({ db, verify, config, logger = false }) {
@@ -83,9 +99,11 @@ export function buildApp({ db, verify, config, logger = false }) {
   // ---- Auth ----------------------------------------------------------------
   const seen = new Map(); // uid -> last time the users row was refreshed
   app.decorateRequest('user', null);
-  app.addHook('preHandler', async (req) => {
-    const url = req.url.split('?')[0];
-    if (!url.startsWith('/api/') || PUBLIC_PATHS.has(url)) return;
+  // Runs before body parsing, and is keyed on the matched route (not the raw URL),
+  // so encoded paths like /%61pi/... can't skip it.
+  app.addHook('onRequest', async (req) => {
+    const route = req.routeOptions?.url;
+    if (!route || !route.startsWith('/api/') || PUBLIC_PATHS.has(route)) return;
     const header = req.headers.authorization || '';
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
     if (!token && !config.devAuth) throw new AuthError('Not signed in');
@@ -190,6 +208,8 @@ export function buildApp({ db, verify, config, logger = false }) {
         properties: {
           id: ID, title: TITLE, notes: NOTES, priority: PRIORITY, date: DATE,
           status: STATUS, originalDate: DATE, postponed: COUNT, tagIds: TAG_IDS,
+          // Only used when undoing a delete, so the task keeps its place and history.
+          createdAt: TIMESTAMP, completedAt: TIMESTAMP,
         },
         additionalProperties: false,
       },
@@ -210,18 +230,21 @@ export function buildApp({ db, verify, config, logger = false }) {
     if (!repo.ownsTags(uid, tagIds)) throw new HttpError(400, 'Unknown tag');
     const now = Date.now();
     const status = b.status || 'pending';
+    if ((b.createdAt ?? 0) > now + 60000 || (b.completedAt ?? 0) > now + 60000) {
+      throw new HttpError(400, 'Timestamps cannot be in the future');
+    }
     const task = repo.insert(uid, {
       id: b.id || crypto.randomUUID(),
       title: cleanTitle(b.title),
-      notes: (b.notes || '').trim(),
+      notes: cleanNotes(b.notes || ''),
       priority: b.priority ?? 4,
       date: b.date,
       status,
       originalDate: b.originalDate || b.date,
       postponed: b.postponed ?? 0,
-      createdAt: now,
+      createdAt: b.createdAt ?? now,
       updatedAt: now,
-      completedAt: status === 'done' ? now : null,
+      completedAt: status === 'done' ? (b.completedAt ?? now) : null,
       tagIds,
     });
     return reply.code(201).send(task);
@@ -254,7 +277,7 @@ export function buildApp({ db, verify, config, logger = false }) {
     if (b.tagIds !== undefined && !repo.ownsTags(uid, b.tagIds)) throw new HttpError(400, 'Unknown tag');
     const next = { ...current, tagIds: b.tagIds, updatedAt: Date.now() };
     if (b.title !== undefined) next.title = cleanTitle(b.title);
-    if (b.notes !== undefined) next.notes = b.notes.trim();
+    if (b.notes !== undefined) next.notes = cleanNotes(b.notes);
     if (b.priority !== undefined) next.priority = b.priority;
     if (b.date !== undefined) next.date = b.date;
     if (b.postponed !== undefined) next.postponed = b.postponed;
@@ -280,10 +303,12 @@ export function buildApp({ db, verify, config, logger = false }) {
     if (current.status !== 'pending') throw new HttpError(409, 'Only pending tasks can be postponed');
     // "Tomorrow" means the day after today, or the day after the task's own
     // date if it is already in the future.
+    const nextDate = addDays(maxDate(current.date, req.body.today), 1);
+    if (!isValidDate(nextDate)) throw new HttpError(400, 'Cannot postpone past the year 2999');
     return repo.update(uid, {
       ...current,
       tagIds: undefined,
-      date: addDays(maxDate(current.date, req.body.today), 1),
+      date: nextDate,
       postponed: current.postponed + 1,
       updatedAt: Date.now(),
     });
@@ -315,6 +340,7 @@ export function buildApp({ db, verify, config, logger = false }) {
       if (repo.tagIdTaken(b.id)) throw new HttpError(409, 'Id already in use');
     }
     const name = cleanName(b.name);
+    assertLogo(b.logo);
     const { count, maxPosition } = repo.tagStats(uid);
     if (count >= MAX_TAGS) throw new HttpError(400, `You can have at most ${MAX_TAGS} tags`);
     if (repo.tagNameTaken(uid, name)) throw new HttpError(409, `A tag named "${name}" already exists`);
@@ -347,7 +373,10 @@ export function buildApp({ db, verify, config, logger = false }) {
       if (repo.tagNameTaken(uid, next.name, current.id)) throw new HttpError(409, `A tag named "${next.name}" already exists`);
     }
     if (b.color !== undefined) next.color = b.color;
-    if (b.logo !== undefined) next.logo = b.logo;
+    if (b.logo !== undefined) {
+      assertLogo(b.logo);
+      next.logo = b.logo;
+    }
     if (b.position !== undefined) next.position = b.position;
     return repo.updateTag(uid, next);
   });
@@ -394,7 +423,7 @@ export function buildApp({ db, verify, config, logger = false }) {
     });
     app.setNotFoundHandler((req, reply) => {
       const url = req.url.split('?')[0];
-      if (req.method !== 'GET' || url.startsWith('/api/') || path.extname(url)) {
+      if ((req.method !== 'GET' && req.method !== 'HEAD') || url.startsWith('/api/') || path.extname(url)) {
         return reply.code(404).send({ error: 'Not found' });
       }
       return reply.sendFile('index.html');

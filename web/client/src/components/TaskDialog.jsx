@@ -7,8 +7,10 @@ import Close from '@mui/icons-material/Close';
 import Flag from '@mui/icons-material/Flag';
 import FlagOutlined from '@mui/icons-material/FlagOutlined';
 import { PRIORITIES, priorityColor } from '../theme.js';
-import { addDays, isValidKey } from '../lib/dates.js';
-import { createTask, deleteTask, getTask, selectTags, updateTask, useStoreVersion } from '../lib/store.js';
+import { MAX_DATE, MIN_DATE, addDays, isValidKey } from '../lib/dates.js';
+import {
+  MAX_TAGS_PER_TASK, createTask, deleteTask, getTask, selectTags, showToast, updateTask, useStoreVersion,
+} from '../lib/store.js';
 import TagChip from './TagChip.jsx';
 
 function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, fullScreen }) {
@@ -21,23 +23,38 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
   const [date, setDate] = useState(task?.date ?? defaultDate);
   const valid = title.trim().length > 0 && isValidKey(date);
 
+  const [tagsChanged, setTagsChanged] = useState(false);
+
   const save = () => {
     if (!valid) return;
     if (task) {
-      const current = getTask(task.id);
-      if (!current) return onClose();
+      if (!getTask(task.id)) {
+        // Deleted (e.g. on another device) while this was open: don't lose the edits.
+        const draft = { title, notes, priority, date, tagIds };
+        showToast('This task was deleted, so changes weren’t saved', () => createTask(draft), 'Add as new');
+        onClose();
+        return;
+      }
+      // Send only what was edited here, so changes made meanwhile elsewhere aren't overwritten.
       const patch = {};
-      if (title.replace(/\s+/g, ' ').trim() !== current.title) patch.title = title;
-      if (notes.trim() !== current.notes) patch.notes = notes;
-      if (priority !== current.priority) patch.priority = priority;
-      if (date !== current.date) patch.date = date;
-      const nextTags = tagIds.filter((id) => allTags.some((t) => t.id === id)).sort();
-      if (nextTags.join() !== (current.tagIds ?? []).join()) patch.tagIds = nextTags;
+      if (title.replace(/\s+/g, ' ').trim() !== task.title) patch.title = title;
+      if (notes.trim() !== task.notes) patch.notes = notes;
+      if (priority !== task.priority) patch.priority = priority;
+      if (date !== task.date) patch.date = date;
+      if (tagsChanged) patch.tagIds = tagIds;
       if (Object.keys(patch).length) updateTask(task.id, patch);
     } else {
       createTask({ title, notes, priority, date, tagIds });
     }
     onClose();
+  };
+
+  const toggleTag = (id) => {
+    setTagsChanged(true);
+    setTagIds((ids) => {
+      if (ids.includes(id)) return ids.filter((x) => x !== id);
+      return ids.length >= MAX_TAGS_PER_TASK ? ids : [...ids, id];
+    });
   };
 
   return (
@@ -115,7 +132,7 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
                   key={tag.id}
                   tag={tag}
                   selected={tagIds.includes(tag.id)}
-                  onClick={() => setTagIds((ids) => (ids.includes(tag.id) ? ids.filter((x) => x !== tag.id) : [...ids, tag.id]))}
+                  onClick={() => toggleTag(tag.id)}
                 />
               ))}
             </Box>
@@ -130,8 +147,10 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
             value={date}
             onChange={(e) => setDate(e.target.value)}
             required
+            error={!isValidKey(date)}
+            helperText={isValidKey(date) ? undefined : 'Pick a date'}
             sx={{ minWidth: 200 }}
-            slotProps={{ inputLabel: { shrink: true } }}
+            slotProps={{ inputLabel: { shrink: true }, htmlInput: { min: MIN_DATE, max: MAX_DATE } }}
           />
           <Box sx={{ display: 'flex', gap: 1, mt: 1.5, flexWrap: 'wrap' }}>
             {[

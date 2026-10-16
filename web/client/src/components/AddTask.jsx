@@ -27,9 +27,16 @@ export default function AddTask({ date, inputRef, defaultTagId, onManageTags }) 
 
   const submit = () => {
     if (!text) return;
-    createTask({ title: text, priority, date, tagIds: selectedTags.map((t) => t.id) });
+    const { saved } = createTask({ title: text, priority, date, tagIds: selectedTags.map((t) => t.id) });
+    const usedPriority = priority;
     setTitle('');
     setPriority(4);
+    // If the save fails, give the text back (unless something new was typed meanwhile).
+    saved.then((ok) => {
+      if (ok) return;
+      setTitle((cur) => (cur ? cur : text));
+      setPriority((p) => (p === 4 ? usedPriority : p));
+    });
   };
 
   return (

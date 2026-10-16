@@ -21,8 +21,13 @@ export function addDays(key, n) {
   return toKey(d);
 }
 
+// Same range the server accepts.
+export const MIN_DATE = '1900-01-01';
+export const MAX_DATE = '2999-12-31';
+
 export function isValidKey(key) {
-  return typeof key === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(key) && toKey(fromKey(key)) === key;
+  return typeof key === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(key) && key >= MIN_DATE && key <= MAX_DATE
+    && toKey(fromKey(key)) === key;
 }
 
 export function diffDays(from, to) {

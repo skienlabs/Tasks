@@ -28,7 +28,7 @@ async function setup({ allowList = [] } = {}) {
       .setIssuer(opts.iss ?? `https://securetoken.google.com/${PROJECT}`)
       .setAudience(opts.aud ?? PROJECT)
       .setSubject(sub)
-      .setIssuedAt(now)
+      .setIssuedAt(opts.iat ?? now)
       .setExpirationTime(opts.exp ?? now + 3600)
       .sign(opts.key ?? privateKey);
   }
@@ -85,6 +85,8 @@ test('allow list', async () => {
   assert.equal(await code(await token('x', { email: 'Boss@Corp.com' })), 200);
   assert.equal(await code(await token('you')), 403);
   assert.equal(await code(await token('me', { email_verified: false })), 403);
+  const r = await app.inject({ url: '/api/me', headers: { authorization: `Bearer ${await token('me', { email_verified: false })}` } });
+  assert.match(r.json().error, /verify your email/);
 });
 
 test('task lifecycle, overdue, postpone, isolation', async () => {
@@ -227,7 +229,8 @@ test('serves the web app: compression, caching, SPA fallback', async () => {
   assert.equal(r.headers['x-frame-options'], 'DENY');
 
   assert.equal((await app.inject('/missing.png')).statusCode, 404);
-  assert.equal((await app.inject('/api/unknown')).statusCode, 401);
+  assert.equal((await app.inject('/api/unknown')).statusCode, 404);
+  assert.equal((await app.inject({ method: 'HEAD', url: '/some/deep/route' })).statusCode, 200);
   const cfg = (await app.inject('/api/config')).json();
   assert.equal(cfg.configured, false);
 });
@@ -361,9 +364,95 @@ test('migration from v2 to v3 keeps users', async () => {
 
 test('dev-only switches are ignored in production', () => {
   const quiet = () => {};
+  for (const NODE_ENV of ['prod', '', undefined, 'test']) {
+    const c = loadConfig({ NODE_ENV, AUTH_MODE: 'dev', FIREBASE_AUTH_EMULATOR: 'http://x', FIREBASE_CONFIG_PATH: '/nope' }, quiet);
+    assert.equal(c.devAuth, false, `devAuth with NODE_ENV=${NODE_ENV}`);
+    assert.equal(c.authEmulator, null);
+  }
   const prod = loadConfig({ NODE_ENV: 'production', AUTH_MODE: 'dev', FIREBASE_AUTH_EMULATOR: 'http://127.0.0.1:9099', FIREBASE_CONFIG_PATH: '/nope' }, quiet);
   assert.equal(prod.devAuth, false);
   assert.equal(prod.authEmulator, null);
   const dev = loadConfig({ NODE_ENV: 'development', FIREBASE_AUTH_EMULATOR: 'http://127.0.0.1:9099', FIREBASE_CONFIG_PATH: '/nope' }, quiet);
   assert.equal(dev.authEmulator, 'http://127.0.0.1:9099');
+});
+
+test('audit regressions: auth bypass, outages, input hardening', async () => {
+  const { app, token, as } = await setup();
+  const u = await as('alice');
+  const today = '2026-10-17';
+
+  // Percent-encoded path can't skip auth; auth runs before body validation.
+  assert.equal((await app.inject('/%61pi/tags')).statusCode, 401);
+  assert.equal((await app.inject('/%61pi/me')).statusCode, 401);
+  let r = await app.inject({ method: 'POST', url: '/api/tasks', payload: { x: 1 } });
+  assert.equal(r.statusCode, 401);
+
+  // iat in the future is rejected.
+  const future = Math.floor(Date.now() / 1000) + 3600;
+  r = await app.inject({ url: '/api/me', headers: { authorization: `Bearer ${await token('alice', {}, { iat: future, exp: future + 3600 })}` } });
+  assert.equal(r.statusCode, 401);
+
+  // Dates outside 1900-2999 rejected; postponing past 2999 is refused instead of storing a bad date.
+  assert.equal((await u('POST', '/api/tasks', { title: 'x', date: '1899-12-31' })).statusCode, 400);
+  assert.equal((await u('POST', '/api/tasks', { title: 'x', date: '3000-01-01' })).statusCode, 400);
+  r = await u('POST', '/api/tasks', { title: 'Far future', date: '2999-12-31' });
+  assert.equal(r.statusCode, 201);
+  assert.equal((await u('POST', `/api/tasks/${r.json().id}/postpone`, { today })).statusCode, 400);
+
+  // Invisible / control characters.
+  r = await u('POST', '/api/tasks', { title: 'a\u0000b\u200B c', date: today, notes: 'line1\r\nline2\u0007' });
+  assert.equal(r.json().title, 'ab c');
+  assert.equal(r.json().notes, 'line1\nline2');
+  assert.equal((await u('POST', '/api/tasks', { title: '\u200B\u200B', date: today })).statusCode, 400);
+  assert.equal((await u('POST', '/api/tags', { name: '\u0000' })).statusCode, 400);
+
+  // Unicode case-insensitive tag names.
+  assert.equal((await u('POST', '/api/tags', { name: 'Ärzte' })).statusCode, 201);
+  assert.equal((await u('POST', '/api/tags', { name: 'äRZTE' })).statusCode, 409);
+
+  // Logo must be a real image of the declared type.
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  assert.equal((await u('POST', '/api/tags', { name: 'L1', logo: 'data:image/png;base64,A' })).statusCode, 400);
+  assert.equal((await u('POST', '/api/tags', { name: 'L2', logo: png.replace('image/png', 'image/jpeg') })).statusCode, 400);
+  assert.equal((await u('POST', '/api/tags', { name: 'L3', logo: 'data:image/png;base64,AAAAAAAAAAAAAAAA' })).statusCode, 400);
+  r = await u('POST', '/api/tags', { name: 'L4', logo: png });
+  assert.equal(r.statusCode, 201);
+  assert.equal((await u('PATCH', `/api/tags/${r.json().id}`, { logo: 'data:image/webp;base64,AAAA' })).statusCode, 400);
+
+  // Undo-delete keeps original timestamps; future timestamps refused.
+  r = await u('POST', '/api/tasks', { title: 'Keep', date: today, status: 'done' });
+  const orig = r.json();
+  await u('DELETE', `/api/tasks/${orig.id}`);
+  r = await u('POST', '/api/tasks', {
+    id: orig.id, title: 'Keep', date: today, status: 'done', createdAt: orig.createdAt, completedAt: orig.completedAt,
+  });
+  assert.equal(r.json().createdAt, orig.createdAt);
+  assert.equal(r.json().completedAt, orig.completedAt);
+  assert.equal((await u('POST', '/api/tasks', { title: 'x', date: today, createdAt: Date.now() + 3600e3 })).statusCode, 400);
+});
+
+test('Google key outage is 503, not a sign-out', async () => {
+  const { errors } = await import('jose');
+  const make = (err) => createVerifier({ projectId: PROJECT, keys: async () => { throw err; } });
+  const { SignJWT: S, generateKeyPair: g } = await import('jose');
+  const { privateKey } = await g('RS256');
+  const now = Math.floor(Date.now() / 1000);
+  const tok = await new S({ auth_time: now, firebase: { sign_in_provider: 'google.com' } })
+    .setProtectedHeader({ alg: 'RS256', kid: 'x' }).setIssuer(`https://securetoken.google.com/${PROJECT}`)
+    .setAudience(PROJECT).setSubject('u').setIssuedAt(now).setExpirationTime(now + 600).sign(privateKey);
+  for (const err of [new errors.JWKSTimeout(), new TypeError('fetch failed')]) {
+    await assert.rejects(make(err)(tok), (e) => e.statusCode === 503);
+  }
+  await assert.rejects(make(new errors.JWKSNoMatchingKey())(tok), (e) => e.statusCode === 401);
+});
+
+test('refuses a database from a newer version', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tasks-new-')), 'tasks.db');
+  const db = openDb(file);
+  db.exec('PRAGMA user_version = 99');
+  db.close();
+  assert.throws(() => openDb(file), /newer than this app/);
 });

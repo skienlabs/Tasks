@@ -2,7 +2,7 @@
 // - API calls are never cached (always live data).
 // - Page loads: network first, cached shell only when offline.
 // - Hashed build assets (/assets/*): cache first; they never change.
-const SHELL = 'tasks-shell-v1';
+const SHELL = 'tasks-shell-v2';
 const ASSETS = 'tasks-assets-v1';
 const SHELL_FILES = ['/', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png'];
 const MAX_ASSETS = 80;
@@ -31,13 +31,16 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith('/api/')) return;
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/__/')) return;
 
   if (req.mode === 'navigate') {
+    // Only real app pages become the offline copy (not a JSON/JS/image file opened in a tab).
+    const isAppPage = !/\.[a-z0-9]+$/i.test(url.pathname) && !url.pathname.startsWith('/__/');
     event.respondWith(
       fetch(req)
         .then((res) => {
-          if (res.ok) {
+          const html = (res.headers.get('content-type') || '').includes('text/html');
+          if (res.ok && html && isAppPage) {
             const copy = res.clone();
             caches.open(SHELL).then((c) => c.put('/', copy));
           }

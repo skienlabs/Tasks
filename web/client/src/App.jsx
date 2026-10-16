@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, CssBaseline, LinearProgress, ThemeProvider, Typography, useMediaQuery } from '@mui/material';
 import { makeTheme } from './theme.js';
-import { signOut, startAuth } from './lib/auth.js';
+import { refreshUser, resendVerification, signOut, startAuth } from './lib/auth.js';
 import { api } from './lib/api.js';
 import { clearStore } from './lib/store.js';
 import { readPref, writePref } from './lib/prefs.js';
@@ -23,6 +23,7 @@ export default function App() {
   const [profileError, setProfileError] = useState(null);
   const [profileTry, setProfileTry] = useState(0);
   const uid = user?.uid;
+  const userRef = useRef(null);
 
   // Load (and create on first sign-in) the user's profile.
   useEffect(() => {
@@ -34,8 +35,9 @@ export default function App() {
       .then((p) => alive && setProfile(p))
       .catch((err) => {
         if (!alive) return;
-        if (err.status === 401) signOut();
-        else setProfileError(err);
+        // Never sign out automatically on an API error: a server or network hiccup
+        // must not log people out. Firebase itself reports real sign-outs.
+        setProfileError(err);
       });
     return () => {
       alive = false;
@@ -62,11 +64,12 @@ export default function App() {
         setBoot('ready');
         startAuth(
           cfg,
-          (u) =>
-            setUser((prev) => {
-              if (prev && (!u || u.uid !== prev.uid)) clearStore();
-              return u;
-            }),
+          (u) => {
+            const prev = userRef.current;
+            if (prev && (!u || u.uid !== prev.uid)) clearStore(); // signed out or another account
+            userRef.current = u;
+            setUser(u);
+          },
           setAuthError,
         );
       })
@@ -90,7 +93,7 @@ export default function App() {
     screen = <SignIn error={authError} onError={setAuthError} />;
   } else if (profileError) {
     screen = <ProfileError error={profileError} email={user.email} onRetry={() => setProfileTry((n) => n + 1)} />;
-  } else if (!profile) {
+  } else if (!profile || profile.uid !== user.uid) {
     screen = <Splash />;
   } else if (!profile.onboarded) {
     screen = <Onboarding profile={profile} onDone={setProfile} />;
@@ -117,15 +120,55 @@ export default function App() {
 
 function ProfileError({ error, email, onRetry }) {
   const blocked = error.status === 403;
+  const session = error.status === 401;
+  const needsVerify = blocked && /verify your email/i.test(error.message);
+  const [note, setNote] = useState('');
   return (
     <Box sx={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', p: 3, textAlign: 'center' }}>
-      <Box sx={{ display: 'grid', gap: 2, justifyItems: 'center', maxWidth: 420 }}>
+      <Box sx={{ display: 'grid', gap: 2, justifyItems: 'center', maxWidth: 440 }}>
         <Logo size={56} />
-        <Typography variant="h6">{blocked ? error.message : "Couldn't load your account"}</Typography>
-        <Typography color="text.secondary">{blocked ? `Signed in as ${email}` : error.message}</Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
+        <Typography variant="h6">
+          {needsVerify ? 'Verify your email to continue'
+            : blocked ? error.message
+              : session ? 'Your session could not be confirmed' : "Couldn't load your account"}
+        </Typography>
+        <Typography color="text.secondary">
+          {needsVerify ? `We sent a link to ${email}. Open it, then come back here.`
+            : blocked ? `Signed in as ${email}`
+              : session ? 'Try again, or sign out and sign back in.' : error.message}
+        </Typography>
+        {note && <Typography variant="body2" color="primary">{note}</Typography>}
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'center' }}>
+          {needsVerify && (
+            <>
+              <Button variant="contained" onClick={async () => {
+                try {
+                  await refreshUser();
+                  onRetry();
+                } catch (err) {
+                  setNote(err.message);
+                }
+              }}
+              >
+                I&apos;ve verified
+              </Button>
+              <Button variant="outlined" onClick={async () => {
+                try {
+                  await resendVerification();
+                  setNote(`Verification email sent to ${email}`);
+                } catch (err) {
+                  setNote(err.message);
+                }
+              }}
+              >
+                Resend email
+              </Button>
+            </>
+          )}
           {!blocked && <Button variant="contained" onClick={onRetry}>Try again</Button>}
-          <Button variant="outlined" onClick={() => signOut()}>{blocked ? 'Use another account' : 'Sign out'}</Button>
+          <Button variant={needsVerify ? 'text' : 'outlined'} onClick={() => signOut()}>
+            {blocked && !needsVerify ? 'Use another account' : 'Sign out'}
+          </Button>
         </Box>
       </Box>
     </Box>

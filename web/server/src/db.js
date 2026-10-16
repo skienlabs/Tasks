@@ -87,6 +87,12 @@ export function openDb(file) {
 
 function migrate(db) {
   const { user_version: current } = db.prepare('PRAGMA user_version').get();
+  if (current > MIGRATIONS.length) {
+    throw new Error(
+      `Database schema v${current} is newer than this app (v${MIGRATIONS.length}). ` +
+        'Deploy the newer image again, or restore a backup made for this version.',
+    );
+  }
   for (let v = current; v < MIGRATIONS.length; v++) {
     db.exec('BEGIN');
     try {
@@ -94,7 +100,11 @@ function migrate(db) {
       db.exec(`PRAGMA user_version = ${v + 1}`);
       db.exec('COMMIT');
     } catch (err) {
-      db.exec('ROLLBACK');
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        /* keep the original error */
+      }
       throw err;
     }
   }
@@ -177,7 +187,6 @@ export function createRepo(db) {
     tag: db.prepare(`SELECT ${TAG_COLUMNS} FROM tags WHERE uid = ? AND id = ?`),
     tagExists: db.prepare('SELECT uid FROM tags WHERE id = ?'),
     tagCount: db.prepare('SELECT COUNT(*) AS n, COALESCE(MAX(position), -1) AS maxpos FROM tags WHERE uid = ?'),
-    tagByName: db.prepare('SELECT id FROM tags WHERE uid = ? AND lower(name) = lower(?)'),
     insertTag: db.prepare(`INSERT INTO tags (id, uid, name, color, logo, position, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
     updateTag: db.prepare(`UPDATE tags SET name = ?, color = ?, logo = ?, position = ?, updated_at = ?
@@ -312,9 +321,10 @@ export function createRepo(db) {
       return stmts.tagExists.get(id) !== undefined;
     },
 
+    /** Case-insensitive for every language (SQLite's lower() only folds A-Z). */
     tagNameTaken(uid, name, exceptId = null) {
-      const row = stmts.tagByName.get(uid, name);
-      return Boolean(row && row.id !== exceptId);
+      const key = name.normalize('NFC').toLocaleLowerCase();
+      return stmts.tags.all(uid).some((t) => t.id !== exceptId && t.name.normalize('NFC').toLocaleLowerCase() === key);
     },
 
     tagStats(uid) {

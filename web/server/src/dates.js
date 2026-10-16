@@ -2,9 +2,13 @@
 // The browser decides what "today" is and sends it; the server never guesses.
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export const MIN_YEAR = 1900;
+export const MAX_YEAR = 2999;
 
 export function isValidDate(value) {
   if (typeof value !== 'string' || !DATE_RE.test(value)) return false;
+  const year = Number(value.slice(0, 4));
+  if (year < MIN_YEAR || year > MAX_YEAR) return false;
   const d = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
 }

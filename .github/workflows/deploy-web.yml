@@ -5,6 +5,14 @@ name: Build & Deploy Tasks Web
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# Never run two deploys at once; a second one waits for the first.
+concurrency:
+  group: deploy-web
+  cancel-in-progress: false
+
 env:
   IMAGE: us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/test-images/tasks
 

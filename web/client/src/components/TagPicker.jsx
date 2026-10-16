@@ -1,13 +1,17 @@
 import { Checkbox, Divider, ListItemIcon, ListItemText, Menu, MenuItem, Typography } from '@mui/material';
 import SellOutlined from '@mui/icons-material/SellOutlined';
 import { TagAvatar } from './TagChip.jsx';
-import { selectTags, useStoreVersion } from '../lib/store.js';
+import { MAX_TAGS_PER_TASK, selectTags, useStoreVersion } from '../lib/store.js';
 
 /** Multi-select menu of tags. */
 export default function TagPicker({ anchorEl, open, onClose, selected, onChange, onManage }) {
   useStoreVersion();
   const tags = selectTags();
-  const toggle = (id) => onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+  const full = selected.length >= MAX_TAGS_PER_TASK;
+  const toggle = (id) => {
+    if (selected.includes(id)) onChange(selected.filter((x) => x !== id));
+    else if (!full) onChange([...selected, id]);
+  };
 
   return (
     <Menu
@@ -23,7 +27,7 @@ export default function TagPicker({ anchorEl, open, onClose, selected, onChange,
         </Typography>
       )}
       {tags.map((tag) => (
-        <MenuItem key={tag.id} onClick={() => toggle(tag.id)} dense sx={{ py: 0.5 }}>
+        <MenuItem key={tag.id} onClick={() => toggle(tag.id)} dense sx={{ py: 0.5 }} disabled={full && !selected.includes(tag.id)}>
           <ListItemIcon sx={{ minWidth: '32px !important' }}>
             <TagAvatar tag={tag} size={20} />
           </ListItemIcon>
@@ -31,6 +35,11 @@ export default function TagPicker({ anchorEl, open, onClose, selected, onChange,
           <Checkbox edge="end" size="small" checked={selected.includes(tag.id)} tabIndex={-1} sx={{ ml: 1 }} />
         </MenuItem>
       ))}
+      {full && (
+        <Typography variant="caption" color="text.secondary" sx={{ px: 2, py: 0.5, display: 'block' }}>
+          Up to {MAX_TAGS_PER_TASK} tags per task
+        </Typography>
+      )}
       {onManage && <Divider />}
       {onManage && (
         <MenuItem

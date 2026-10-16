@@ -37,6 +37,10 @@ export function parseFirebaseWebConfig(text) {
 
 function loadFirebase(env, log) {
   const file = env.FIREBASE_CONFIG_PATH || '/config/firebase-config.json';
+  if (fs.existsSync(file) && fs.statSync(file).isDirectory()) {
+    log(`${file} is a folder, not a file. The JSON file was probably missing on the host when the container started, so Docker created a folder. Remove that folder, add the file, and restart.`);
+    return null;
+  }
   if (fs.existsSync(file)) {
     try {
       return parseFirebaseWebConfig(fs.readFileSync(file, 'utf8'));
@@ -68,10 +72,13 @@ export function loadConfig(env = process.env, log = (m) => console.warn(`[config
   const production = env.NODE_ENV === 'production';
   const dataDir = env.DATA_DIR || '/data';
   // The dev auth bypass is impossible to enable in a production build.
-  const devAuth = !production && env.AUTH_MODE === 'dev';
-  if (env.AUTH_MODE === 'dev' && production) log('AUTH_MODE=dev ignored because NODE_ENV=production.');
+  // Dev-only switches need NODE_ENV=development exactly, so a typo can never open them.
+  const development = env.NODE_ENV === 'development';
+  const devAuth = development && env.AUTH_MODE === 'dev';
+  if (env.AUTH_MODE === 'dev' && !development) log('AUTH_MODE=dev ignored (only allowed when NODE_ENV=development).');
 
-  const authEmulator = !production && env.FIREBASE_AUTH_EMULATOR ? env.FIREBASE_AUTH_EMULATOR : null;
+  const authEmulator = development && env.FIREBASE_AUTH_EMULATOR ? env.FIREBASE_AUTH_EMULATOR : null;
+  if (env.FIREBASE_AUTH_EMULATOR && !development) log('FIREBASE_AUTH_EMULATOR ignored (only allowed when NODE_ENV=development).');
 
   return {
     production,

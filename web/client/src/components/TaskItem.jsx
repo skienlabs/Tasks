@@ -18,7 +18,7 @@ import TagChip from './TagChip.jsx';
 import TagPicker from './TagPicker.jsx';
 import { shortLabel } from '../lib/dates.js';
 import {
-  cancelTask, completeTask, deleteTask, moveTasks, postponeTask, restoreTask, selectTag, updateTask, useStoreVersion,
+  cancelTask, completeTask, deleteTask, moveTasks, postponeTarget, postponeTask, restoreTask, selectTag, updateTask, useStoreVersion,
 } from '../lib/store.js';
 
 function Meta({ icon, children, color = 'text.secondary' }) {
@@ -35,6 +35,9 @@ function TaskItem({ task, today, showOrigin, onOpen, onManageTags }) {
   const [menuEl, setMenuEl] = useState(null);
   const [tagEl, setTagEl] = useState(null);
   const tags = (task.tagIds ?? []).map(selectTag).filter(Boolean);
+  // "Postpone" moves to the day after today, or after the task's own date if that is later.
+  const target = shortLabel(postponeTarget(task, today), today);
+  const postponeLabel = target === 'Tomorrow' ? 'Postpone to tomorrow' : `Postpone to ${target}`;
   const pending = task.status === 'pending';
   const done = task.status === 'done';
   const cancelled = task.status === 'cancelled';
@@ -142,9 +145,9 @@ function TaskItem({ task, today, showOrigin, onOpen, onManageTags }) {
 
       <Box className="task-actions" sx={{ display: 'flex', alignItems: 'center', transition: 'opacity 120ms', pt: 0.25 }}>
         {pending && (
-          <Tooltip title="Postpone to tomorrow">
+          <Tooltip title={postponeLabel}>
             <IconButton
-              aria-label={`Postpone "${task.title}" to tomorrow`}
+              aria-label={`${postponeLabel}: "${task.title}"`}
               onClick={(e) => {
                 e.stopPropagation();
                 postponeTask(task.id, today);
@@ -203,7 +206,7 @@ function TaskItem({ task, today, showOrigin, onOpen, onManageTags }) {
         {pending && (
           <MenuItem onClick={act(() => postponeTask(task.id, today))}>
             <ListItemIcon><EventRepeatOutlined fontSize="small" /></ListItemIcon>
-            <ListItemText>Postpone to tomorrow</ListItemText>
+            <ListItemText>{postponeLabel}</ListItemText>
           </MenuItem>
         )}
         {pending && (

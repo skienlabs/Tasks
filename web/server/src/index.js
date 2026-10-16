@@ -45,7 +45,7 @@ try {
   await app.listen({ host: config.host, port: config.port });
   app.log.info(
     `Tasks ready on :${config.port} | db=${config.dbPath} | sign-in=${config.devAuth ? 'dev' : config.firebase ? `firebase:${config.firebase.projectId}` : 'NOT CONFIGURED'}` +
-      (config.allowList.length ? ` | allowed=${config.allowList.join(',')}` : ''),
+      (config.allowList.length ? ` | allow-list: ${config.allowList.length} entries` : ''),
   );
 } catch (err) {
   app.log.error(err);

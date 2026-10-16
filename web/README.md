@@ -104,7 +104,7 @@ cd web/server && npm install && npm run dev
 cd web/client && npm install && npm run dev
 ```
 
-To try real sign-up / sign-in locally, run the Firebase Auth emulator (`npx firebase-tools emulators:start --only auth --project demo-tasks`) and start the server with `NODE_ENV=development FIREBASE_AUTH_EMULATOR=http://127.0.0.1:9099` and a config whose `projectId` is `demo-tasks`. Both this and the fake dev user are ignored when `NODE_ENV=production` (always the case in the Docker image).
+To try real sign-up / sign-in locally, run the Firebase Auth emulator (`npx firebase-tools emulators:start --only auth --project demo-tasks`) and start the server with `NODE_ENV=development FIREBASE_AUTH_EMULATOR=http://127.0.0.1:9099` and a config whose `projectId` is `demo-tasks`. Both this and the fake dev user only work when `NODE_ENV=development` exactly; they are ignored otherwise (the Docker image always runs with `NODE_ENV=production`).
 
 Tests: `cd web/server && npm test`. Build the image locally: `docker build -t tasks web`.
 
@@ -130,4 +130,6 @@ All endpoints except `/api/health` and `/api/config` need `Authorization: Bearer
 
 Tasks carry `tagIds: []`; send `tagIds` on create/update to set them (max 10, must be your own tags).
 
-Dates are calendar days in the user's own time zone; the browser sends what "today" is.
+Dates are calendar days in the user's own time zone (years 1900–2999); the browser sends what "today" is.
+
+Errors: `401` means the sign-in token is missing or invalid, `403` means the account isn't allowed (or must verify its email first when `ALLOWED_EMAILS` is set), and `503` means the server couldn't reach Google to check the token. The app never signs anyone out on its own because of an API error.

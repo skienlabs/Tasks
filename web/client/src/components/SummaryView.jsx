@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, ButtonBase, CircularProgress, IconButton, Skeleton, Tooltip, Typography } from '@mui/material';
 import ChevronLeft from '@mui/icons-material/ChevronLeft';
 import ChevronRight from '@mui/icons-material/ChevronRight';
@@ -179,11 +179,14 @@ export default function SummaryView({ today, onOpenDay }) {
   const [error, setError] = useState('');
   const { from, to } = monthRange(month.y, month.m);
 
+  // Only the newest request may update the page (fast month paging can finish out of order).
+  const requestRef = useRef(0);
   const load = useCallback(() => {
+    const id = ++requestRef.current;
     setError('');
     api('GET', `/api/stats?from=${from}&to=${to}&today=${today}`)
-      .then((res) => setData({ key: from, ...res }))
-      .catch((err) => setError(err.message));
+      .then((res) => id === requestRef.current && setData({ key: from, ...res }))
+      .catch((err) => id === requestRef.current && setError(err.message));
   }, [from, to, today]);
 
   useEffect(() => {
@@ -215,7 +218,7 @@ export default function SummaryView({ today, onOpenDay }) {
   const activeDays = (data?.days ?? []).filter((d) => d.pending + d.done + d.cancelled > 0);
 
   return (
-    <Box sx={{ maxWidth: 1080, mx: 'auto', px: { xs: 1.5, sm: 3 }, pt: { xs: 2, sm: 3 }, pb: 14 }}>
+    <Box sx={{ maxWidth: 1080, mx: 'auto', px: { xs: 1.5, sm: 3 }, pt: { xs: 2, sm: 3 }, pb: { xs: 'calc(176px + env(safe-area-inset-bottom))', md: 14 } }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2.5, flexWrap: 'wrap' }}>
         <Box sx={{ flex: 1, minWidth: 200 }}>
           <Typography

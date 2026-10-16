@@ -25,13 +25,17 @@ async function toLogo(file) {
     const img = new Image();
     img.src = url;
     await img.decode();
+    // SVGs without a size report 0x0 in some browsers; treat them as square.
+    const iw = img.naturalWidth || LOGO_PX;
+    const ih = img.naturalHeight || LOGO_PX;
+    if (iw * ih > 40_000_000) throw new Error('Logo image is too large (over 40 megapixels)');
     const canvas = document.createElement('canvas');
     canvas.width = LOGO_PX;
     canvas.height = LOGO_PX;
     const ctx = canvas.getContext('2d');
-    const scale = Math.min(LOGO_PX / img.naturalWidth, LOGO_PX / img.naturalHeight);
-    const w = Math.max(1, Math.round(img.naturalWidth * scale));
-    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+    const scale = Math.min(LOGO_PX / iw, LOGO_PX / ih);
+    const w = Math.max(1, Math.round(iw * scale));
+    const h = Math.max(1, Math.round(ih * scale));
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, (LOGO_PX - w) / 2, (LOGO_PX - h) / 2, w, h);
     let data = canvas.toDataURL('image/webp', 0.9);
@@ -40,7 +44,7 @@ async function toLogo(file) {
     if (data.length > MAX_LOGO_CHARS) throw new Error('Logo is too detailed; try a simpler image');
     return data;
   } catch (err) {
-    if (err instanceof Error && err.message.startsWith('Logo')) throw err;
+    if (err instanceof Error && /^Logo/.test(err.message)) throw err;
     throw new Error("Couldn't read that image");
   } finally {
     URL.revokeObjectURL(url);

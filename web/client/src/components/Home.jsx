@@ -102,15 +102,16 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
     const d = fromKey(dateFromUrl(todayKey()));
     return { y: d.getFullYear(), m: d.getMonth() };
   });
-  const [tagFilter, setTagFilterState] = useState(() => readPref('tasks.tagFilter'));
+  const filterKey = `tasks.tagFilter.${profile.uid}`; // per account
+  const [tagFilter, setTagFilterState] = useState(() => readPref(filterKey));
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [menuEl, setMenuEl] = useState(null);
   const [dialog, setDialog] = useState(() => (params().get('new') === '1' ? { date: todayKey() } : null));
   const [tagsOpen, setTagsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [hideVerify, setHideVerify] = useState(() => readPref('tasks.hideVerify') === profile.uid);
-  const [blocked, setBlocked] = useState('');
-  const [failed, setFailed] = useState(null);
+  const [blocked, setBlocked] = useState(null); // { kind: 'forbidden' | 'session', message }
+  const [failed, setFailed] = useState(() => new Set()); // days whose load failed
   const addInputRef = useRef(null);
   const openTask = useCallback((task) => setDialog({ task }), []);
   const openTags = useCallback(() => setTagsOpen(true), []);
@@ -118,8 +119,8 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
 
   const setTagFilter = useCallback((id) => {
     setTagFilterState(id);
-    writePref('tasks.tagFilter', id);
-  }, []);
+    writePref(filterKey, id);
+  }, [filterKey]);
 
   // Drop a filter whose tag no longer exists.
   useEffect(() => {
@@ -129,9 +130,12 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
   // Follow the calendar when the day rolls over while looking at "today".
   const prevToday = useRef(today);
   useEffect(() => {
-    if (prevToday.current !== today) {
-      setDate((d) => (d === prevToday.current ? today : d));
+    const previous = prevToday.current;
+    if (previous !== today) {
       prevToday.current = today;
+      setDate((d) => (d === previous ? today : d));
+      const f = fromKey(today);
+      setMonth((m) => (m.y === fromKey(previous).getFullYear() && m.m === fromKey(previous).getMonth() ? { y: f.getFullYear(), m: f.getMonth() } : m));
     }
   }, [today]);
 
@@ -160,41 +164,57 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
     window.history.replaceState(null, '', url);
   }, [date, today, view]);
 
-  const handleError = useCallback((err) => {
-    if (err.status === 403) setBlocked(err.message);
-    else if (err.status === 401) signOut(); // session is no longer valid
-    else showToast(err.message);
+  // Errors from loads. Never signs out by itself: Firebase reports real sign-outs,
+  // and a server or network hiccup must not log anyone out.
+  const handleError = useCallback((err, { quiet = false } = {}) => {
+    if (err.status === 403) setBlocked({ kind: 'forbidden', message: err.message });
+    else if (err.status === 401) setBlocked({ kind: 'session', message: 'Your session could not be confirmed' });
+    else if (!quiet) showToast(err.message);
   }, []);
 
   useEffect(() => {
     loadTags().catch(handleError);
   }, [handleError]);
 
+  const markFailed = useCallback((d, isFailed) => {
+    setFailed((prev) => {
+      if (prev.has(d) === isFailed) return prev;
+      const next = new Set(prev);
+      if (isFailed) next.add(d);
+      else next.delete(d);
+      return next;
+    });
+  }, []);
+
+  /** Prefetches stay silent: only the day on screen shows errors / Retry. */
   const refreshDay = useCallback(
-    (d) =>
+    (d, { prefetch = false } = {}) =>
       loadDay(d, today).then(
-        () => setFailed((f) => (f === d ? null : f)),
+        () => markFailed(d, false),
         (err) => {
-          if (!isDayLoaded(d)) setFailed(d);
-          handleError(err);
+          if (!prefetch && !isDayLoaded(d)) markFailed(d, true);
+          handleError(err, { quiet: prefetch });
         },
       ),
-    [today, handleError],
+    [today, handleError, markFailed],
   );
 
   useEffect(() => {
     refreshDay(date);
     const prefetch = setTimeout(() => {
-      for (const d of [addDays(date, 1), addDays(date, -1), today]) if (!isDayLoaded(d)) refreshDay(d);
+      for (const d of [addDays(date, 1), addDays(date, -1), today]) {
+        if (d !== date && !isDayLoaded(d)) refreshDay(d, { prefetch: true });
+      }
     }, 150);
     return () => clearTimeout(prefetch);
   }, [date, today, refreshDay]);
 
   const refreshSummary = useCallback(() => {
     const grid = monthGrid(month.y, month.m);
-    loadSummary(grid[0], grid[41]).catch(handleError);
+    const quiet = (err) => handleError(err, { quiet: true }); // dots are secondary; don't nag
+    loadSummary(grid[0], grid[41]).catch(quiet);
     const ws = startOfWeek(date);
-    if (ws < grid[0] || addDays(ws, 6) > grid[41]) loadSummary(ws, addDays(ws, 6)).catch(handleError);
+    if (ws < grid[0] || addDays(ws, 6) > grid[41]) loadSummary(ws, addDays(ws, 6)).catch(quiet);
   }, [month, date, handleError]);
 
   useEffect(() => {
@@ -250,9 +270,18 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
       <Box sx={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', p: 3, textAlign: 'center' }}>
         <Box sx={{ display: 'grid', gap: 2, justifyItems: 'center', maxWidth: 420 }}>
           <Logo size={56} />
-          <Typography variant="h6">{blocked}</Typography>
-          <Typography color="text.secondary">Signed in as {user.email}</Typography>
-          <Button variant="outlined" onClick={() => signOut()}>Use another account</Button>
+          <Typography variant="h6">{blocked.message}</Typography>
+          <Typography color="text.secondary">
+            {blocked.kind === 'session' ? 'Try again, or sign out and sign back in.' : `Signed in as ${user.email}`}
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            {blocked.kind === 'session' && (
+              <Button variant="contained" onClick={() => window.location.reload()}>Try again</Button>
+            )}
+            <Button variant="outlined" onClick={() => signOut()}>
+              {blocked.kind === 'session' ? 'Sign out' : 'Use another account'}
+            </Button>
+          </Box>
         </Box>
       </Box>
     );
@@ -353,7 +382,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
         position="fixed"
         elevation={0}
         color="inherit"
-        sx={(t) => ({ bgcolor: 'background.default', borderBottom: `1px solid ${t.palette.divider}`, zIndex: t.zIndex.drawer + 1 })}
+        sx={(t) => ({ bgcolor: 'background.default', borderBottom: `1px solid ${t.palette.divider}` })}
       >
         <Toolbar sx={{ minHeight: `${APPBAR}px !important`, gap: { xs: 0.5, sm: 1 }, px: { xs: 1, sm: 2 } }}>
           {!desktop && (
@@ -528,8 +557,8 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
           <DayView
             date={date}
             today={today}
-            loading={!isDayLoaded(date) && failed !== date}
-            failed={failed === date && !isDayLoaded(date)}
+            loading={!isDayLoaded(date) && !failed.has(date)}
+            failed={failed.has(date) && !isDayLoaded(date)}
             onRetry={() => refreshDay(date)}
             onSelectDate={selectDate}
             onOpenTask={openTask}
