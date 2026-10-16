@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.data/
+*.db
+*.db-shm
+*.db-wal
+.env
+# Your Firebase config stays on the server, not in git
+config/firebase-config.json
+.DS_Store
