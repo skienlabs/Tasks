@@ -4,6 +4,7 @@ import path from 'node:path';
 import Fastify, { LogController } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { createRepo } from './db.js';
+import { createEvents } from './events.js';
 import { AuthError } from './auth.js';
 import { addDays, daysBetween, isValidDate, maxDate } from './dates.js';
 
@@ -68,7 +69,7 @@ function assertLogo(logo) {
   if (!ok) throw new HttpError(400, 'Logo is not a valid image');
 }
 
-export function buildApp({ db, verify, config, logger = false }) {
+export function buildApp({ db, verify, config, logger = false, events = createEvents() }) {
   const repo = createRepo(db);
   const app = Fastify({
     logger,
@@ -79,11 +80,14 @@ export function buildApp({ db, verify, config, logger = false }) {
   });
 
   // ---- Security headers on every response --------------------------------
+  const SECURITY_HEADERS = {
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'X-Frame-Options': 'DENY',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  };
   app.addHook('onSend', async (req, reply, payload) => {
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
-    reply.header('X-Frame-Options', 'DENY');
-    reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    reply.headers(SECURITY_HEADERS);
     if (req.url.startsWith('/api/')) reply.header('Cache-Control', 'no-store');
     return payload;
   });
@@ -98,6 +102,19 @@ export function buildApp({ db, verify, config, logger = false }) {
 
   // ---- Auth ----------------------------------------------------------------
   const seen = new Map(); // uid -> last time the users row was refreshed
+  // Each open app sends a random id, so it can ignore change events it caused itself.
+  const clientId = (req) => {
+    const id = req.headers['x-client-id'];
+    return typeof id === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(id) ? id : null;
+  };
+  const changed = (req, change) => events.publish(req.user.uid, change, clientId(req));
+  const taskChange = (req, ...dates) => changed(req, { type: 'tasks', dates: [...new Set(dates.filter(Boolean))] });
+
+  app.addHook('preClose', async () => events.closeAll()); // let shutdown finish promptly
+
+  app.get('/api/events', async (req, reply) => {
+    events.open(req, reply, req.user.uid, SECURITY_HEADERS);
+  });
   app.decorateRequest('user', null);
   // Runs before body parsing, and is keyed on the matched route (not the raw URL),
   // so encoded paths like /%61pi/... can't skip it.
@@ -156,6 +173,7 @@ export function buildApp({ db, verify, config, logger = false }) {
     repo.upsertUser(req.user);
     if (req.body.name !== undefined) repo.setDisplayName(uid, cleanName(req.body.name));
     if (req.body.onboarded) repo.setOnboarded(uid);
+    changed(req, { type: 'profile' });
     return {
       ...repo.getProfile(uid),
       provider: req.user.provider ?? null,
@@ -247,6 +265,7 @@ export function buildApp({ db, verify, config, logger = false }) {
       completedAt: status === 'done' ? (b.completedAt ?? now) : null,
       tagIds,
     });
+    taskChange(req, task.date);
     return reply.code(201).send(task);
   });
 
@@ -285,7 +304,9 @@ export function buildApp({ db, verify, config, logger = false }) {
       next.status = b.status;
       next.completedAt = b.status === 'done' ? next.updatedAt : null;
     }
-    return repo.update(uid, next);
+    const saved = repo.update(uid, next);
+    taskChange(req, current.date, saved.date);
+    return saved;
   });
 
   app.post('/api/tasks/:id/postpone', {
@@ -305,17 +326,21 @@ export function buildApp({ db, verify, config, logger = false }) {
     // date if it is already in the future.
     const nextDate = addDays(maxDate(current.date, req.body.today), 1);
     if (!isValidDate(nextDate)) throw new HttpError(400, 'Cannot postpone past the year 2999');
-    return repo.update(uid, {
+    const saved = repo.update(uid, {
       ...current,
       tagIds: undefined,
       date: nextDate,
       postponed: current.postponed + 1,
       updatedAt: Date.now(),
     });
+    taskChange(req, current.date, saved.date);
+    return saved;
   });
 
   app.delete('/api/tasks/:id', { schema: { params: idParams } }, async (req, reply) => {
-    if (!repo.remove(req.user.uid, req.params.id)) throw new HttpError(404, 'Task not found');
+    const current = repo.get(req.user.uid, req.params.id);
+    if (!current || !repo.remove(req.user.uid, req.params.id)) throw new HttpError(404, 'Task not found');
+    taskChange(req, current.date);
     return reply.code(204).send();
   });
 
@@ -349,6 +374,7 @@ export function buildApp({ db, verify, config, logger = false }) {
       id: b.id || crypto.randomUUID(), name, color: b.color || 'blue', logo: b.logo ?? null,
       position: maxPosition + 1, createdAt: now, updatedAt: now,
     });
+    changed(req, { type: 'tags' });
     return reply.code(201).send(tag);
   });
 
@@ -378,11 +404,14 @@ export function buildApp({ db, verify, config, logger = false }) {
       next.logo = b.logo;
     }
     if (b.position !== undefined) next.position = b.position;
-    return repo.updateTag(uid, next);
+    const saved = repo.updateTag(uid, next);
+    changed(req, { type: 'tags' });
+    return saved;
   });
 
   app.delete('/api/tags/:id', { schema: { params: idParams } }, async (req, reply) => {
     if (!repo.removeTag(req.user.uid, req.params.id)) throw new HttpError(404, 'Tag not found');
+    changed(req, { type: 'tags', tasks: true }); // the tag was also removed from tasks
     return reply.code(204).send();
   });
 

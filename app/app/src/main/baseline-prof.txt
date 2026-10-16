@@ -1,0 +1,7 @@
+# Ahead-of-time compile the app's own code and Compose on install (no device available to record a profile).
+HSPLcom/skienlabs/tasks/**->**(**)**
+Lcom/skienlabs/tasks/**;
+HSPLandroidx/compose/runtime/**->**(**)**
+HSPLandroidx/compose/ui/**->**(**)**
+HSPLandroidx/compose/foundation/**->**(**)**
+HSPLandroidx/compose/material3/**->**(**)**

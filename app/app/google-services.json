@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "964567805552",
+    "project_id": "tasks-ae860",
+    "storage_bucket": "tasks-ae860.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:964567805552:android:14e1ac52cc75e624a8ceb5",
+        "android_client_info": {
+          "package_name": "com.skienlabs.tasks"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "964567805552-32iljpvmfgti435igau3h3254gn4abap.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.skienlabs.tasks",
+            "certificate_hash": "c64aecceae4fd9a6d9e050eb4ed195f9f2b8ac07"
+          }
+        },
+        {
+          "client_id": "964567805552-7hkhi0ugh9fgqrdhdqabu8n36de5sbq0.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDUXzOzPj-uwga204KoJhRb3MbqHBmJF_c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "964567805552-7hkhi0ugh9fgqrdhdqabu8n36de5sbq0.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

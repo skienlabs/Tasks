@@ -10,7 +10,7 @@ tasks/
 │   ├── config/          Firebase web config example (real file stays on the server)
 │   ├── Dockerfile
 │   └── docker-compose.yml   compose file for the VM (~/docker/apps/tasks)
-├── app/                 Android app (coming later; will use the same API)
+├── app/                 Android app (Kotlin + Jetpack Compose), same API and live sync
 ├── docs/screens/        screenshots of the web app
 └── .github/workflows/
     ├── ci.yml           tests + Docker build on every push / PR
@@ -31,7 +31,18 @@ tasks/
   <img src="docs/screens/15-menu-mobile-dark.webp" alt="Phone, menu" width="200">
 </p>
 
+Android (OnePlus 12 size):
+
+<p>
+  <img src="docs/screens/android-today-dark.png" alt="Android, today, dark" width="200">
+  <img src="docs/screens/android-today-light.png" alt="Android, today, light" width="200">
+  <img src="docs/screens/android-summary-dark.png" alt="Android, summary" width="200">
+  <img src="docs/screens/android-month-dark.png" alt="Android, calendar" width="200">
+</p>
+
 All screens are in [docs/screens](docs/screens).
+
+Web and Android stay in sync live: a change on one shows up on the other within about a second.
 
 ## Docs
 

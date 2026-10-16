@@ -92,6 +92,10 @@ export function isDayLoaded(date) {
   return loadedAt.has(date);
 }
 
+export function loadedDates() {
+  return [...loadedAt.keys()];
+}
+
 export function getTask(id) {
   return byId.get(id) ?? null;
 }

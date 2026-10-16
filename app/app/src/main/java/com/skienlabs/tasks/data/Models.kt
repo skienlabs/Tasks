@@ -1,0 +1,116 @@
+package com.skienlabs.tasks.data
+
+import androidx.compose.runtime.Immutable
+import kotlinx.serialization.Serializable
+
+// Mirrors the server API (web/server/src/app.js). Unknown fields are ignored.
+
+object Status {
+    const val PENDING = "pending"
+    const val DONE = "done"
+    const val CANCELLED = "cancelled"
+}
+
+@Immutable
+@Serializable
+data class Task(
+    val id: String,
+    val title: String,
+    val notes: String = "",
+    val priority: Int = 4,
+    val date: String,
+    val status: String = Status.PENDING,
+    val originalDate: String = date,
+    val postponed: Int = 0,
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
+    val completedAt: Long? = null,
+    val tagIds: List<String> = emptyList(),
+) {
+    val isPending get() = status == Status.PENDING
+    val isDone get() = status == Status.DONE
+    val isCancelled get() = status == Status.CANCELLED
+}
+
+@Immutable
+@Serializable
+data class Tag(
+    val id: String,
+    val name: String,
+    val color: String = "blue",
+    val logo: String? = null,
+    val position: Int = 0,
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
+)
+
+@Immutable
+@Serializable
+data class Profile(
+    val uid: String,
+    val email: String? = null,
+    val name: String,
+    val photo: String? = null,
+    val createdAt: Long = 0,
+    val onboarded: Boolean = false,
+    val provider: String? = null,
+    val emailVerified: Boolean = false,
+)
+
+@Immutable
+@Serializable
+data class Counts(val pending: Int = 0, val done: Int = 0, val cancelled: Int = 0) {
+    val active get() = pending + done
+    val total get() = pending + done + cancelled
+    fun plus(o: Counts) = Counts(pending + o.pending, done + o.done, cancelled + o.cancelled)
+
+    fun bump(status: String, sign: Int) = when (status) {
+        Status.PENDING -> copy(pending = (pending + sign).coerceAtLeast(0))
+        Status.DONE -> copy(done = (done + sign).coerceAtLeast(0))
+        else -> copy(cancelled = (cancelled + sign).coerceAtLeast(0))
+    }
+}
+
+@Serializable
+data class DayCounts(val date: String, val pending: Int = 0, val done: Int = 0, val cancelled: Int = 0) {
+    fun counts() = Counts(pending, done, cancelled)
+}
+
+@Serializable data class DayResponse(val tasks: List<Task> = emptyList(), val overdue: List<Task> = emptyList())
+@Serializable data class SummaryResponse(val days: List<DayCounts> = emptyList())
+@Serializable data class TagsResponse(val tags: List<Tag> = emptyList())
+
+@Immutable
+@Serializable
+data class TagCounts(val tagId: String? = null, val pending: Int = 0, val done: Int = 0, val cancelled: Int = 0) {
+    fun counts() = Counts(pending, done, cancelled)
+}
+
+@Immutable
+@Serializable
+data class PriorityCounts(val priority: Int, val pending: Int = 0, val done: Int = 0, val cancelled: Int = 0) {
+    fun counts() = Counts(pending, done, cancelled)
+}
+
+@Immutable
+@Serializable
+data class Stats(
+    val days: List<DayCounts> = emptyList(),
+    val byTag: List<TagCounts> = emptyList(),
+    val byPriority: List<PriorityCounts> = emptyList(),
+    val overdue: Int = 0,
+    val postponed: Int = 0,
+)
+
+@Serializable data class ErrorBody(val error: String? = null)
+
+/** A live-sync notice from /api/events. */
+@Serializable
+data class Change(
+    val type: String,
+    val dates: List<String> = emptyList(),
+    val tasks: Boolean = false,
+    val source: String? = null,
+)
+
+const val MAX_TAGS_PER_TASK = 10

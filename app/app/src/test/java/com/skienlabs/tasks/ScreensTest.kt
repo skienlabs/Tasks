@@ -1,0 +1,165 @@
+package com.skienlabs.tasks
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.Sell
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.unit.dp
+import androidx.test.core.app.ApplicationProvider
+import com.github.takahirom.roborazzi.captureRoboImage
+import com.skienlabs.tasks.auth.Auth
+import com.skienlabs.tasks.data.Counts
+import com.skienlabs.tasks.data.DayCounts
+import com.skienlabs.tasks.data.Dates
+import com.skienlabs.tasks.data.PriorityCounts
+import com.skienlabs.tasks.data.Profile
+import com.skienlabs.tasks.data.Stats
+import com.skienlabs.tasks.data.Status
+import com.skienlabs.tasks.data.StoreState
+import com.skienlabs.tasks.data.Tag
+import com.skienlabs.tasks.data.TagCounts
+import com.skienlabs.tasks.data.Task
+import com.skienlabs.tasks.ui.account.Avatar
+import com.skienlabs.tasks.ui.auth.SignInScreen
+import com.skienlabs.tasks.ui.day.DayPage
+import com.skienlabs.tasks.ui.day.RowActions
+import com.skienlabs.tasks.ui.day.TagFilterRow
+import com.skienlabs.tasks.ui.day.WeekStrip
+import com.skienlabs.tasks.ui.home.MonthSheet
+import com.skienlabs.tasks.ui.summary.SummaryScreen
+import com.skienlabs.tasks.ui.theme.LocalExtra
+import com.skienlabs.tasks.ui.theme.TasksTheme
+import kotlinx.coroutines.CompletableDeferred
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import java.time.YearMonth
+
+/** Renders the main screens to PNGs (build/outputs/roborazzi) for visual review. OnePlus 12-sized. */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [35], qualifiers = "w412dp-h915dp-xxhdpi", application = android.app.Application::class)
+class ScreensTest {
+    @get:Rule val rule = createComposeRule()
+
+    private val today = Dates.today()
+    private val skien = Tag("t1", "Skien Labs", "blue", createdAt = 1)
+    private val zup = Tag("t2", "ZupNex", "purple", createdAt = 2)
+    private fun task(id: String, title: String, date: String = today, p: Int = 4, status: String = Status.PENDING, tags: List<String> = emptyList(), notes: String = "", postponed: Int = 0) =
+        Task(id, title, notes, p, date, status, date, postponed, createdAt = id.hashCode().toLong(), tagIds = tags)
+
+    private val state = StoreState(
+        tasks = listOf(
+            task("a", "Send invoice for September", Dates.addDays(today, -1), 1, tags = listOf("t1")),
+            task("b", "Review pull request #42", p = 1, tags = listOf("t1"), notes = "Check the auth changes first"),
+            task("c", "Prepare sprint demo", p = 2, tags = listOf("t2"), postponed = 1),
+            task("d", "Call the bank", p = 3),
+            task("e", "Reply to client email", p = 4, tags = listOf("t2")),
+            task("f", "Morning stand-up notes", status = Status.DONE, tags = listOf("t1")),
+            task("g", "Book flight tickets", status = Status.DONE),
+            task("h", "Old report", status = Status.CANCELLED),
+        ).associateBy { it.id },
+        summary = (-3..3).associate { Dates.addDays(today, it.toLong()) to Counts(pending = (it + 4) % 3, done = (it + 5) % 4) } +
+            (today to Counts(4, 2, 1)),
+        loadedDays = setOf(today),
+        tags = listOf(skien, zup),
+        tagsLoaded = true,
+    )
+    private val actions = RowActions({}, {}, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {})
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    private fun Home(s: StoreState, date: String, filter: String? = null) {
+        val profile = Profile("u", "skienlabs@gmail.com", "Skien", onboarded = true)
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { androidx.compose.foundation.layout.Row { Text(Dates.monthYear(date), style = MaterialTheme.typography.titleLarge); Icon(Icons.Filled.ArrowDropDown, null) } },
+                    actions = { Box(Modifier.padding(end = 12.dp)) { Avatar(profile, 32.dp) } },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                )
+            },
+            bottomBar = {
+                NavigationBar(containerColor = LocalExtra.current.surfaceHigh) {
+                    NavigationBarItem(true, {}, { Icon(Icons.Filled.CheckCircle, null) }, label = { Text("Tasks") })
+                    NavigationBarItem(false, {}, { Icon(Icons.Outlined.Insights, null) }, label = { Text("Summary") })
+                    NavigationBarItem(false, {}, { Icon(Icons.Outlined.Sell, null) }, label = { Text("Tags") })
+                }
+            },
+            floatingActionButton = { FloatingActionButton({}) { Icon(Icons.Filled.Add, null) } },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) { inner ->
+            Column(Modifier.fillMaxSize().padding(inner)) {
+                WeekStrip(date, today, { s.summary[it] }, {})
+                TagFilterRow(s.tags, filter, {}, {})
+                DayPage(
+                    date, today, s, filter, failed = false, onRetry = {}, actions = actions,
+                    onAdd = { _, _, _ -> CompletableDeferred(true) }, onMoveAllToToday = {},
+                    quickAddFocus = remember { FocusRequester() }, bottomPadding = 0.dp,
+                )
+            }
+        }
+    }
+
+    private fun shot(name: String, dark: Boolean, content: @Composable () -> Unit) {
+        rule.setContent { TasksTheme(dark) { androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { content() } } }
+        rule.waitForIdle()
+        rule.onRoot().captureRoboImage("build/screens/$name.png")
+    }
+
+    @Test fun today_dark() = shot("today_dark", true) { Home(state, today) }
+    @Test fun today_light() = shot("today_light", false) { Home(state, today) }
+    @Test fun filtered_dark() = shot("filtered_dark", true) { Home(state, today, "t2") }
+    @Test fun empty_light() = shot("empty_light", false) { Home(state.copy(loadedDays = state.loadedDays + Dates.addDays(today, 2)), Dates.addDays(today, 2)) }
+    @Test fun loading_dark() = shot("loading_dark", true) { Home(StoreState(tags = state.tags, tagsLoaded = true), Dates.addDays(today, 5)) }
+
+    private val stats: Stats by lazy {
+        val m = YearMonth.parse(today.take(7))
+        Stats(
+            days = (1..m.lengthOfMonth()).mapNotNull { d ->
+                val date = m.atDay(d).toString()
+                if (d % 6 == 0 || date > today) null else DayCounts(date, pending = d % 3, done = 2 + d % 4, cancelled = if (d % 7 == 0) 1 else 0)
+            },
+            byTag = listOf(TagCounts("t1", 6, 30, 1), TagCounts("t2", 3, 14, 0), TagCounts(null, 2, 8, 2)),
+            byPriority = (1..4).map { PriorityCounts(it, it, 10 + it * 2, if (it == 4) 2 else 0) },
+            overdue = 3, postponed = 5,
+        )
+    }
+
+    @Test fun summary_dark() = shot("summary_dark", true) {
+        SummaryScreen({ _, _, _ -> stats }, {}, today, state.tags, 0, 0.dp) {}
+    }
+    @Test fun summary_light() = shot("summary_light", false) {
+        SummaryScreen({ _, _, _ -> stats }, {}, today, state.tags, 0, 0.dp) {}
+    }
+    @Test fun month_dark() = shot("month_dark", true) {
+        MonthSheet(YearMonth.parse(today.take(7)), today, today, state.summary, {}, {}, {})
+    }
+    @Test fun signin_dark() = shot("signin_dark", true) { SignInScreen(Auth(ApplicationProvider.getApplicationContext())) }
+    @Test fun signin_light() = shot("signin_light", false) { SignInScreen(Auth(ApplicationProvider.getApplicationContext())) }
+}

@@ -65,7 +65,7 @@ mkdir -p ~/docker/apps/tasks/config && cd ~/docker/apps/tasks
 chmod 644 config/firebase-config.json
 ```
 
-3. In your reverse proxy, point the Tasks domain to `http://tasks:8080`.
+3. In your reverse proxy, point the Tasks domain to `http://tasks:8080`. Live sync is a long-lived `/api/events` response: the app sends `X-Accel-Buffering: no` (nginx honours it); with other proxies turn off response buffering and allow idle connections of at least 60 s.
 
 Then run the workflow. Put the app behind your HTTPS reverse proxy; Google sign-in only works on a domain listed in Firebase's Authorized domains, and installing as an app needs HTTPS.
 
@@ -127,6 +127,7 @@ All endpoints except `/api/health` and `/api/config` need `Authorization: Bearer
 | PATCH | `/api/tags/:id` | Any of `name, color, logo, position` |
 | DELETE | `/api/tags/:id` | Also removes it from tasks |
 | GET | `/api/stats?from=&to=&today=` | Month summary: per day, per tag, per priority, overdue, postponed |
+| GET | `/api/events` | Live sync (Server-Sent Events): `ready`, then `change` `{type: tasks\|tags\|profile, dates, source}` whenever another device changes something. Send `X-Client-Id` on writes so a device can skip its own changes. |
 
 Tasks carry `tagIds: []`; send `tagIds` on create/update to set them (max 10, must be your own tags).
 

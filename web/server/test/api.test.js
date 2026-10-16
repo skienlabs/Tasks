@@ -456,3 +456,60 @@ test('refuses a database from a newer version', async () => {
   db.close();
   assert.throws(() => openDb(file), /newer than this app/);
 });
+
+test('live change events: per user, tagged with source, auth required', async () => {
+  const http = await import('node:http');
+  const { app, token } = await setup();
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const port = app.server.address().port;
+  const tA = await token('alice');
+  const tB = await token('bob');
+
+  const open = (tok) => new Promise((resolve, reject) => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/api/events', headers: tok ? { authorization: `Bearer ${tok}` } : {} }, (res) => {
+      const s = { res, status: res.statusCode, headers: res.headers, text: '' };
+      res.setEncoding('utf8');
+      res.on('data', (c) => { s.text += c; });
+      resolve(s);
+    });
+    req.on('error', reject);
+  });
+  const call = (tok, method, path, body, cid) => fetch(`http://127.0.0.1:${port}${path}`, {
+    method,
+    headers: { authorization: `Bearer ${tok}`, 'content-type': 'application/json', ...(cid ? { 'x-client-id': cid } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const anon = await open(null);
+  assert.equal(anon.status, 401);
+  anon.res.destroy();
+
+  const a = await open(tA);
+  const b = await open(tB);
+  assert.equal(a.status, 200);
+  assert.match(a.headers['content-type'], /text\/event-stream/);
+  assert.equal(a.headers['x-accel-buffering'], 'no');
+  await wait(50);
+  assert.match(a.text, /event: ready/);
+
+  let r = await call(tA, 'POST', '/api/tasks', { title: 'Live', date: '2026-10-17' }, 'phone-123456');
+  const task = await r.json();
+  await call(tA, 'POST', `/api/tasks/${task.id}/postpone`, { today: '2026-10-17' }, 'web-abcdefgh');
+  await call(tA, 'POST', '/api/tags', { name: 'Co' });
+  await call(tA, 'PATCH', '/api/me', { name: 'Al' });
+  await wait(100);
+
+  const events = a.text.split('\n\n').filter((x) => x.startsWith('event: change')).map((x) => JSON.parse(x.split('data: ')[1]));
+  assert.deepEqual(events, [
+    { type: 'tasks', dates: ['2026-10-17'], source: 'phone-123456' },
+    { type: 'tasks', dates: ['2026-10-17', '2026-10-18'], source: 'web-abcdefgh' },
+    { type: 'tags', source: null },
+    { type: 'profile', source: null },
+  ]);
+  assert.doesNotMatch(b.text, /event: change/, 'other users get nothing');
+
+  a.res.destroy();
+  b.res.destroy();
+  await app.close(); // must not hang on open streams
+});

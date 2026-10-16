@@ -30,8 +30,10 @@ import { TagAvatar } from './TagChip.jsx';
 import Toast from './Toast.jsx';
 import { addDays, formatDate, fromKey, isValidKey, monthGrid, startOfWeek, todayKey } from '../lib/dates.js';
 import {
-  areTagsLoaded, isDayLoaded, loadDay, loadSummary, loadTags, selectTag, selectTags, showToast, useStoreVersion,
+  areTagsLoaded, isDayLoaded, loadDay, loadSummary, loadTags, loadedDates, selectTag, selectTags, showToast, useStoreVersion,
 } from '../lib/store.js';
+import { startLive } from '../lib/live.js';
+import { api } from '../lib/api.js';
 import { signOut } from '../lib/auth.js';
 import { isStandalone, useInstallPrompt } from '../lib/install.js';
 import { readPref, writePref } from '../lib/prefs.js';
@@ -220,6 +222,49 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
   useEffect(() => {
     refreshSummary();
   }, [refreshSummary]);
+
+  // Live sync: apply changes made on other devices (phone, other tabs) within a second.
+  const liveRef = useRef(null);
+  liveRef.current = { date, today, refreshDay, refreshSummary, onProfile };
+  useEffect(() => {
+    let pending = null;
+    let timer = null;
+    const flush = () => {
+      const { date: d, today: t, refreshDay: rd, refreshSummary: rs, onProfile: op } = liveRef.current;
+      const p = pending;
+      pending = null;
+      if (p.all || p.tags) loadTags().catch(() => {});
+      if (p.all || p.profile) api('GET', '/api/me').then(op).catch(() => {});
+      if (p.all || p.tasks) {
+        const days = new Set([d, t]);
+        if (!p.all) {
+          const loaded = new Set(loadedDates());
+          for (const x of p.dates) if (loaded.has(x)) days.add(x);
+        }
+        for (const x of days) rd(x, { prefetch: x !== d });
+        rs();
+      }
+    };
+    const queue = (patch) => {
+      pending = pending || { dates: new Set() };
+      Object.assign(pending, { ...patch, dates: pending.dates });
+      for (const x of patch.dates || []) pending.dates.add(x);
+      clearTimeout(timer);
+      timer = setTimeout(flush, 150); // one refresh for a burst of changes
+    };
+    const stop = startLive({
+      onChange: (c) => {
+        if (c.type === 'tasks') queue({ tasks: true, dates: c.dates || [] });
+        else if (c.type === 'tags') queue({ tags: true, ...(c.tasks ? { tasks: true } : {}) });
+        else if (c.type === 'profile') queue({ profile: true });
+      },
+      onConnected: () => queue({ all: true }),
+    });
+    return () => {
+      clearTimeout(timer);
+      stop();
+    };
+  }, []);
 
   // Pick up changes made on other devices when coming back to the app.
   useEffect(() => {

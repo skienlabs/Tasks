@@ -8,3 +8,14 @@ dist/
 # Your Firebase config stays on the server, not in git
 **/config/firebase-config.json
 .DS_Store
+# Android build output and machine-specific files
+app/.gradle/
+app/.kotlin/
+app/build/
+app/app/build/
+app/local.properties
+# Release signing key and its passwords: never commit (keep a backup somewhere safe)
+app/keystore/
+app/keystore.properties
+*.jks
+*.keystore

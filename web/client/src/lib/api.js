@@ -11,10 +11,19 @@ export class ApiError extends Error {
   }
 }
 
-async function send(method, url, body, forceRefresh) {
-  const headers = {};
+/** Random per tab; lets this app ignore live-change events it caused itself. */
+export const CLIENT_ID = `web-${newId()}`;
+
+/** Headers for an authenticated request (also used by the live-sync stream). */
+export async function authHeaders(forceRefresh = false) {
+  const headers = { 'X-Client-Id': CLIENT_ID };
   const token = await tokenGetter(forceRefresh);
   if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+async function send(method, url, body, forceRefresh) {
+  const headers = await authHeaders(forceRefresh);
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   return fetch(url, {
     method,
