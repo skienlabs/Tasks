@@ -1,5 +1,5 @@
 import { buildApp } from './app.js';
-import { createDevVerifier, createVerifier } from './auth.js';
+import { createDevVerifier, createEmulatorVerifier, createVerifier } from './auth.js';
 import { loadConfig } from './config.js';
 import { openDb } from './db.js';
 
@@ -10,6 +10,9 @@ let verify;
 if (config.devAuth) {
   console.warn('[auth] AUTH_MODE=dev: every request is signed in as dev@localhost. Never use this in production.');
   verify = createDevVerifier();
+} else if (config.authEmulator && config.firebase) {
+  console.warn(`[auth] Using the Firebase Auth emulator at ${config.authEmulator} (tokens unsigned). Development only.`);
+  verify = createEmulatorVerifier({ projectId: config.firebase.projectId, allowList: config.allowList });
 } else {
   verify = createVerifier({ projectId: config.firebase?.projectId, allowList: config.allowList });
 }

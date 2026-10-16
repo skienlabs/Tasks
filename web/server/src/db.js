@@ -54,6 +54,11 @@ const MIGRATIONS = [
   );
   CREATE INDEX idx_task_tags_tag ON task_tags (tag_id);
   `,
+  // v3: profile chosen in the app (separate from the name Google/Firebase sends)
+  `
+  ALTER TABLE users ADD COLUMN display_name TEXT;
+  ALTER TABLE users ADD COLUMN onboarded_at INTEGER;
+  `,
 ];
 
 export function openDb(file) {
@@ -163,6 +168,10 @@ export function createRepo(db) {
       FROM tasks WHERE uid = ? AND date BETWEEN ? AND ?
       GROUP BY date ORDER BY date`),
 
+    profile: db.prepare('SELECT uid, email, name, display_name, photo, created_at, onboarded_at FROM users WHERE uid = ?'),
+    setDisplayName: db.prepare('UPDATE users SET display_name = ? WHERE uid = ?'),
+    setOnboarded: db.prepare('UPDATE users SET onboarded_at = COALESCE(onboarded_at, ?) WHERE uid = ?'),
+
     // tags
     tags: db.prepare(`SELECT ${TAG_COLUMNS} FROM tags WHERE uid = ? ORDER BY position, created_at`),
     tag: db.prepare(`SELECT ${TAG_COLUMNS} FROM tags WHERE uid = ? AND id = ?`),
@@ -220,6 +229,27 @@ export function createRepo(db) {
   return {
     upsertUser(user, now = Date.now()) {
       stmts.upsertUser.run(user.uid, user.email ?? null, user.name ?? null, user.photo ?? null, now, now);
+    },
+
+    getProfile(uid) {
+      const r = stmts.profile.get(uid);
+      if (!r) return null;
+      return {
+        uid: r.uid,
+        email: r.email,
+        name: r.display_name || r.name || (r.email ? r.email.split('@')[0] : 'there'),
+        photo: r.photo,
+        createdAt: r.created_at,
+        onboarded: r.onboarded_at != null,
+      };
+    },
+
+    setDisplayName(uid, name) {
+      stmts.setDisplayName.run(name, uid);
+    },
+
+    setOnboarded(uid, now = Date.now()) {
+      stmts.setOnboarded.run(now, uid);
     },
 
     listByDate(uid, date) {

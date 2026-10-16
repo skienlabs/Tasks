@@ -2,6 +2,7 @@
 
 A fast, lightweight daily task planner with Google sign-in. One Docker container holds the web client, API and database.
 
+- **Accounts**: anyone can sign up with **Google** or with **name + email + password** (verification email, password reset). A short welcome step on first sign-in asks for your name and your companies. Each account sees only its own tasks.
 - **Calendar-style days**: month calendar, week strip and a day view. Dots show days with pending (blue), overdue (red) or finished (green) work.
 - **Per-day tasks** with priority (High / Medium / Low / None) and optional notes.
 - **Complete, postpone to tomorrow, cancel, restore, edit, move, delete**, each with Undo.
@@ -21,17 +22,18 @@ A fast, lightweight daily task planner with Google sign-in. One Docker container
 | UI | React 19 + Material UI 9 (Vite) | Material look, small pre-compressed bundle (brotli) |
 | API | Node 22 + Fastify 5 | Fast, tiny footprint |
 | Database | SQLite (Node's built-in `node:sqlite`, WAL mode) | No separate DB server, no native modules |
-| Auth | Firebase Authentication (Google) | Server verifies Firebase ID tokens against Google's public keys; no service-account key needed |
+| Auth | Firebase Authentication (Google + Email/Password) | Passwords are handled by Firebase, never stored here. The server verifies Firebase ID tokens against Google's public keys; no service-account key needed |
 
 The image runs as a non-root user and idles at roughly 35 MB of RAM.
 
 ## 1. Firebase setup (one time)
 
 1. Open the [Firebase console](https://console.firebase.google.com/), create a project (or reuse one).
-2. **Authentication > Sign-in method**: enable **Google**.
+2. **Authentication > Sign-in method**: enable **Google** and **Email/Password** (leave "Email link" off).
 3. **Authentication > Settings > Authorized domains**: add the domain you will serve Tasks on (for example `tasks.example.com`). `localhost` is there by default.
 4. **Project settings > General > Your apps**: add a **Web app**. Copy the `firebaseConfig` object it shows.
-5. Save it on the server as `config/firebase-config.json`. Either form works:
+5. Optional: **Authentication > Templates** lets you set the sender name and wording of the verification and password-reset emails, and **Settings > Password policy** can require stronger passwords (the app already asks for at least 8 characters).
+6. Save the config on the server as `config/firebase-config.json`. Either form works:
 
    ```json
    {
@@ -58,15 +60,12 @@ One-time setup on the VM:
 ```bash
 mkdir -p ~/docker/apps/tasks/config && cd ~/docker/apps/tasks
 # 1. copy web/docker-compose.yml from this repo to ./docker-compose.yml
-# 2. create .env
-cat > .env <<'ENV'
-GCP_PROJECT_ID=your-project-id
-ALLOWED_EMAILS=you@gmail.com
-TASKS_PORT=8080
-ENV
-# 3. put the Firebase web config in ./config/firebase-config.json
+#    (uses the external skiensuite-net network, like the other apps; no port is published)
+# 2. put the Firebase web config in ./config/firebase-config.json
 chmod 644 config/firebase-config.json
 ```
+
+3. In your reverse proxy, point the Tasks domain to `http://tasks:8080`.
 
 Then run the workflow. Put the app behind your HTTPS reverse proxy; Google sign-in only works on a domain listed in Firebase's Authorized domains, and installing as an app needs HTTPS.
 
@@ -76,7 +75,7 @@ Then run the workflow. Put the app behind your HTTPS reverse proxy; Google sign-
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ALLOWED_EMAILS` | empty (anyone) | Comma-separated Google accounts allowed to sign in. `@example.com` allows a whole domain. Strongly recommended for a personal instance. |
+| `ALLOWED_EMAILS` | empty (anyone can sign up) | Optional. Comma-separated emails allowed to use the app; `@example.com` allows a whole domain. Only verified emails pass this check. |
 | `PORT` | `8080` | Port inside the container |
 | `DATA_DIR` | `/data` | Where `tasks.db` lives. Keep it on a volume. |
 | `FIREBASE_CONFIG_PATH` | `/config/firebase-config.json` | Firebase web config file |
@@ -105,6 +104,8 @@ cd web/server && npm install && npm run dev
 cd web/client && npm install && npm run dev
 ```
 
+To try real sign-up / sign-in locally, run the Firebase Auth emulator (`npx firebase-tools emulators:start --only auth --project demo-tasks`) and start the server with `NODE_ENV=development FIREBASE_AUTH_EMULATOR=http://127.0.0.1:9099` and a config whose `projectId` is `demo-tasks`. Both this and the fake dev user are ignored when `NODE_ENV=production` (always the case in the Docker image).
+
 Tests: `cd web/server && npm test`. Build the image locally: `docker build -t tasks web`.
 
 ## API
@@ -113,6 +114,8 @@ All endpoints except `/api/health` and `/api/config` need `Authorization: Bearer
 
 | Method | Path | Notes |
 | --- | --- | --- |
+| GET | `/api/me` | Profile (creates it on first call): `name, email, provider, emailVerified, onboarded` |
+| PATCH | `/api/me` | `{ name?, onboarded?: true }` |
 | GET | `/api/tasks?date=YYYY-MM-DD&today=YYYY-MM-DD` | Tasks for a day; when `date == today`, also `overdue` (pending from earlier days) |
 | GET | `/api/summary?from=&to=` | Per-day counts for the calendar (max 92 days) |
 | POST | `/api/tasks` | `{ title, date, priority?, notes?, id? }` (client `id` makes retries safe) |

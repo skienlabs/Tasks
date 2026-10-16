@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  AppBar, Avatar, BottomNavigation, BottomNavigationAction, Box, Button, ButtonBase, Divider, Drawer, Fab,
+  Alert, AppBar, Avatar, BottomNavigation, BottomNavigationAction, Box, Button, ButtonBase, Divider, Drawer, Fab,
   IconButton, ListItemIcon, ListItemText, Menu, MenuItem, Paper, Toolbar, Tooltip, Typography, useMediaQuery,
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -18,6 +18,8 @@ import InsightsOutlined from '@mui/icons-material/InsightsOutlined';
 import Insights from '@mui/icons-material/Insights';
 import SellOutlined from '@mui/icons-material/SellOutlined';
 import InstallDesktopOutlined from '@mui/icons-material/InstallDesktopOutlined';
+import AccountCircleOutlined from '@mui/icons-material/AccountCircleOutlined';
+import AccountDialog from './AccountDialog.jsx';
 import Logo from './Logo.jsx';
 import MiniCalendar from './MiniCalendar.jsx';
 import DayView from './DayView.jsx';
@@ -88,7 +90,7 @@ function NavItem({ icon, label, active, onClick, color, count }) {
   );
 }
 
-export default function Home({ user, mode, themePref, onThemeChange }) {
+export default function Home({ user, profile, onProfile, mode, themePref, onThemeChange }) {
   useStoreVersion();
   const desktop = useMediaQuery((t) => t.breakpoints.up('md'));
   const large = useMediaQuery((t) => t.breakpoints.up('lg'));
@@ -105,6 +107,8 @@ export default function Home({ user, mode, themePref, onThemeChange }) {
   const [menuEl, setMenuEl] = useState(null);
   const [dialog, setDialog] = useState(() => (params().get('new') === '1' ? { date: todayKey() } : null));
   const [tagsOpen, setTagsOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [hideVerify, setHideVerify] = useState(() => readPref('tasks.hideVerify') === profile.uid);
   const [blocked, setBlocked] = useState('');
   const [failed, setFailed] = useState(null);
   const addInputRef = useRef(null);
@@ -427,6 +431,15 @@ export default function Home({ user, mode, themePref, onThemeChange }) {
             <MenuItem
               onClick={() => {
                 setMenuEl(null);
+                setAccountOpen(true);
+              }}
+            >
+              <ListItemIcon><AccountCircleOutlined fontSize="small" /></ListItemIcon>
+              <ListItemText>Account</ListItemText>
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                setMenuEl(null);
                 openTags();
               }}
             >
@@ -486,6 +499,31 @@ export default function Home({ user, mode, themePref, onThemeChange }) {
       )}
 
       <Box component="main" sx={{ flex: 1, minWidth: 0, pt: `${APPBAR}px` }}>
+        {profile.provider === 'password' && !profile.emailVerified && !hideVerify && (
+          <Box sx={{ maxWidth: 1140, mx: 'auto', px: { xs: 1.5, sm: 3 }, pt: 2 }}>
+            <Alert
+              severity="info"
+              sx={{ borderRadius: 3 }}
+              action={
+                <>
+                  <Button color="inherit" size="small" onClick={() => setAccountOpen(true)}>Verify</Button>
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={() => {
+                      setHideVerify(true);
+                      writePref('tasks.hideVerify', profile.uid);
+                    }}
+                  >
+                    Later
+                  </Button>
+                </>
+              }
+            >
+              Please verify your email ({profile.email}) so you can recover your account.
+            </Alert>
+          </Box>
+        )}
         {view === 'day' ? (
           <DayView
             date={date}
@@ -568,6 +606,13 @@ export default function Home({ user, mode, themePref, onThemeChange }) {
         onManageTags={openTags}
       />
       <TagManager open={tagsOpen} onClose={() => setTagsOpen(false)} />
+      <AccountDialog
+        open={accountOpen}
+        onClose={() => setAccountOpen(false)}
+        profile={profile}
+        photo={user.photoURL}
+        onProfile={onProfile}
+      />
       <Toast />
     </Box>
   );

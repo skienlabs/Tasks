@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { SignJWT, exportJWK, generateKeyPair, createLocalJWKSet } from 'jose';
 import { buildApp } from '../src/app.js';
 import { createVerifier } from '../src/auth.js';
-import { parseFirebaseWebConfig } from '../src/config.js';
+import { loadConfig, parseFirebaseWebConfig } from '../src/config.js';
 import { openDb } from '../src/db.js';
 import { addDays, isValidDate } from '../src/dates.js';
 
@@ -20,7 +20,10 @@ async function setup({ allowList = [] } = {}) {
 
   async function token(sub, extra = {}, opts = {}) {
     const now = Math.floor(Date.now() / 1000);
-    return new SignJWT({ auth_time: now, email: `${sub}@example.com`, email_verified: true, ...extra })
+    return new SignJWT({
+      auth_time: now, email: `${sub}@example.com`, email_verified: true,
+      firebase: { sign_in_provider: 'google.com' }, ...extra,
+    })
       .setProtectedHeader({ alg: 'RS256', kid: 'k1' })
       .setIssuer(opts.iss ?? `https://securetoken.google.com/${PROJECT}`)
       .setAudience(opts.aud ?? PROJECT)
@@ -300,4 +303,67 @@ test('tags: CRUD, ownership, task assignment, stats', async () => {
   assert.equal((await u1('DELETE', `/api/tags/${zup.id}`)).statusCode, 204);
   r = await u1('GET', '/api/tasks?date=2026-10-18&today=2026-10-18');
   assert.deepEqual(r.json().tasks[0].tagIds, []);
+});
+
+test('sign-in providers and profile / onboarding', async () => {
+  const { app, token } = await setup();
+  const call = async (t, method, url, payload) =>
+    app.inject({ method, url, payload, headers: { authorization: `Bearer ${t}` } });
+
+  // Anonymous or unknown providers are refused; Google and email/password work.
+  assert.equal((await call(await token('a', { firebase: { sign_in_provider: 'anonymous' } }), 'GET', '/api/me')).statusCode, 403);
+  assert.equal((await call(await token('a', { firebase: undefined }), 'GET', '/api/me')).statusCode, 403);
+
+  // Email/password user who just signed up: no name claim yet, email not verified.
+  const pw = await token('newbie', { name: undefined, email_verified: false, firebase: { sign_in_provider: 'password' } });
+  let r = await call(pw, 'GET', '/api/me');
+  assert.equal(r.statusCode, 200);
+  let me = r.json();
+  assert.equal(me.provider, 'password');
+  assert.equal(me.emailVerified, false);
+  assert.equal(me.onboarded, false);
+  assert.equal(me.name, 'newbie', 'falls back to the email prefix');
+
+  r = await call(pw, 'PATCH', '/api/me', { name: '  Ann   Lee ', onboarded: true });
+  me = r.json();
+  assert.equal(me.name, 'Ann Lee');
+  assert.equal(me.onboarded, true);
+  assert.equal((await call(pw, 'PATCH', '/api/me', { name: '' })).statusCode, 400);
+  assert.equal((await call(pw, 'PATCH', '/api/me', { onboarded: false })).statusCode, 400);
+  assert.equal((await call(pw, 'PATCH', '/api/me', { email: 'x@y.z' })).statusCode, 400);
+
+  // A later token with a different Google name does not override the chosen name.
+  const g = await token('newbie', { name: 'Google Name', firebase: { sign_in_provider: 'google.com' } });
+  r = await call(g, 'GET', '/api/me');
+  assert.equal(r.json().name, 'Ann Lee');
+  assert.equal(r.json().onboarded, true);
+
+  // Google user without a chosen name uses the Google name.
+  r = await call(await token('gina', { name: 'Gina G' }), 'GET', '/api/me');
+  assert.equal(r.json().name, 'Gina G');
+});
+
+test('migration from v2 to v3 keeps users', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tasks-mig-')), 'tasks.db');
+  let db = openDb(file);
+  db.prepare("INSERT INTO users (uid, email, name, photo, created_at, last_seen) VALUES ('u', 'u@x.com', 'U', null, 1, 1)").run();
+  db.exec('ALTER TABLE users DROP COLUMN display_name; ALTER TABLE users DROP COLUMN onboarded_at; PRAGMA user_version = 2;');
+  db.close();
+  db = openDb(file);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
+  const { createRepo } = await import('../src/db.js');
+  assert.deepEqual(createRepo(db).getProfile('u'), { uid: 'u', email: 'u@x.com', name: 'U', photo: null, createdAt: 1, onboarded: false });
+  db.close();
+});
+
+test('dev-only switches are ignored in production', () => {
+  const quiet = () => {};
+  const prod = loadConfig({ NODE_ENV: 'production', AUTH_MODE: 'dev', FIREBASE_AUTH_EMULATOR: 'http://127.0.0.1:9099', FIREBASE_CONFIG_PATH: '/nope' }, quiet);
+  assert.equal(prod.devAuth, false);
+  assert.equal(prod.authEmulator, null);
+  const dev = loadConfig({ NODE_ENV: 'development', FIREBASE_AUTH_EMULATOR: 'http://127.0.0.1:9099', FIREBASE_CONFIG_PATH: '/nope' }, quiet);
+  assert.equal(dev.authEmulator, 'http://127.0.0.1:9099');
 });

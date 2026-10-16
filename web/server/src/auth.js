@@ -1,8 +1,10 @@
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createRemoteJWKSet, decodeJwt, jwtVerify } from 'jose';
 
 // Public keys Google uses to sign Firebase Auth ID tokens.
 const FIREBASE_JWKS_URL =
   'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
+
+const ALLOWED_PROVIDERS = new Set(['google.com', 'password']);
 
 export class AuthError extends Error {
   constructor(message, statusCode = 401) {
@@ -37,24 +39,34 @@ export function createVerifier({ projectId, allowList = [], keys } = {}) {
     } catch {
       throw new AuthError('Invalid or expired session');
     }
-    const now = Math.floor(Date.now() / 1000);
-    if (typeof payload.sub !== 'string' || !payload.sub || payload.sub.length > 128) {
-      throw new AuthError('Invalid session');
-    }
-    if (typeof payload.auth_time !== 'number' || payload.auth_time > now + 60) {
-      throw new AuthError('Invalid session');
-    }
+    return userFromClaims(payload, allowList);
+  };
+}
 
-    const email = typeof payload.email === 'string' ? payload.email.toLowerCase() : null;
-    if (allowList.length && !isAllowed(email, payload.email_verified === true, allowList)) {
-      throw new AuthError('This Google account is not allowed to use this app', 403);
-    }
-    return {
-      uid: payload.sub,
-      email,
-      name: typeof payload.name === 'string' ? payload.name : null,
-      photo: typeof payload.picture === 'string' ? payload.picture : null,
-    };
+function userFromClaims(payload, allowList) {
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof payload.sub !== 'string' || !payload.sub || payload.sub.length > 128) {
+    throw new AuthError('Invalid session');
+  }
+  if (typeof payload.auth_time !== 'number' || payload.auth_time > now + 60) {
+    throw new AuthError('Invalid session');
+  }
+
+  // Only the sign-in methods this app offers (blocks e.g. anonymous accounts).
+  const provider = payload.firebase?.sign_in_provider;
+  if (!ALLOWED_PROVIDERS.has(provider)) throw new AuthError('This sign-in method is not allowed', 403);
+
+  const email = typeof payload.email === 'string' ? payload.email.toLowerCase() : null;
+  if (allowList.length && !isAllowed(email, payload.email_verified === true, allowList)) {
+    throw new AuthError('This account is not allowed to use this app', 403);
+  }
+  return {
+    uid: payload.sub,
+    email,
+    name: typeof payload.name === 'string' ? payload.name : null,
+    photo: typeof payload.picture === 'string' ? payload.picture : null,
+    provider,
+    emailVerified: payload.email_verified === true,
   };
 }
 
@@ -66,5 +78,27 @@ function isAllowed(email, verified, allowList) {
 
 /** Local development only: any request is "dev@localhost". Never enabled in production. */
 export function createDevVerifier() {
-  return async () => ({ uid: 'dev-user', email: 'dev@localhost', name: 'Developer', photo: null });
+  return async () => ({
+    uid: 'dev-user', email: 'dev@localhost', name: 'Developer', photo: null, provider: 'password', emailVerified: true,
+  });
+}
+
+/**
+ * Local testing against the Firebase Auth emulator only (its tokens are unsigned).
+ * Never enabled in production; see config.js.
+ */
+export function createEmulatorVerifier({ projectId, allowList = [] }) {
+  return async function verify(token) {
+    let payload;
+    try {
+      payload = decodeJwt(token);
+    } catch {
+      throw new AuthError('Invalid session');
+    }
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.aud !== projectId || payload.iss !== `https://securetoken.google.com/${projectId}` || !(payload.exp > now)) {
+      throw new AuthError('Invalid or expired session');
+    }
+    return userFromClaims(payload, allowList);
+  };
 }

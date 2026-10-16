@@ -71,8 +71,11 @@ export function loadConfig(env = process.env, log = (m) => console.warn(`[config
   const devAuth = !production && env.AUTH_MODE === 'dev';
   if (env.AUTH_MODE === 'dev' && production) log('AUTH_MODE=dev ignored because NODE_ENV=production.');
 
+  const authEmulator = !production && env.FIREBASE_AUTH_EMULATOR ? env.FIREBASE_AUTH_EMULATOR : null;
+
   return {
     production,
+    authEmulator,
     host: env.HOST || '0.0.0.0',
     port: Number(env.PORT || 8080),
     dbPath: env.DB_PATH || path.join(dataDir, 'tasks.db'),

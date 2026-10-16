@@ -3,23 +3,32 @@ import {
   GoogleAuthProvider,
   browserLocalPersistence,
   browserPopupRedirectResolver,
+  connectAuthEmulator,
+  createUserWithEmailAndPassword,
   getRedirectResult,
   indexedDBLocalPersistence,
   initializeAuth,
   onAuthStateChanged,
+  reload,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
   signOut as fbSignOut,
+  updateProfile,
 } from '@firebase/auth';
 import { setTokenGetter } from './api.js';
 import { readPref, writePref } from './prefs.js';
 
 let auth = null;
 let devMode = false;
+let started = false;
+let signUpName = ''; // remembered so the welcome screen can prefill it
 
 const DEV_USER = { uid: 'dev-user', displayName: 'Developer', email: 'dev@localhost', photoURL: null };
 
-let started = false;
+const toUser = (u) => (u ? { uid: u.uid, displayName: u.displayName, email: u.email, photoURL: u.photoURL } : null);
 
 /** Starts auth and calls `onUser(user | null)` whenever the session changes. */
 export function startAuth(config, onUser, onError) {
@@ -28,8 +37,7 @@ export function startAuth(config, onUser, onError) {
   if (config.devAuth) {
     devMode = true;
     setTokenGetter(async () => null);
-    const signedIn = readPref('tasks.devSignedIn') !== '0';
-    onUser(signedIn ? DEV_USER : null);
+    onUser(readPref('tasks.devSignedIn') !== '0' ? DEV_USER : null);
     return;
   }
   const app = initializeApp(config.firebase);
@@ -37,18 +45,19 @@ export function startAuth(config, onUser, onError) {
     persistence: [indexedDBLocalPersistence, browserLocalPersistence],
     popupRedirectResolver: browserPopupRedirectResolver,
   });
+  if (config.authEmulator) connectAuthEmulator(auth, config.authEmulator, { disableWarnings: true }); // local testing only
   setTokenGetter((force) => (auth.currentUser ? auth.currentUser.getIdToken(force) : Promise.resolve(null)));
   getRedirectResult(auth).catch((err) => onError(describe(err)));
-  onAuthStateChanged(auth, (u) =>
-    onUser(u ? { uid: u.uid, displayName: u.displayName, email: u.email, photoURL: u.photoURL } : null));
+  onAuthStateChanged(auth, (u) => onUser(toUser(u)));
 }
 
-export async function signIn() {
-  if (devMode) {
-    writePref('tasks.devSignedIn', '1');
-    window.location.reload();
-    return;
-  }
+function devSignIn() {
+  writePref('tasks.devSignedIn', '1');
+  window.location.reload();
+}
+
+export async function signInWithGoogle() {
+  if (devMode) return devSignIn();
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
   try {
@@ -60,8 +69,59 @@ export async function signIn() {
       return;
     }
     if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return;
-    throw new Error(describe(err));
+    throw new Error(describe(err, 'Google'));
   }
+}
+
+export async function signInWithEmail(email, password) {
+  if (devMode) return devSignIn();
+  try {
+    await signInWithEmailAndPassword(auth, email.trim(), password);
+  } catch (err) {
+    throw new Error(describe(err, 'Email'));
+  }
+}
+
+export async function signUpWithEmail(name, email, password) {
+  signUpName = name.trim();
+  if (devMode) return devSignIn();
+  try {
+    const { user } = await createUserWithEmailAndPassword(auth, email.trim(), password);
+    await updateProfile(user, { displayName: signUpName });
+    await user.getIdToken(true); // so the server sees the name right away
+    sendEmailVerification(user).catch(() => {}); // best effort; can be resent from Account
+  } catch (err) {
+    throw new Error(describe(err, 'Email'));
+  }
+}
+
+export async function resetPassword(email) {
+  if (devMode) return;
+  try {
+    await sendPasswordResetEmail(auth, email.trim());
+  } catch (err) {
+    throw new Error(describe(err, 'Email'));
+  }
+}
+
+export async function resendVerification() {
+  if (devMode || !auth?.currentUser) return;
+  try {
+    await sendEmailVerification(auth.currentUser);
+  } catch (err) {
+    throw new Error(describe(err, 'Email'));
+  }
+}
+
+/** After the user clicks the link in the email: refresh so the new status reaches the server. */
+export async function refreshUser() {
+  if (devMode || !auth?.currentUser) return;
+  await reload(auth.currentUser);
+  await auth.currentUser.getIdToken(true);
+}
+
+export function suggestedName() {
+  return auth?.currentUser?.displayName || signUpName || '';
 }
 
 export async function signOut() {
@@ -73,12 +133,34 @@ export async function signOut() {
   await fbSignOut(auth);
 }
 
-function describe(err) {
+function describe(err, method = '') {
   const code = err?.code || '';
-  if (code === 'auth/unauthorized-domain') {
-    return `This domain (${window.location.hostname}) is not authorised in Firebase. Add it under Authentication > Settings > Authorized domains.`;
+  switch (code) {
+    case 'auth/unauthorized-domain':
+      return `This domain (${window.location.hostname}) is not authorised in Firebase. Add it under Authentication > Settings > Authorized domains.`;
+    case 'auth/operation-not-allowed':
+      return `${method || 'This'} sign-in is not enabled in Firebase Authentication > Sign-in method.`;
+    case 'auth/network-request-failed':
+      return 'Network error. Check your connection and try again.';
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+    case 'auth/invalid-login-credentials':
+      return 'Email or password is incorrect. If you signed up with Google, use Continue with Google.';
+    case 'auth/email-already-in-use':
+      return 'An account with this email already exists. Sign in instead, or use Continue with Google if you signed up with it.';
+    case 'auth/invalid-email':
+      return 'That email address doesn’t look right.';
+    case 'auth/weak-password':
+    case 'auth/password-does-not-meet-requirements':
+      return 'Choose a stronger password (at least 8 characters).';
+    case 'auth/too-many-requests':
+      return 'Too many attempts. Wait a moment and try again.';
+    case 'auth/user-disabled':
+      return 'This account has been disabled.';
+    case 'auth/missing-email':
+      return 'Enter your email address.';
+    default:
+      return err?.message || 'Something went wrong. Please try again.';
   }
-  if (code === 'auth/operation-not-allowed') return 'Google sign-in is not enabled in Firebase Authentication.';
-  if (code === 'auth/network-request-failed') return 'Network error while signing in. Check your connection.';
-  return err?.message || 'Sign-in failed';
 }

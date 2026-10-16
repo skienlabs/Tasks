@@ -108,10 +108,42 @@ export function buildApp({ db, verify, config, logger = false }) {
     configured: Boolean(config.firebase) || config.devAuth,
     devAuth: config.devAuth,
     firebase: config.firebase,
+    ...(config.authEmulator ? { authEmulator: config.authEmulator } : {}),
   }));
 
   // ---- Tasks ---------------------------------------------------------------
-  app.get('/api/me', async (req) => req.user);
+  const PROFILE_NAME = { type: 'string', minLength: 1, maxLength: 60 };
+
+  app.get('/api/me', async (req) => {
+    repo.upsertUser(req.user); // always fresh here: email, Google name/photo may change
+    seen.set(req.user.uid, Date.now());
+    return {
+      ...repo.getProfile(req.user.uid),
+      provider: req.user.provider ?? null,
+      emailVerified: req.user.emailVerified ?? false,
+    };
+  });
+
+  app.patch('/api/me', {
+    schema: {
+      body: {
+        type: 'object',
+        minProperties: 1,
+        properties: { name: PROFILE_NAME, onboarded: { type: 'boolean', const: true } },
+        additionalProperties: false,
+      },
+    },
+  }, async (req) => {
+    const uid = req.user.uid;
+    repo.upsertUser(req.user);
+    if (req.body.name !== undefined) repo.setDisplayName(uid, cleanName(req.body.name));
+    if (req.body.onboarded) repo.setOnboarded(uid);
+    return {
+      ...repo.getProfile(uid),
+      provider: req.user.provider ?? null,
+      emailVerified: req.user.emailVerified ?? false,
+    };
+  });
 
   app.get('/api/tasks', {
     schema: {

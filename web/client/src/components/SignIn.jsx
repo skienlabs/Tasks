@@ -1,7 +1,12 @@
 import { useState } from 'react';
-import { Alert, Box, Button, CircularProgress, Typography } from '@mui/material';
+import {
+  Alert, Box, Button, CircularProgress, Divider, IconButton, InputAdornment, Link, TextField, Typography,
+} from '@mui/material';
+import Visibility from '@mui/icons-material/Visibility';
+import VisibilityOff from '@mui/icons-material/VisibilityOff';
+import ArrowBack from '@mui/icons-material/ArrowBack';
 import Logo from './Logo.jsx';
-import { signIn } from '../lib/auth.js';
+import { resetPassword, signInWithEmail, signInWithGoogle, signUpWithEmail } from '../lib/auth.js';
 
 function GoogleG() {
   return (
@@ -14,82 +19,237 @@ function GoogleG() {
   );
 }
 
-export default function SignIn({ variant, error, onError }) {
-  const [busy, setBusy] = useState(false);
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  const go = async () => {
-    onError?.('');
-    setBusy(true);
-    try {
-      await signIn();
-    } catch (err) {
-      onError?.(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
+function Shell({ children }) {
   return (
     <Box sx={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', p: 2 }}>
       <Box
         sx={(t) => ({
-          width: '100%',
-          maxWidth: 420,
-          p: { xs: 4, sm: 5 },
-          borderRadius: '28px',
-          bgcolor: t.tokens.surfaceHigh,
-          border: `1px solid ${t.palette.divider}`,
-          display: 'grid',
-          justifyItems: 'center',
-          textAlign: 'center',
-          gap: 1,
+          width: '100%', maxWidth: 440, p: { xs: 1, sm: 5 }, borderRadius: '28px',
+          bgcolor: { xs: 'transparent', sm: t.tokens.surfaceHigh },
+          border: { xs: 'none', sm: `1px solid ${t.palette.divider}` },
         })}
       >
-        <Logo size={64} />
-        <Typography variant="h4" sx={{ mt: 2, fontWeight: 400 }}>Tasks</Typography>
-        <Typography color="text.secondary" sx={{ mb: 3 }}>
-          Plan each day. Finish what matters.
-        </Typography>
+        {children}
+      </Box>
+    </Box>
+  );
+}
 
+function Header({ title, subtitle }) {
+  return (
+    <Box sx={{ display: 'grid', justifyItems: 'center', textAlign: 'center', mb: 3 }}>
+      <Logo size={56} />
+      <Typography variant="h4" sx={{ mt: 2, fontWeight: 400, fontSize: { xs: 28, sm: 32 } }}>{title}</Typography>
+      {subtitle && <Typography color="text.secondary" sx={{ mt: 0.5 }}>{subtitle}</Typography>}
+    </Box>
+  );
+}
+
+function PasswordField({ label, value, onChange, autoComplete, helperText, error }) {
+  const [show, setShow] = useState(false);
+  return (
+    <TextField
+      label={label}
+      type={show ? 'text' : 'password'}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      autoComplete={autoComplete}
+      required
+      fullWidth
+      error={error}
+      helperText={helperText}
+      slotProps={{
+        input: {
+          endAdornment: (
+            <InputAdornment position="end">
+              <IconButton aria-label={show ? 'Hide password' : 'Show password'} onClick={() => setShow((s) => !s)} edge="end">
+                {show ? <VisibilityOff /> : <Visibility />}
+              </IconButton>
+            </InputAdornment>
+          ),
+        },
+      }}
+    />
+  );
+}
+
+export default function SignIn({ variant, error, onError }) {
+  const [mode, setMode] = useState('signin'); // signin | signup | reset
+  const [busy, setBusy] = useState(''); // '' | 'google' | 'email'
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [touched, setTouched] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+
+  const switchTo = (m) => {
+    onError?.('');
+    setTouched(false);
+    setResetSent(false);
+    setMode(m);
+  };
+
+  const run = async (kind, fn) => {
+    onError?.('');
+    setBusy(kind);
+    try {
+      await fn();
+    } catch (err) {
+      onError?.(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  if (variant) {
+    return (
+      <Shell>
+        <Header title="Tasks" subtitle="Plan each day. Finish what matters." />
         {variant === 'setup' && (
-          <Alert severity="info" sx={{ textAlign: 'left', borderRadius: 3 }}>
-            Sign-in isn&apos;t configured yet. Put your Firebase web config in{' '}
-            <code>/config/firebase-config.json</code> inside the container (see README) and restart it.
+          <Alert severity="info" sx={{ borderRadius: 3 }}>
+            Sign-in isn&apos;t configured yet. Put your Firebase web config in <code>/config/firebase-config.json</code>
+            {' '}inside the container (see README) and restart it.
           </Alert>
         )}
         {variant === 'error' && (
-          <>
-            <Alert severity="error" sx={{ textAlign: 'left', borderRadius: 3, mb: 2 }}>
-              Can&apos;t reach the Tasks server.
-            </Alert>
+          <Box sx={{ display: 'grid', gap: 2, justifyItems: 'center' }}>
+            <Alert severity="error" sx={{ borderRadius: 3, width: '100%' }}>Can&apos;t reach the Tasks server.</Alert>
             <Button variant="outlined" onClick={() => window.location.reload()}>Try again</Button>
-          </>
+          </Box>
         )}
-        {!variant && (
-          <>
-            <Button
-              variant="outlined"
-              size="large"
-              onClick={go}
-              disabled={busy}
-              startIcon={busy ? <CircularProgress size={18} /> : <GoogleG />}
-              sx={(t) => ({
-                height: 48,
-                px: 3,
-                color: 'text.primary',
-                borderColor: t.tokens.outline,
-                bgcolor: t.palette.mode === 'dark' ? '#131314' : '#fff',
-                fontSize: 15,
-              })}
-            >
-              Sign in with Google
-            </Button>
-            {error && (
-              <Alert severity="error" sx={{ mt: 2, textAlign: 'left', borderRadius: 3 }}>{error}</Alert>
-            )}
-          </>
+      </Shell>
+    );
+  }
+
+  const emailOk = EMAIL_RE.test(email.trim());
+  const passOk = mode === 'signup' ? password.length >= 8 : password.length > 0;
+  const nameOk = name.trim().length > 0;
+
+  const submit = (e) => {
+    e.preventDefault();
+    setTouched(true);
+    if (mode === 'reset') {
+      if (!emailOk) return;
+      run('email', async () => {
+        await resetPassword(email);
+        setResetSent(true);
+      });
+      return;
+    }
+    if (!emailOk || !passOk || (mode === 'signup' && !nameOk)) return;
+    run('email', () => (mode === 'signup' ? signUpWithEmail(name, email, password) : signInWithEmail(email, password)));
+  };
+
+  const google = (
+    <Button
+      variant="outlined"
+      size="large"
+      fullWidth
+      onClick={() => run('google', signInWithGoogle)}
+      disabled={Boolean(busy)}
+      startIcon={busy === 'google' ? <CircularProgress size={18} /> : <GoogleG />}
+      sx={(t) => ({
+        height: 48, color: 'text.primary', borderColor: t.tokens.outline, fontSize: 15,
+        bgcolor: t.palette.mode === 'dark' ? '#131314' : '#fff',
+      })}
+    >
+      Continue with Google
+    </Button>
+  );
+
+  const titles = {
+    signin: ['Welcome back', 'Sign in to your tasks'],
+    signup: ['Create your account', 'Plan each day. Finish what matters.'],
+    reset: ['Reset password', 'We’ll email you a link to choose a new one'],
+  };
+
+  return (
+    <Shell>
+      {mode === 'reset' && (
+        <IconButton aria-label="Back to sign in" onClick={() => switchTo('signin')} sx={{ ml: -1, mt: -1 }}>
+          <ArrowBack />
+        </IconButton>
+      )}
+      <Header title={titles[mode][0]} subtitle={titles[mode][1]} />
+
+      {mode !== 'reset' && (
+        <>
+          {google}
+          <Divider sx={{ my: 2.5, color: 'text.secondary', fontSize: 13 }}>or</Divider>
+        </>
+      )}
+
+      <Box component="form" noValidate onSubmit={submit} sx={{ display: 'grid', gap: 2 }}>
+        {mode === 'signup' && (
+          <TextField
+            label="Your name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoComplete="name"
+            required
+            fullWidth
+            error={touched && !nameOk}
+            helperText={touched && !nameOk ? 'Enter your name' : ' '}
+            slotProps={{ htmlInput: { maxLength: 60 } }}
+          />
         )}
+        <TextField
+          label="Email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          autoComplete={mode === 'signup' ? 'email' : 'username'}
+          required
+          fullWidth
+          error={touched && !emailOk}
+          helperText={touched && !emailOk ? 'Enter a valid email' : ' '}
+        />
+        {mode !== 'reset' && (
+          <PasswordField
+            label="Password"
+            value={password}
+            onChange={setPassword}
+            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+            error={touched && !passOk}
+            helperText={mode === 'signup' ? 'At least 8 characters' : touched && !passOk ? 'Enter your password' : ' '}
+          />
+        )}
+
+        {mode === 'signin' && (
+          <Link component="button" type="button" onClick={() => switchTo('reset')} sx={{ justifySelf: 'start', mt: -1, fontSize: 14 }}>
+            Forgot password?
+          </Link>
+        )}
+
+        {resetSent && (
+          <Alert severity="success" sx={{ borderRadius: 3 }}>
+            If an account exists for {email.trim()}, a reset link is on its way. Check your inbox and spam folder.
+          </Alert>
+        )}
+        {error && <Alert severity="error" sx={{ borderRadius: 3 }}>{error}</Alert>}
+
+        <Button
+          type="submit"
+          variant="contained"
+          size="large"
+          disabled={Boolean(busy)}
+          startIcon={busy === 'email' ? <CircularProgress size={18} color="inherit" /> : null}
+          sx={{ height: 48, fontSize: 15 }}
+        >
+          {mode === 'signup' ? 'Create account' : mode === 'reset' ? 'Send reset link' : 'Sign in'}
+        </Button>
       </Box>
-    </Box>
+
+      {mode !== 'reset' && (
+        <Typography sx={{ textAlign: 'center', mt: 3, fontSize: 14.5 }} color="text.secondary">
+          {mode === 'signin' ? 'New to Tasks? ' : 'Already have an account? '}
+          <Link component="button" type="button" onClick={() => switchTo(mode === 'signin' ? 'signup' : 'signin')} sx={{ fontSize: 14.5, fontWeight: 500, verticalAlign: 'baseline' }}>
+            {mode === 'signin' ? 'Create an account' : 'Sign in'}
+          </Link>
+        </Typography>
+      )}
+    </Shell>
   );
 }
