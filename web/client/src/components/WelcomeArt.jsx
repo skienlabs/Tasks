@@ -245,7 +245,7 @@ function Dial({ active, reduced }) {
     <Box
       aria-hidden
       sx={{
-        position: 'absolute', right: { xs: -300, md: -330 }, bottom: { xs: -340, md: -360 }, width: 680, height: 680,
+        position: 'absolute', right: { xs: -300, md: -400 }, bottom: { xs: -340, md: -440 }, width: 680, height: 680,
         pointerEvents: 'none', opacity: 0.9,
         // Turn the dial so the current feature's arc faces the visible (upper-left) part.
         transform: `rotate(${315 - (active + 0.5) * 72}deg)`,
@@ -337,17 +337,17 @@ export default function WelcomeArt({ compact = false }) {
           key={scene.key}
           aria-hidden
           sx={{
-            display: 'flex', justifyContent: { xs: 'center', md: 'flex-start' },
+            display: 'flex', justifyContent: 'center',
             height: compact ? 210 : { md: 340, lg: 430 }, alignItems: 'center',
             '& .wa-stage': compact
               ? { transform: 'scale(0.72)', transformOrigin: 'center' }
-              : { transform: { md: 'scale(1.1)', lg: 'scale(1.32)' }, transformOrigin: 'left center' },
+              : { transform: { md: 'scale(1.1)', lg: 'scale(1.32)' }, transformOrigin: 'center' },
             animation: reduced ? 'none' : 'wa-scene .45s ease-out',
           }}
         >
           <View />
         </Box>
-        <Box sx={{ maxWidth: 440, mt: compact ? 0 : 3, textAlign: { xs: compact ? 'center' : 'left', md: 'left' }, mx: { xs: compact ? 'auto' : 0, md: 0 } }} aria-live="polite">
+        <Box sx={{ maxWidth: 480, mt: compact ? 0 : 3, textAlign: 'center', mx: 'auto' }} aria-live="polite">
           <Typography
             component="h2"
             sx={{ fontSize: compact ? 22 : { md: 40, lg: 46 }, lineHeight: 1.1, fontWeight: 500, letterSpacing: '-0.02em', color: PAPER, textWrap: 'balance' }}
@@ -358,7 +358,7 @@ export default function WelcomeArt({ compact = false }) {
         </Box>
       </Box>
 
-      <Box sx={{ position: 'relative', display: 'flex', gap: 1, justifyContent: { xs: compact ? 'center' : 'flex-start', md: 'flex-start' } }} role="tablist" aria-label="Features">
+      <Box sx={{ position: 'relative', display: 'flex', gap: 1, justifyContent: 'center' }} role="tablist" aria-label="Features">
         {SCENES.map((s, n) => (
           <ButtonBase
             key={s.key}

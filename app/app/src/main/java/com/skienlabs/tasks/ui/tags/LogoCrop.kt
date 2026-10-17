@@ -73,19 +73,39 @@ suspend fun decodeForCrop(context: Context, uri: Uri): Bitmap = withContext(Disp
             if (w.toLong() * h > 100_000_000L) throw IllegalArgumentException("That image is too large")
             val scale = minOf(1f, 2048f / maxOf(w, h))
             decoder.setTargetSize(maxOf(1, Math.round(w * scale)), maxOf(1, Math.round(h * scale)))
-        }
+        }.let { toArgb(it) }
     } catch (e: IllegalArgumentException) {
         throw e
     } catch (e: Exception) {
-        throw IllegalArgumentException("That file isn't an image this phone can open")
+        // Some files ImageDecoder refuses still open with the older decoder.
+        decodeFallback(context, uri) ?: throw IllegalArgumentException("That file isn't an image this phone can open")
     }
 }
+
+/** HDR / wide-colour photos decode to 16-bit bitmaps: bring them to plain 8-bit sRGB for the crop. */
+private fun toArgb(b: Bitmap): Bitmap {
+    if (b.config == Bitmap.Config.ARGB_8888 && (b.colorSpace == null || b.colorSpace == android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB))) return b
+    val out = Bitmap.createBitmap(b.width, b.height, Bitmap.Config.ARGB_8888)
+    Canvas(out).drawBitmap(b, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+    b.recycle()
+    return out
+}
+
+private fun decodeFallback(context: Context, uri: Uri): Bitmap? = runCatching {
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+    if (bounds.outWidth <= 0) return@runCatching null
+    var sample = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 2048) sample *= 2
+    val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = Bitmap.Config.ARGB_8888 }
+    context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) }
+}.getOrNull()
 
 /**
  * The crop: [scale] is pixels-on-screen per image pixel within a square of [view] px,
  * [offset] is where the image's top-left sits in that square.
  */
-private fun renderLogo(src: Bitmap, view: Float, scale: Float, offset: Offset): String {
+internal fun renderLogo(src: Bitmap, view: Float, scale: Float, offset: Offset): String {
     val out = Bitmap.createBitmap(LOGO_OUT, LOGO_OUT, Bitmap.Config.ARGB_8888)
     val k = LOGO_OUT / view
     val m = Matrix().apply {

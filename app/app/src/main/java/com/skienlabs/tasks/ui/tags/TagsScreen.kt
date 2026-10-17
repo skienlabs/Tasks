@@ -187,7 +187,7 @@ fun TagEditor(store: Store, tag: Tag?, onDismiss: () -> Unit) {
                 close()
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                error = (e as? ApiException)?.message ?: "Couldn't save the tag"
+                error = (e as? ApiException)?.message ?: "Couldn't save the tag (${e.message ?: e.javaClass.simpleName})"
             } finally {
                 busy = false
             }
@@ -263,7 +263,7 @@ fun TagEditor(store: Store, tag: Tag?, onDismiss: () -> Unit) {
                             close()
                         } catch (e: Exception) {
                             if (e is kotlinx.coroutines.CancellationException) throw e
-                            error = (e as? ApiException)?.message ?: "Couldn't delete the tag"
+                            error = (e as? ApiException)?.message ?: "Couldn't delete the tag (${e.message ?: e.javaClass.simpleName})"
                         } finally {
                             busy = false
                         }

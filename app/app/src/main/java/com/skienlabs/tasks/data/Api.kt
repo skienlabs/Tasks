@@ -84,7 +84,15 @@ class HttpTasksApi(
 
     suspend fun authHeaders(force: Boolean = false): Map<String, String> {
         val headers = mutableMapOf("X-Client-Id" to clientId)
-        tokens.token(force)?.let { headers["Authorization"] = "Bearer $it" }
+        val token = try {
+            tokens.token(force)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Firebase couldn't refresh the sign-in (no network to Google, clock wrong, ...).
+            throw ApiException(0, "Couldn't confirm your sign-in. Check your connection and try again.")
+        }
+        token?.let { headers["Authorization"] = "Bearer $it" }
         return headers
     }
 
@@ -106,6 +114,13 @@ class HttpTasksApi(
             res
         } catch (e: IOException) {
             throw ApiException(0, "You appear to be offline")
+        } catch (e: ApiException) {
+            throw e
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Anything else from the network stack: say what it was rather than a generic failure.
+            throw ApiException(0, "Couldn't reach Tasks (${e.message ?: e.javaClass.simpleName})")
         }
         response.use { res ->
             val text = try {
