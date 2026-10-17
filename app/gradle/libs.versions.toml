@@ -17,6 +17,7 @@ gmsPlugin = "4.5.0"
 credentials = "1.6.0"
 googleid = "1.2.1"
 profileinstaller = "1.4.1"
+glance = "1.2.0"
 junit = "4.13.2"
 robolectric = "4.17"
 roborazzi = "1.76.0"
@@ -54,6 +55,7 @@ firebase-auth = { module = "com.google.firebase:firebase-auth" }
 credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
 credentials-play = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "credentials" }
 googleid = { module = "com.google.android.libraries.identity.googleid:googleid", version.ref = "googleid" }
+glance-appwidget = { module = "androidx.glance:glance-appwidget", version.ref = "glance" }
 profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "profileinstaller" }
 junit = { module = "junit:junit", version.ref = "junit" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }

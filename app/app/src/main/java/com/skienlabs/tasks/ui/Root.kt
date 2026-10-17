@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.skienlabs.tasks.AppController
 import com.skienlabs.tasks.Session
@@ -27,8 +28,14 @@ import com.skienlabs.tasks.ui.images.LocalImages
 @Composable
 fun Root(app: AppController, theme: ThemePref) {
     val session by app.session.collectAsStateWithLifecycle()
+    val introSeen by app.prefs.introSeen.collectAsStateWithLifecycle(null)
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // Someone already signed in has no need for the tour later (e.g. after signing out).
+    val signedIn = session is Session.Ready
+    androidx.compose.runtime.LaunchedEffect(signedIn, introSeen) { if (signedIn && introSeen == false) app.prefs.setIntroSeen() }
     val screen = when (val s = session) {
         is Session.Ready -> if (s.profile.onboarded) "home" else "onboarding"
+        Session.SignedOut -> when (introSeen) { null -> "Starting"; false -> "intro"; true -> "SignedOut" }
         else -> s::class.simpleName ?: ""
     }
     // Surface also sets the default text color for the theme (Box alone would leave it black).
@@ -38,7 +45,10 @@ fun Root(app: AppController, theme: ThemePref) {
                 when (val s = session) {
                     Session.Starting, is Session.Loading -> LoadingScreen()
                     Session.NotConfigured -> NotConfiguredScreen()
-                    Session.SignedOut -> SignInScreen(app.auth)
+                    Session.SignedOut ->
+                        if (key == "intro") com.skienlabs.tasks.ui.intro.IntroScreen { scope.launch { app.prefs.setIntroSeen() } }
+                        else if (key == "SignedOut") SignInScreen(app.auth)
+                        else LoadingScreen()
                     is Session.Failed -> FailedScreen(app, s)
                     is Session.Ready ->
                         if (key == "home" && s.profile.onboarded) HomeScreen(app, s.profile, theme)

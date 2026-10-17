@@ -17,6 +17,23 @@ import com.skienlabs.tasks.ui.Root
 import com.skienlabs.tasks.ui.theme.TasksTheme
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        const val EXTRA_ACTION = "com.skienlabs.tasks.ACTION"
+        const val ACTION_NEW_TASK = "new_task"
+    }
+
+    private fun handle(intent: android.content.Intent?) {
+        if (intent?.getStringExtra(EXTRA_ACTION) == ACTION_NEW_TASK) {
+            (application as TasksApp).controller.newTaskRequest.value = true
+            intent.removeExtra(EXTRA_ACTION) // not again after rotation
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        handle(intent)
+    }
+
     @Volatile private var themeReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -25,6 +42,7 @@ class MainActivity : ComponentActivity() {
         // ...and the saved theme is read, so a light/dark choice never flashes the wrong colors.
         installSplashScreen().setKeepOnScreenCondition { !themeReady || app.session.value == Session.Starting }
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) handle(intent)
         enableEdgeToEdge()
         setContent {
             val saved by app.prefs.theme.collectAsStateWithLifecycle(null)

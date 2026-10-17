@@ -82,46 +82,6 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 
 const val MAX_TAGS = 50
-private const val MAX_LOGO_CHARS = 60_000
-private const val LOGO_PX = 96
-
-/** Decodes any picked image, shrinks it to fit 96×96 and returns a small data URL the server accepts. */
-suspend fun toLogo(context: Context, uri: Uri): String = withContext(Dispatchers.Default) {
-    val bitmap = try {
-        val src = ImageDecoder.createSource(context.contentResolver, uri)
-        ImageDecoder.decodeBitmap(src) { decoder, info, _ ->
-            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            val w = info.size.width
-            val h = info.size.height
-            if (w.toLong() * h > 40_000_000L) throw IllegalArgumentException("Logo image is too large (over 40 megapixels)")
-            val scale = minOf(1f, LOGO_PX.toFloat() / maxOf(w, h))
-            decoder.setTargetSize(maxOf(1, Math.round(w * scale)), maxOf(1, Math.round(h * scale)))
-        }
-    } catch (e: IllegalArgumentException) {
-        throw e
-    } catch (e: Exception) {
-        throw IllegalArgumentException("That file isn't an image this phone can read")
-    }
-    try {
-        fun encode(format: Bitmap.CompressFormat, quality: Int, mime: String): String {
-            val out = ByteArrayOutputStream()
-            bitmap.compress(format, quality, out)
-            return "data:$mime;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
-        }
-        val attempts = buildList {
-            if (Build.VERSION.SDK_INT >= 30) {
-                add { encode(Bitmap.CompressFormat.WEBP_LOSSY, 90, "image/webp") }
-                add { encode(Bitmap.CompressFormat.WEBP_LOSSY, 70, "image/webp") }
-            }
-            add { encode(Bitmap.CompressFormat.PNG, 100, "image/png") }
-            if (!bitmap.hasAlpha()) add { encode(Bitmap.CompressFormat.JPEG, 80, "image/jpeg") }
-        }
-        attempts.firstNotNullOfOrNull { a -> a().takeIf { it.length <= MAX_LOGO_CHARS } }
-            ?: throw IllegalArgumentException("Logo is too detailed; try a simpler image")
-    } finally {
-        bitmap.recycle()
-    }
-}
 
 @Composable
 fun TagsScreen(store: Store, tags: List<Tag>, tagsLoaded: Boolean, bottomPadding: Dp) {
@@ -194,17 +154,26 @@ fun TagEditor(store: Store, tag: Tag?, onDismiss: () -> Unit) {
     var confirmDelete by remember { mutableStateOf(false) }
     val clean = name.replace(Regex("\\s+"), " ").trim()
 
+    var cropping by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
             busy = true; error = null
             try {
-                logo = toLogo(context, uri); logoChanged = true
+                cropping = decodeForCrop(context, uri)
             } catch (e: IllegalArgumentException) {
                 error = e.message
             } finally {
                 busy = false
             }
         }
+    }
+    cropping?.let { bmp ->
+        LogoCropDialog(
+            bmp,
+            onCancel = { cropping = null },
+            onDone = { data -> logo = data; logoChanged = true; cropping = null },
+            onError = { error = it; cropping = null },
+        )
     }
 
     fun close() { scope.launch { sheet.hide() }.invokeOnCompletion { onDismiss() } }

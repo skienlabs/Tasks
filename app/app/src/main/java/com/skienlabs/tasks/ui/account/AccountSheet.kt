@@ -51,6 +51,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,11 +73,22 @@ import java.util.Locale
 
 @Composable
 fun Avatar(profile: Profile, size: androidx.compose.ui.unit.Dp) {
-    Box(Modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
-        Text(
-            profile.name.trim().take(1).uppercase().ifEmpty { "?" },
-            color = MaterialTheme.colorScheme.onPrimary, fontSize = (size.value * 0.45f).sp,
-        )
+    // Google photo URLs end in "=s96-c": ask for a sharper one.
+    val url = remember(profile.photo) { profile.photo?.takeIf { it.startsWith("https://") }?.replace(Regex("=s\\d+(-c)?$"), "=s256-c") }
+    val photo = com.skienlabs.tasks.ui.images.rememberUrlImage(url)
+    Box(
+        Modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.primary)
+            .semantics { contentDescription = "Account: ${profile.name}" },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (photo != null) {
+            androidx.compose.foundation.Image(photo, null, Modifier.size(size), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+        } else {
+            Text(
+                profile.name.trim().take(1).uppercase().ifEmpty { "?" },
+                color = MaterialTheme.colorScheme.onPrimary, fontSize = (size.value * 0.45f).sp,
+            )
+        }
     }
 }
 

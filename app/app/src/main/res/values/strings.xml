@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Tasks</string>
+    <string name="widget_error">Couldn\'t show your tasks. Tap to open Tasks.</string>
+    <string name="widget_today_desc">Today\'s progress and your top tasks</string>
+    <string name="widget_focus_desc">Today\'s progress and every open task, tick them off from here</string>
+    <string name="widget_today_label">Tasks · Today</string>
+    <string name="widget_focus_label">Tasks · Focus list</string>
 </resources>

@@ -38,7 +38,11 @@ Android (OnePlus 12 size):
   <img src="docs/screens/android-today-light.png" alt="Android, today, light" width="200">
   <img src="docs/screens/android-summary-dark.png" alt="Android, summary" width="200">
   <img src="docs/screens/android-month-dark.png" alt="Android, calendar" width="200">
+  <img src="docs/screens/android-intro.png" alt="Android, first-run tour" width="200">
+  <img src="docs/screens/android-widget-4x4.png" alt="Android, home screen widget" width="200">
 </p>
+
+Web sign-in: ![Welcome](docs/screens/web-welcome-dark.png)
 
 All screens are in [docs/screens](docs/screens).
 

@@ -10,6 +10,9 @@ Native Android app (Kotlin + Jetpack Compose, Material 3) for the same account a
 - Steps (sub-tasks), nested like a Reddit thread. The task completes itself when the last step is ticked; it can't be completed while steps are open ("Complete all" ticks them).
 - Images on tasks: from the gallery or the camera, shrunk on the phone before upload; tap to view full screen (pinch to zoom, swipe between images).
 - End-of-day summary notification (default 9 PM, change it in Account): what you finished, what's left, high-priority tasks first. Works offline from the saved copy.
+- Home screen widgets: **Tasks · Today** (4×2) and **Tasks · Focus list** (4×4). Progress ring, what's left (high priority first, overdue marked), tick a task off right from the home screen, "+" opens a new task. Long-press the home screen → Widgets → Tasks.
+- A short animated tour on first launch, then sign in or create an account.
+- Your Google profile photo in the app; crop tag logos (pinch, drag, fit or fill).
 - Opens instantly from a local cache, then refreshes; offline it shows the saved copy.
 
 Requires Android 9 or newer. Tuned for big, high-refresh phones like the OnePlus 12.

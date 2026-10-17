@@ -4,6 +4,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -190,5 +194,36 @@ class ScreensTest {
             com.skienlabs.tasks.ui.day.StepsEditor(tree) {}
             com.skienlabs.tasks.ui.task.ImagesEditor(emptyList(), emptyList(), false, {}, {}, {}, {}, {})
         }
+    }
+
+    @Test fun intro_first() = shot("intro_first", true) { com.skienlabs.tasks.ui.intro.IntroScreen {} }
+
+    @Test fun intro_scenes() = shot("intro_scenes", true) {
+        Box(Modifier.fillMaxSize().background(com.skienlabs.tasks.ui.intro.Ink)) {
+            Column(Modifier.padding(8.dp)) {
+                for (row in 0..1) {
+                    androidx.compose.foundation.layout.Row {
+                        for (col in 0..1) {
+                            val i = 1 + row * 2 + col
+                            Box(Modifier.size(196.dp, 200.dp).graphicsLayer { scaleX = 0.6f; scaleY = 0.6f }, contentAlignment = androidx.compose.ui.Alignment.Center) {
+                                Box(Modifier.requiredSize(320.dp, 300.dp)) { com.skienlabs.tasks.ui.intro.SceneView(i, true, i) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun logo_crop() = shot("logo_crop", true) {
+        val bmp = remember {
+            android.graphics.Bitmap.createBitmap(600, 300, android.graphics.Bitmap.Config.ARGB_8888).apply {
+                val c = android.graphics.Canvas(this)
+                c.drawColor(android.graphics.Color.rgb(26, 115, 232))
+                val p = android.graphics.Paint().apply { color = android.graphics.Color.rgb(251, 188, 4) }
+                c.drawCircle(300f, 150f, 110f, p)
+            }
+        }
+        com.skienlabs.tasks.ui.tags.LogoCropDialog(bmp, {}, {}, {})
     }
 }

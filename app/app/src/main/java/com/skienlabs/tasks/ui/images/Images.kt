@@ -32,7 +32,7 @@ import java.util.UUID
  * Task images on this phone: a small memory cache of decoded bitmaps and a disk cache of the
  * files (ids never change content, so a file is downloaded once). Cleared on sign-out.
  */
-class ImageStore(context: Context, private val api: TasksApi) {
+class ImageStore(context: Context, private val api: TasksApi, private val http: okhttp3.OkHttpClient? = null) {
     private val dir = File(context.cacheDir, "task-images")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val memory = object : LruCache<String, ImageBitmap>(48 * 1024 * 1024) {
@@ -92,6 +92,43 @@ class ImageStore(context: Context, private val api: TasksApi) {
         return job.await()
     }
 
+    /**
+     * A picture from a public URL (the Google profile photo). Cached like attachments,
+     * keyed by a hash of the URL; never sent with the sign-in token.
+     */
+    suspend fun loadUrl(url: String): ImageBitmap? {
+        val client = http ?: return null
+        val id = "url-" + java.security.MessageDigest.getInstance("SHA-256").digest(url.toByteArray())
+            .joinToString("") { "%02x".format(it) }.take(32)
+        cached(id, "full")?.let { return it }
+        val k = key(id, "full")
+        val job = synchronized(inflight) {
+            inflight.getOrPut(k) {
+                scope.async {
+                    try {
+                        val f = file(id, "full")
+                        val bytes = if (f.exists() && f.length() > 0) f.readBytes() else {
+                            val req = okhttp3.Request.Builder().url(url).build()
+                            val b = withContext(Dispatchers.IO) {
+                                client.newCall(req).execute().use { r -> if (r.isSuccessful) r.body.bytes() else null }
+                            } ?: return@async null
+                            runCatching { dir.mkdirs(); f.writeBytes(b) }
+                            b
+                        }
+                        decode(bytes, 512)?.also { memory.put(k, it) }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        null
+                    } finally {
+                        synchronized(inflight) { inflight.remove(k) }
+                    }
+                }
+            }
+        }
+        return job.await()
+    }
+
     fun clear() {
         memory.evictAll()
         scope.async { runCatching { dir.deleteRecursively() } }
@@ -123,6 +160,16 @@ fun rememberImageLoad(id: String, size: String): ImageLoad {
         }
     }
     return state
+}
+
+/** A public picture (profile photo); null while loading or if it can't be loaded. */
+@Composable
+fun rememberUrlImage(url: String?): ImageBitmap? {
+    val store = LocalImages.current
+    val img by produceState<ImageBitmap?>(null, url, store) {
+        if (url != null && store != null) value = store.loadUrl(url)
+    }
+    return img
 }
 
 /** Loads an attachment image; null while loading or if unavailable. */

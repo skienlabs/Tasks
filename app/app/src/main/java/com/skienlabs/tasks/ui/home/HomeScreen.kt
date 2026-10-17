@@ -163,6 +163,17 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
     }
     LaunchedEffect(profile.uid) { app.refreshTags() }
 
+    // "+" on the widget: open a new task for today.
+    val newTaskRequest by app.newTaskRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(newTaskRequest) {
+        if (newTaskRequest) {
+            app.newTaskRequest.value = false
+            tab = TAB_TASKS
+            app.visibleDate.value = app.today.value
+            sheet = Sheet.TaskEdit(null)
+        }
+    }
+
     // Ask once for permission to post the end-of-day summary (Android 13+).
     val context = androidx.compose.ui.platform.LocalContext.current
     val notifPermission = androidx.activity.compose.rememberLauncherForActivityResult(

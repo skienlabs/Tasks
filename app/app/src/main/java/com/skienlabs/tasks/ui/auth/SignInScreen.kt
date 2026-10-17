@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -116,31 +117,36 @@ fun SignInScreen(auth: Auth) {
         }
     }
 
-    Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding(), contentAlignment = Alignment.Center) {
+    com.skienlabs.tasks.ui.intro.DarkBars()
+    Column(
+        Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        com.skienlabs.tasks.ui.intro.SignInArt()
         Column(
-            Modifier.widthIn(max = 460.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+            Modifier.widthIn(max = 460.dp).fillMaxWidth().navigationBarsPadding().padding(horizontal = 24.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.Start,
         ) {
-            if (mode == Mode.RESET) {
-                Box(Modifier.fillMaxWidth()) {
-                    IconButton(onClick = { switchTo(Mode.SIGN_IN) }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to sign in") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (mode == Mode.RESET) {
+                    IconButton(onClick = { switchTo(Mode.SIGN_IN) }, modifier = Modifier.padding(end = 4.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to sign in")
+                    }
                 }
+                Text(
+                    when (mode) { Mode.SIGN_IN -> "Welcome back"; Mode.SIGN_UP -> "Create your account"; Mode.RESET -> "Reset password" },
+                    style = MaterialTheme.typography.headlineMedium,
+                )
             }
-            AppLogo(56.dp)
-            VSpace(16.dp)
-            Text(
-                when (mode) { Mode.SIGN_IN -> "Welcome back"; Mode.SIGN_UP -> "Create your account"; Mode.RESET -> "Reset password" },
-                style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center,
-            )
             Text(
                 when (mode) {
                     Mode.SIGN_IN -> "Sign in to your tasks"
-                    Mode.SIGN_UP -> "Plan each day. Finish what matters."
+                    Mode.SIGN_UP -> "It takes a minute. Or continue with Google."
                     Mode.RESET -> "We’ll email you a link to choose a new one"
                 },
-                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            VSpace(28.dp)
+            VSpace(24.dp)
 
             if (mode != Mode.RESET) {
                 OutlinedButton(

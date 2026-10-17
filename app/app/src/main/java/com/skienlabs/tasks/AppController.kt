@@ -24,6 +24,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDateTime
@@ -45,7 +47,7 @@ class AppController(context: Context) {
     val auth = Auth(context)
     val api = HttpTasksApi(BuildConfig.API_URL, auth)
     private val cache: Cache by lazy { RoomCache.get(context) }
-    val images by lazy { com.skienlabs.tasks.ui.images.ImageStore(context, api) }
+    val images by lazy { com.skienlabs.tasks.ui.images.ImageStore(context, api, api.client) }
     val store by lazy { Store(api, cache, scope).also { s -> s.onImagePrepared = { images.seed(it) } } }
 
     private val _session = MutableStateFlow<Session>(Session.Starting)
@@ -67,11 +69,17 @@ class AppController(context: Context) {
     private var midnightJob: Job? = null
     private var userJob: Job? = null
 
+    /** Set when the app is opened from the widget's "+" button. */
+    val newTaskRequest = MutableStateFlow(false)
+
+    private val appContext = context.applicationContext
+
     fun start() {
         if (!BuildConfig.FIREBASE_CONFIGURED || BuildConfig.API_URL.isBlank()) {
             _session.value = Session.NotConfigured
             return
         }
+        watchWidgets()
         live = LiveSync(BuildConfig.API_URL, api, scope, ::onLiveChange) { refreshAll(quiet = true) }
         userJob = scope.launch { auth.user.collect { onUser(it) } }
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
@@ -242,6 +250,29 @@ class AppController(context: Context) {
                 refreshSummary()
                 _statsVersion.value++
             }
+        }
+    }
+
+    // ---- Home screen widgets -----------------------------------------------------
+
+    /** Keeps widgets in step with the app: after changes settle (and are saved), redraw them. */
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private fun watchWidgets() {
+        com.skienlabs.tasks.widget.Widgets.onWidgetChange = { scope.launch { refreshAll(quiet = true) } }
+        scope.launch {
+            kotlinx.coroutines.flow.combine(session, store.state, _today) { s, st, d ->
+                Triple(s is Session.Ready, st.tasks.values.filter { it.date == d || (it.isPending && it.date < d) }.hashCode() * 31 + st.tags.hashCode(), d)
+            }
+                .distinctUntilChanged()
+                .debounce(1500)
+                .collect {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            com.skienlabs.tasks.widget.WidgetRepo.markLocal(appContext)
+                            com.skienlabs.tasks.widget.Widgets.updateAll(appContext)
+                        }
+                    }
+                }
         }
     }
 

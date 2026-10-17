@@ -24,6 +24,11 @@ class Prefs(private val context: Context) {
     private val summaryOnKey = stringPreferencesKey("dailySummary")
     private val summaryTimeKey = stringPreferencesKey("dailySummaryMinutes")
     private val notifAskedKey = stringPreferencesKey("notifAsked")
+    private val introSeenKey = stringPreferencesKey("introSeen")
+
+    /** The feature tour before sign-in is shown once per install. */
+    val introSeen: Flow<Boolean> = data.map { it[introSeenKey] == "1" }
+    suspend fun setIntroSeen() = runCatching { context.dataStore.edit { it[introSeenKey] = "1" } }
 
     /** End-of-day summary notification: on by default at 21:00. */
     val dailySummary: Flow<DailySummaryPref> = data.map { p ->

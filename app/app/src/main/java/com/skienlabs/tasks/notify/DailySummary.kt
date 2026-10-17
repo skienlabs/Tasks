@@ -173,6 +173,7 @@ class SummaryReceiver : BroadcastReceiver() {
             try {
                 DailySummary.reschedule(app) // first, so tomorrow's alarm is set even if this run fails
                 DailySummary.run(app)
+                runCatching { com.skienlabs.tasks.widget.Widgets.updateAll(app) }
             } catch (e: Exception) {
                 // Never crash in the background.
             } finally {
@@ -190,6 +191,7 @@ class RescheduleReceiver : BroadcastReceiver() {
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 DailySummary.reschedule(app)
+                com.skienlabs.tasks.widget.Widgets.updateAll(app) // the date may have changed
             } catch (e: Exception) {
                 // ignore
             } finally {
