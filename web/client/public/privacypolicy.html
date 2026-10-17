@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Privacy Policy · Tasks</title>
+<meta name="description" content="How the Tasks app (Android and web) handles your data.">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+  /* No external fonts, scripts or trackers on this page. */
+  :root {
+    --ink: #0a1430; --paper: #eaf0ff; --muted: #9fb0d9;
+    --bg: #ffffff; --fg: #1b1f2a; --sub: #545d72; --line: #e2e6f0; --card: #f5f7fc; --link: #0b57d0; --mark: #e8f0fe;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0b0d12; --fg: #e6e9f2; --sub: #a4adc2; --line: #252a36; --card: #131722; --link: #8ab4f8; --mark: #1b2a4a; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.65 "Google Sans Text", "Google Sans", Roboto, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-text-size-adjust: 100%; }
+  a { color: var(--link); text-underline-offset: 2px; }
+  header { background: var(--ink); color: var(--paper); background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1.2px); background-size: 22px 22px; }
+  .wrap { max-width: 760px; margin: 0 auto; padding-left: max(20px, env(safe-area-inset-left)); padding-right: max(20px, env(safe-area-inset-right)); }
+  header .wrap { padding-block: 40px 44px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 500; color: var(--paper); text-decoration: none; }
+  h1 { font-size: clamp(32px, 6vw, 44px); line-height: 1.1; letter-spacing: -.02em; font-weight: 500; margin: 28px 0 10px; text-wrap: balance; }
+  header p { margin: 0; color: var(--muted); }
+  main .wrap { padding-block: 36px 72px; }
+  .summary { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 22px; margin-bottom: 8px; }
+  .summary ul { margin: 6px 0 0; padding-left: 20px; }
+  .summary li { margin: 4px 0; }
+  h2 { font-size: 22px; line-height: 1.3; font-weight: 500; margin: 40px 0 8px; scroll-margin-top: 16px; text-wrap: balance; }
+  h3 { font-size: 17px; font-weight: 600; margin: 22px 0 4px; }
+  p, li { max-width: 68ch; }
+  ul { padding-left: 22px; }
+  li { margin: 6px 0; }
+  .sub { color: var(--sub); }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; margin: 12px 0; }
+  .table { overflow-x: auto; }
+  th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; white-space: nowrap; }
+  .callout { background: var(--mark); border-radius: 14px; padding: 16px 20px; margin: 16px 0; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
+  footer { border-top: 1px solid var(--line); color: var(--sub); font-size: 14px; }
+  footer .wrap { padding-block: 22px 32px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="/">
+      <svg width="30" height="30" viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4c8df6"/><stop offset="1" stop-color="#0b57d0"/></linearGradient></defs><rect x="4" y="7" width="40" height="37" rx="11" fill="url(#g)"/><rect x="14" y="3" width="4" height="9" rx="2" fill="#0b57d0"/><rect x="30" y="3" width="4" height="9" rx="2" fill="#0b57d0"/><path d="M15 26.5l6 6 12-12.5" fill="none" stroke="#fff" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Tasks
+    </a>
+    <h1>Privacy Policy</h1>
+    <p>Effective October 17, 2026 · applies to the Tasks app for Android and the web app at tasks.skienlab.com</p>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="summary">
+      <strong>The short version</strong>
+      <ul>
+        <li>We keep what you put into Tasks (tasks, steps, notes, tags, images) so it can sync between your devices. That's all it's used for.</li>
+        <li>No ads, no analytics, no tracking, and we never sell or share your data.</li>
+        <li>You can delete anything at any time, including your whole account.</li>
+      </ul>
+    </div>
+
+    <p>Tasks is a personal day planner made by Skien Labs (“we”, “us”). This policy explains what data the app handles, why, and the choices you have. If anything here is unclear, write to <a href="mailto:skienlabs@gmail.com">skienlabs@gmail.com</a>.</p>
+
+    <h2 id="collect">What we collect</h2>
+
+    <h3>Your account</h3>
+    <ul>
+      <li><strong>Email address</strong>, and the <strong>name</strong> and <strong>profile photo address</strong> from your Google account if you sign in with Google. If you sign up with email and password, you can choose the name yourself.</li>
+      <li>A <strong>user ID</strong> created by the sign-in service, and when you signed up and last used the app.</li>
+    </ul>
+    <p>Your password is handled by Firebase Authentication (a Google service). We never see or store it.</p>
+
+    <h3>What you put into the app</h3>
+    <ul>
+      <li><strong>Tasks</strong>: title, notes, date, priority, status (open, done, cancelled), how often it was postponed, and when it was created, changed or completed.</li>
+      <li><strong>Steps</strong> (sub-tasks) and whether each one is ticked.</li>
+      <li><strong>Tags</strong>: name, colour and an optional logo image you choose.</li>
+      <li><strong>Images</strong> you attach to tasks. Before upload, the app shrinks each picture and saves it again as a new image file. That step drops the photo's hidden details (EXIF data), such as where it was taken.</li>
+    </ul>
+
+    <h3>Technical data</h3>
+    <ul>
+      <li>Our server logs each request (time, the address requested, the result, and your device's IP address) to keep the service running and fix problems. These logs aren't used to profile you, and they're deleted regularly.</li>
+    </ul>
+
+    <h3>What we don't collect</h3>
+    <ul>
+      <li>No location, contacts, call logs, SMS, microphone, or device identifiers for advertising.</li>
+      <li>No analytics or crash-reporting tools, and no advertising networks.</li>
+      <li>The app only ever sees photos you choose yourself or take with the camera button. It can't browse your gallery.</li>
+    </ul>
+
+    <h2 id="use">How we use it</h2>
+    <ul>
+      <li>To show your tasks on every device you sign in on, and keep them in sync.</li>
+      <li>To work out your progress: the daily counts, the monthly summary, the end-of-day notification and the home-screen widgets.</li>
+      <li>To keep the service secure and working.</li>
+    </ul>
+    <p>We don't use your data for advertising, we don't build profiles of you, and nobody reads your tasks.</p>
+
+    <h2 id="phone">On your phone</h2>
+    <ul>
+      <li><strong>Saved copy:</strong> the Android app keeps a copy of your recent tasks and images on the phone, so it opens fast and works offline. This copy is removed when you sign out or uninstall.</li>
+      <li><strong>End-of-day notification:</strong> worked out on your phone from your own tasks. You can switch it off or change its time in the app (Account), or in Android settings.</li>
+      <li><strong>Widgets</strong> show your tasks on your home screen. Anyone who can see your unlocked home screen can see them, so only add them if you're happy with that.</li>
+    </ul>
+
+    <h3>Permissions the Android app asks for</h3>
+    <div class="table">
+      <table>
+        <tr><th>Permission</th><th>Why</th></tr>
+        <tr><td>Internet</td><td>To sync your tasks with the server.</td></tr>
+        <tr><td>Notifications</td><td>For the end-of-day summary. Optional.</td></tr>
+        <tr><td>Run at startup</td><td>To set the end-of-day reminder again after the phone restarts or the time zone changes.</td></tr>
+        <tr><td>Network state, keep awake, background service</td><td>Added by Android libraries the app is built with. They let the widgets and the reminder update briefly in the background.</td></tr>
+        <tr><td>Biometric, Google services</td><td>Added by Google's sign-in libraries. Tasks never asks for your fingerprint or face.</td></tr>
+      </table>
+    </div>
+    <p class="sub">Taking a photo uses your phone's own camera app, and choosing one uses Android's photo picker, so Tasks doesn't need camera or storage permissions.</p>
+
+    <h2 id="share">Who we share it with</h2>
+    <p>We don't sell, rent or trade your data, and we don't share it for advertising. Only these services handle it, solely to run Tasks:</p>
+    <ul>
+      <li><strong>Google Firebase Authentication</strong>: signs you in. <a href="https://firebase.google.com/support/privacy" rel="noopener">Firebase privacy information</a>.</li>
+      <li><strong>Google Cloud</strong>: hosts our server, where your data is stored.</li>
+    </ul>
+    <p>We would only disclose data if the law required it, and only as much as required.</p>
+
+    <h2 id="security">Security</h2>
+    <ul>
+      <li>All traffic between the apps and our server is encrypted (HTTPS).</li>
+      <li>Every request must carry a valid sign-in token, and each account can only reach its own data. Images are only served to their owner.</li>
+      <li>The server runs on a private machine that only we can access.</li>
+    </ul>
+    <p>No system is perfectly secure, but we take reasonable care to protect your data.</p>
+
+    <h2 id="keep">How long we keep it</h2>
+    <ul>
+      <li>Your tasks, tags and images stay for as long as you have an account.</li>
+      <li>When you delete a task, it's removed straight away. Its images are kept for 24 hours so “Undo” can restore them, then deleted.</li>
+      <li>When your account is deleted, all of its data is deleted with it (see below).</li>
+    </ul>
+
+    <h2 id="delete">Delete your data or your account</h2>
+    <p>You can delete any task, step, image or tag in the app at any time.</p>
+    <div class="callout">
+      <strong>To delete your account and everything in it</strong>, email <a href="mailto:skienlabs@gmail.com?subject=Delete%20my%20Tasks%20account">skienlabs@gmail.com</a> from the address you sign in with, with the subject “Delete my Tasks account”. Within 30 days we will delete:
+      <ul>
+        <li>your account and its sign-in,</li>
+        <li>all your tasks, steps, tags, logos and images.</li>
+      </ul>
+      Then we'll confirm by email. Server logs are deleted on their usual schedule.
+    </div>
+
+    <h2 id="rights">Your rights</h2>
+    <p>Depending on where you live (for example under the GDPR in Europe or the DPDP Act in India), you may have the right to:</p>
+    <ul>
+      <li>see the data we hold about you, or get a copy of it,</li>
+      <li>have it corrected or deleted,</li>
+      <li>object to how it's used,</li>
+      <li>complain to your data protection authority.</li>
+    </ul>
+    <p>Email us and we'll respond within 30 days. We process your data because it's needed to provide the service you signed up for.</p>
+
+    <h2 id="children">Children</h2>
+    <p>Tasks is not aimed at children under 13, and we don't knowingly collect data from them. If you think a child has given us data, contact us and we'll delete it.</p>
+
+    <h2 id="changes">Changes to this policy</h2>
+    <p>If we change this policy, we'll update the date at the top. If a change affects how your data is used, we'll tell you in the app before it takes effect.</p>
+
+    <h2 id="contact">Contact</h2>
+    <p>Skien Labs · <a href="mailto:skienlabs@gmail.com">skienlabs@gmail.com</a></p>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">© 2026 Skien Labs · <a href="/">Open Tasks</a></div>
+</footer>
+</body>
+</html>

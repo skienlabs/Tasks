@@ -223,6 +223,7 @@ fun SignInScreen(auth: Auth) {
                     }
                 }
             }
+            com.skienlabs.tasks.ui.common.PrivacyLink(Modifier.padding(top = 12.dp))
         }
     }
 }

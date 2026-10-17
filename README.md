@@ -12,6 +12,7 @@ tasks/
 │   └── docker-compose.yml   compose file for the VM (~/docker/apps/tasks)
 ├── app/                 Android app (Kotlin + Jetpack Compose), same API and live sync
 ├── docs/screens/        screenshots of the web app
+├── store/               Play Store listing: images (play/), listing text, data-safety answers
 └── .github/workflows/
     ├── ci.yml           tests + Docker build on every push / PR
     └── deploy-web.yml   build → push to GAR → deploy to VM (run manually)
@@ -52,3 +53,5 @@ Web and Android stay in sync live: a change on one shows up on the other within 
 
 - Web app setup, deployment and API: [web/README.md](web/README.md)
 - Android app: [app/README.md](app/README.md)
+- Play Store listing and data-safety answers: [store/README.md](store/README.md)
+- Privacy policy: [web/client/public/privacypolicy.html](web/client/public/privacypolicy.html), live at https://tasks.skienlab.com/privacypolicy.html

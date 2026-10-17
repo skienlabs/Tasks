@@ -218,6 +218,10 @@ fun AccountSheet(app: AppController, profile: Profile, theme: ThemePref, onDismi
                         Text("Member since $since", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text("Tasks ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp)) {
+                        com.skienlabs.tasks.ui.common.PrivacyLink()
+                        com.skienlabs.tasks.ui.common.PrivacyLink(delete = true)
+                    }
                 }
                 TextButton(onClick = { onDismiss(); app.signOut() }) {
                     Icon(Icons.AutoMirrored.Outlined.Logout, null, Modifier.size(18.dp)); Text("  Sign out")

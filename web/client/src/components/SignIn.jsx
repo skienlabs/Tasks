@@ -256,6 +256,9 @@ export default function SignIn({ variant, error, onError }) {
           </Link>
         </Typography>
       )}
+      <Typography sx={{ textAlign: 'center', mt: 2, fontSize: 13 }}>
+        <Link href="/privacypolicy.html" target="_blank" rel="noopener" color="text.secondary" sx={{ fontSize: 13 }}>Privacy policy</Link>
+      </Typography>
     </Shell>
   );
 }

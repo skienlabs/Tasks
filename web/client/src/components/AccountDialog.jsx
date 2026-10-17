@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import {
-  Alert, Avatar, Box, Button, Chip, CircularProgress, Dialog, DialogContent, DialogTitle, Divider, IconButton,
+  Alert, Avatar, Box, Button, Chip, CircularProgress, Dialog, DialogContent, DialogTitle, Divider, IconButton, Link,
   TextField, Typography, useMediaQuery,
 } from '@mui/material';
 import Close from '@mui/icons-material/Close';
@@ -133,9 +133,15 @@ function Body({ profile, photo, onProfile, onClose }) {
 
         <Divider />
         <Box sx={{ display: 'flex', alignItems: 'center', pb: 1 }}>
-          <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-            Member since {new Date(profile.createdAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
-          </Typography>
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              Member since {new Date(profile.createdAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 2 }}>
+              <Link href="/privacypolicy.html" target="_blank" rel="noopener" variant="body2">Privacy policy</Link>
+              <Link href="/privacypolicy.html#delete" target="_blank" rel="noopener" variant="body2" color="text.secondary">Delete account</Link>
+            </Box>
+          </Box>
           <Button color="inherit" startIcon={<Logout />} onClick={() => signOut()}>Sign out</Button>
         </Box>
       </DialogContent>

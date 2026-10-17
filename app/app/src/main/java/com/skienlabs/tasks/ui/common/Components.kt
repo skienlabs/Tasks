@@ -179,3 +179,24 @@ fun VSpace(h: Dp) = Spacer(Modifier.height(h))
 
 /** Text with the Google-style blue → purple → pink gradient (used for "Today" and greetings). */
 fun gradientBrush(colors: List<Color>) = Brush.linearGradient(colors)
+
+/** The web address of the privacy policy (served by the same server the app talks to). */
+val PRIVACY_URL: String = (com.skienlabs.tasks.BuildConfig.API_URL.ifBlank { "https://tasks.skienlab.com" }) + "/privacypolicy.html"
+
+/** "Privacy policy" link; opens the policy in the browser. [delete] links to how to delete the account. */
+@Composable
+fun PrivacyLink(modifier: Modifier = Modifier, delete: Boolean = false) {
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    Text(
+        if (delete) "Delete account" else "Privacy policy",
+        style = MaterialTheme.typography.bodySmall,
+        color = if (delete) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+        textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = if (delete) "How to delete your account" else "Open the privacy policy") {
+                runCatching { uri.openUri(if (delete) "$PRIVACY_URL#delete" else PRIVACY_URL) }
+            }
+            .padding(vertical = 6.dp),
+    )
+}
