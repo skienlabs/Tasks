@@ -16,6 +16,8 @@ import SellOutlined from '@mui/icons-material/SellOutlined';
 import { PRIORITIES, priorityColor, tagColor } from '../theme.js';
 import TagChip from './TagChip.jsx';
 import TagPicker from './TagPicker.jsx';
+import { StepsInline, StepsProgress } from './Steps.jsx';
+import { ImageStrip, ImageViewer } from './Images.jsx';
 import { shortLabel } from '../lib/dates.js';
 import {
   cancelTask, completeTask, deleteTask, moveTasks, postponeTarget, postponeTask, restoreTask, selectTag, updateTask, useStoreVersion,
@@ -34,6 +36,10 @@ function TaskItem({ task, today, showOrigin, onOpen, onManageTags }) {
   useStoreVersion(); // re-render when a tag is renamed or recolored
   const [menuEl, setMenuEl] = useState(null);
   const [tagEl, setTagEl] = useState(null);
+  const [stepsOpen, setStepsOpen] = useState(false);
+  const [viewer, setViewer] = useState(null);
+  const steps = task.subtasks ?? [];
+  const images = task.attachments ?? [];
   const tags = (task.tagIds ?? []).map(selectTag).filter(Boolean);
   // "Postpone" moves to the day after today, or after the task's own date if that is later.
   const target = shortLabel(postponeTarget(task, today), today);
@@ -114,6 +120,13 @@ function TaskItem({ task, today, showOrigin, onOpen, onManageTags }) {
             {tags.map((tag) => <TagChip key={tag.id} tag={tag} dense />)}
           </Box>
         )}
+        {steps.length > 0 && (
+          <Box sx={{ mt: 0.5 }}>
+            <StepsProgress steps={steps} open={stepsOpen} onToggle={() => setStepsOpen((o) => !o)} />
+            {stepsOpen && <StepsInline task={task} disabled={cancelled} />}
+          </Box>
+        )}
+        {images.length > 0 && <ImageStrip attachments={images} onOpen={setViewer} />}
         {(task.notes || task.priority < 4 || task.postponed > 0 || showOrigin || cancelled) && (
           <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 1.5, rowGap: 0.25, mt: 0.4 }}>
             {showOrigin && (
@@ -244,6 +257,11 @@ function TaskItem({ task, today, showOrigin, onOpen, onManageTags }) {
           <ListItemText>Delete</ListItemText>
         </MenuItem>
       </Menu>
+      {viewer !== null && (
+        <Box onClick={(e) => e.stopPropagation()}>
+          <ImageViewer attachments={images} index={viewer} onIndex={setViewer} onClose={() => setViewer(null)} />
+        </Box>
+      )}
       <TagPicker
         anchorEl={tagEl}
         open={Boolean(tagEl)}

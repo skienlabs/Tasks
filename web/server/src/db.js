@@ -59,6 +59,25 @@ const MIGRATIONS = [
   ALTER TABLE users ADD COLUMN display_name TEXT;
   ALTER TABLE users ADD COLUMN onboarded_at INTEGER;
   `,
+  // v4: steps (sub-tasks, a JSON tree on the task) and image attachments (files on disk).
+  // Attachments outlive a deleted task for a day (orphaned_at) so "Undo" can bring them back.
+  `
+  ALTER TABLE tasks ADD COLUMN subtasks TEXT NOT NULL DEFAULT '[]';
+
+  CREATE TABLE attachments (
+    id          TEXT PRIMARY KEY,
+    uid         TEXT NOT NULL,
+    task_id     TEXT NOT NULL,
+    type        TEXT NOT NULL CHECK (type IN ('jpeg', 'png', 'webp')),
+    width       INTEGER NOT NULL,
+    height      INTEGER NOT NULL,
+    size        INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL,
+    orphaned_at INTEGER
+  );
+  CREATE INDEX idx_attachments_task ON attachments (uid, task_id);
+  CREATE INDEX idx_attachments_orphaned ON attachments (orphaned_at) WHERE orphaned_at IS NOT NULL;
+  `,
 ];
 
 export function openDb(file) {
@@ -111,8 +130,11 @@ function migrate(db) {
 }
 
 const COLUMNS = `id, title, notes, priority, date, status, original_date, postponed,
-  created_at, updated_at, completed_at,
-  (SELECT json_group_array(tag_id) FROM task_tags WHERE task_id = tasks.id) AS tag_ids`;
+  created_at, updated_at, completed_at, subtasks,
+  (SELECT json_group_array(tag_id) FROM task_tags WHERE task_id = tasks.id) AS tag_ids,
+  (SELECT json_group_array(json_object('id', a.id, 'type', a.type, 'width', a.width, 'height', a.height,
+      'size', a.size, 'createdAt', a.created_at))
+    FROM (SELECT * FROM attachments WHERE uid = tasks.uid AND task_id = tasks.id ORDER BY created_at, id) a) AS attachments`;
 
 export function toTask(row) {
   return {
@@ -128,8 +150,12 @@ export function toTask(row) {
     updatedAt: row.updated_at,
     completedAt: row.completed_at ?? null,
     tagIds: row.tag_ids ? JSON.parse(row.tag_ids).sort() : [],
+    subtasks: row.subtasks ? JSON.parse(row.subtasks) : [],
+    attachments: row.attachments ? JSON.parse(row.attachments) : [],
   };
 }
+
+
 
 export function toTag(row) {
   return {
@@ -164,13 +190,25 @@ export function createRepo(db) {
     exists: db.prepare('SELECT uid FROM tasks WHERE id = ?'),
     insert: db.prepare(`INSERT INTO tasks
       (id, uid, title, notes, priority, date, status, original_date, postponed,
-       created_at, updated_at, completed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+       created_at, updated_at, completed_at, subtasks)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
     update: db.prepare(`UPDATE tasks SET
       title = ?, notes = ?, priority = ?, date = ?, status = ?, postponed = ?,
-      updated_at = ?, completed_at = ?
+      updated_at = ?, completed_at = ?, subtasks = ?
       WHERE uid = ? AND id = ?`),
     remove: db.prepare('DELETE FROM tasks WHERE uid = ? AND id = ?'),
+
+    // attachments
+    attachment: db.prepare('SELECT * FROM attachments WHERE uid = ? AND id = ?'),
+    attachmentIdTaken: db.prepare('SELECT uid FROM attachments WHERE id = ?'),
+    attachmentCount: db.prepare('SELECT COUNT(*) AS n FROM attachments WHERE uid = ? AND task_id = ?'),
+    insertAttachment: db.prepare(`INSERT INTO attachments (id, uid, task_id, type, width, height, size, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
+    removeAttachment: db.prepare('DELETE FROM attachments WHERE uid = ? AND id = ?'),
+    orphanAttachments: db.prepare('UPDATE attachments SET orphaned_at = ? WHERE uid = ? AND task_id = ?'),
+    adoptAttachments: db.prepare('UPDATE attachments SET orphaned_at = NULL WHERE uid = ? AND task_id = ?'),
+    expiredAttachments: db.prepare('SELECT id, type FROM attachments WHERE orphaned_at IS NOT NULL AND orphaned_at < ?'),
+    removeAttachmentById: db.prepare('DELETE FROM attachments WHERE id = ?'),
     summary: db.prepare(`SELECT date,
         SUM(status = 'pending')   AS pending,
         SUM(status = 'done')      AS done,
@@ -283,9 +321,10 @@ export function createRepo(db) {
       tx(() => {
         stmts.insert.run(
           t.id, uid, t.title, t.notes, t.priority, t.date, t.status, t.originalDate,
-          t.postponed, t.createdAt, t.updatedAt, t.completedAt ?? null,
+          t.postponed, t.createdAt, t.updatedAt, t.completedAt ?? null, JSON.stringify(t.subtasks ?? []),
         );
         writeTaskTags(t.id, t.tagIds ?? []);
+        stmts.adoptAttachments.run(uid, t.id); // re-created by "Undo": its images come back
       });
       return this.get(uid, t.id);
     },
@@ -295,7 +334,7 @@ export function createRepo(db) {
       tx(() => {
         stmts.update.run(
           t.title, t.notes, t.priority, t.date, t.status, t.postponed,
-          t.updatedAt, t.completedAt ?? null, uid, t.id,
+          t.updatedAt, t.completedAt ?? null, JSON.stringify(t.subtasks ?? []), uid, t.id,
         );
         if (t.tagIds !== undefined) writeTaskTags(t.id, t.tagIds);
       });
@@ -357,8 +396,41 @@ export function createRepo(db) {
       };
     },
 
-    remove(uid, id) {
-      return Number(stmts.remove.run(uid, id).changes) > 0;
+    remove(uid, id, now = Date.now()) {
+      return tx(() => {
+        const removed = Number(stmts.remove.run(uid, id).changes) > 0;
+        if (removed) stmts.orphanAttachments.run(now, uid, id);
+        return removed;
+      });
+    },
+
+    getAttachment(uid, id) {
+      return stmts.attachment.get(uid, id) ?? null;
+    },
+
+    attachmentIdTaken(id) {
+      return stmts.attachmentIdTaken.get(id) !== undefined;
+    },
+
+    attachmentCount(uid, taskId) {
+      return Number(stmts.attachmentCount.get(uid, taskId).n);
+    },
+
+    insertAttachment(uid, a) {
+      stmts.insertAttachment.run(a.id, uid, a.taskId, a.type, a.width, a.height, a.size, a.createdAt);
+    },
+
+    removeAttachment(uid, id) {
+      return Number(stmts.removeAttachment.run(uid, id).changes) > 0;
+    },
+
+    /** Attachments of tasks deleted before `cutoff` (removed for good by the caller). */
+    expiredAttachments(cutoff) {
+      return stmts.expiredAttachments.all(cutoff);
+    },
+
+    dropAttachment(id) {
+      stmts.removeAttachmentById.run(id);
     },
 
     summary(uid, from, to) {

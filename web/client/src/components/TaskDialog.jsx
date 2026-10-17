@@ -12,6 +12,10 @@ import {
   MAX_TAGS_PER_TASK, createTask, deleteTask, getTask, selectTags, showToast, updateTask, useStoreVersion,
 } from '../lib/store.js';
 import TagChip from './TagChip.jsx';
+import { StepsEditor } from './Steps.jsx';
+import { ImageViewer, ImagesEditor, MAX_IMAGES } from './Images.jsx';
+import { prepareImage } from '../lib/images.js';
+import { addAttachment, removeAttachment } from '../lib/store.js';
 
 function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, fullScreen }) {
   useStoreVersion();
@@ -21,7 +25,50 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
   const [notes, setNotes] = useState(task?.notes ?? '');
   const [priority, setPriority] = useState(task?.priority ?? 4);
   const [date, setDate] = useState(task?.date ?? defaultDate);
+  const [steps, setSteps] = useState(task?.subtasks ?? []);
+  const [stepsChanged, setStepsChanged] = useState(false);
+  // Images: saved ones (minus any removed here) plus new ones, uploaded on Save.
+  const [removed, setRemoved] = useState(() => new Set());
+  const [pending, setPending] = useState([]);
+  const [imgBusy, setImgBusy] = useState(false);
+  const [imgError, setImgError] = useState('');
+  const [viewer, setViewer] = useState(null);
+  const saved = (task?.attachments ?? []).filter((a) => !removed.has(a.id) && !a.uploading);
+  const imageItems = [
+    ...saved.map((a) => ({ key: a.id, attachment: a })),
+    ...pending.map((p) => ({ key: p.id, pending: p })),
+  ];
   const valid = title.trim().length > 0 && isValidKey(date);
+
+  const addFiles = async (files) => {
+    setImgError('');
+    const room = MAX_IMAGES - imageItems.length;
+    if (room <= 0) return setImgError(`Up to ${MAX_IMAGES} images per task`);
+    setImgBusy(true);
+    const out = [];
+    for (const f of files.slice(0, room)) {
+      try {
+        out.push(await prepareImage(f));
+      } catch (err) {
+        setImgError(err.message);
+      }
+    }
+    if (files.length > room) setImgError(`Up to ${MAX_IMAGES} images per task`);
+    setPending((p) => [...p, ...out]);
+    setImgBusy(false);
+  };
+  const removeImage = (it) => {
+    if (it.pending) {
+      URL.revokeObjectURL(it.pending.previewUrl);
+      setPending((p) => p.filter((x) => x.id !== it.pending.id));
+    } else {
+      setRemoved((r) => new Set([...r, it.attachment.id]));
+    }
+  };
+  const uploadImages = (taskId) => {
+    for (const id of removed) removeAttachment(taskId, id);
+    for (const img of pending) addAttachment(taskId, img);
+  };
 
   const [tagsChanged, setTagsChanged] = useState(false);
 
@@ -30,7 +77,7 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
     if (task) {
       if (!getTask(task.id)) {
         // Deleted (e.g. on another device) while this was open: don't lose the edits.
-        const draft = { title, notes, priority, date, tagIds };
+        const draft = { title, notes, priority, date, tagIds, subtasks: steps };
         showToast('This task was deleted, so changes weren’t saved', () => createTask(draft), 'Add as new');
         onClose();
         return;
@@ -42,9 +89,12 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
       if (priority !== task.priority) patch.priority = priority;
       if (date !== task.date) patch.date = date;
       if (tagsChanged) patch.tagIds = tagIds;
+      if (stepsChanged && JSON.stringify(steps) !== JSON.stringify(task.subtasks ?? [])) patch.subtasks = steps;
       if (Object.keys(patch).length) updateTask(task.id, patch);
+      uploadImages(task.id);
     } else {
-      createTask({ title, notes, priority, date, tagIds });
+      const { task: created } = createTask({ title, notes, priority, date, tagIds, subtasks: steps });
+      uploadImages(created.id);
     }
     onClose();
   };
@@ -72,7 +122,16 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
           <Close />
         </IconButton>
       </DialogTitle>
-      <DialogContent sx={{ display: 'grid', gap: 2.5, alignContent: 'start', pt: '8px !important' }}>
+      <DialogContent
+        sx={{ display: 'grid', gap: 2.5, alignContent: 'start', pt: '8px !important' }}
+        onPaste={(e) => {
+          const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'));
+          if (files.length) {
+            e.preventDefault();
+            addFiles(files);
+          }
+        }}
+      >
         <TextField
           label="Title"
           value={title}
@@ -100,6 +159,21 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
           minRows={3}
           maxRows={10}
           slotProps={{ htmlInput: { maxLength: 5000 } }}
+        />
+        <StepsEditor
+          value={steps}
+          onChange={(v) => {
+            setSteps(v);
+            setStepsChanged(true);
+          }}
+        />
+        <ImagesEditor
+          items={imageItems}
+          onAdd={addFiles}
+          onRemove={removeImage}
+          onOpen={(i) => imageItems[i]?.attachment && setViewer(saved.findIndex((a) => a.id === imageItems[i].attachment.id))}
+          busy={imgBusy}
+          error={imgError}
         />
         <Box>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>Priority</Typography>
@@ -183,10 +257,11 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
           </Button>
         )}
         <Button onClick={onClose}>Cancel</Button>
-        <Button type="submit" variant="contained" disabled={!valid}>
+        <Button type="submit" variant="contained" disabled={!valid || imgBusy}>
           {task ? 'Save' : 'Add task'}
         </Button>
       </DialogActions>
+      <ImageViewer attachments={saved} index={viewer} onIndex={setViewer} onClose={() => setViewer(null)} />
     </Box>
   );
 }

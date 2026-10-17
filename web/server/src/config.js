@@ -86,6 +86,7 @@ export function loadConfig(env = process.env, log = (m) => console.warn(`[config
     host: env.HOST || '0.0.0.0',
     port: Number(env.PORT || 8080),
     dbPath: env.DB_PATH || path.join(dataDir, 'tasks.db'),
+    filesDir: env.FILES_DIR || path.join(dataDir, 'files'),
     staticDir: path.resolve(env.STATIC_DIR || path.join(here, '../public')),
     firebase: loadFirebase(env, log),
     allowList: parseAllowList(env.ALLOWED_EMAILS),

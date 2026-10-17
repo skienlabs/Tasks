@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SignJWT, exportJWK, generateKeyPair, createLocalJWKSet } from 'jose';
@@ -14,8 +17,9 @@ async function setup({ allowList = [] } = {}) {
   const jwk = { ...(await exportJWK(publicKey)), kid: 'k1', alg: 'RS256' };
   const verify = createVerifier({ projectId: PROJECT, allowList, keys: createLocalJWKSet({ keys: [jwk] }) });
   const db = openDb(':memory:');
+  const filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tasks-files-'));
   const app = buildApp({
-    db, verify, config: { firebase: { projectId: PROJECT }, devAuth: false, staticDir: '/nonexistent' },
+    db, verify, config: { firebase: { projectId: PROJECT }, devAuth: false, staticDir: '/nonexistent', filesDir },
   });
 
   async function token(sub, extra = {}, opts = {}) {
@@ -37,7 +41,7 @@ async function setup({ allowList = [] } = {}) {
     const auth = { authorization: `Bearer ${await token(sub)}` };
     return (method, url, payload) => app.inject({ method, url, payload, headers: auth });
   }
-  return { app, token, as };
+  return { app, token, as, db, filesDir };
 }
 
 test('dates', () => {
@@ -346,19 +350,27 @@ test('sign-in providers and profile / onboarding', async () => {
   assert.equal(r.json().name, 'Gina G');
 });
 
-test('migration from v2 to v3 keeps users', async () => {
+test('migration from v2 to the latest keeps users and tasks', async () => {
   const fs = await import('node:fs');
   const os = await import('node:os');
   const path = await import('node:path');
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tasks-mig-')), 'tasks.db');
   let db = openDb(file);
   db.prepare("INSERT INTO users (uid, email, name, photo, created_at, last_seen) VALUES ('u', 'u@x.com', 'U', null, 1, 1)").run();
-  db.exec('ALTER TABLE users DROP COLUMN display_name; ALTER TABLE users DROP COLUMN onboarded_at; PRAGMA user_version = 2;');
+  // Back to the v2 schema, with a v2-era task.
+  db.exec(`DROP TABLE attachments; ALTER TABLE tasks DROP COLUMN subtasks;
+    ALTER TABLE users DROP COLUMN display_name; ALTER TABLE users DROP COLUMN onboarded_at; PRAGMA user_version = 2;`);
+  db.prepare(`INSERT INTO tasks (id, uid, title, date, original_date, created_at, updated_at)
+    VALUES ('old-task-1', 'u', 'Old', '2026-01-01', '2026-01-01', 1, 1)`).run();
   db.close();
   db = openDb(file);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4);
   const { createRepo } = await import('../src/db.js');
-  assert.deepEqual(createRepo(db).getProfile('u'), { uid: 'u', email: 'u@x.com', name: 'U', photo: null, createdAt: 1, onboarded: false });
+  const repo = createRepo(db);
+  assert.deepEqual(repo.getProfile('u'), { uid: 'u', email: 'u@x.com', name: 'U', photo: null, createdAt: 1, onboarded: false });
+  const old = repo.get('u', 'old-task-1');
+  assert.deepEqual(old.subtasks, []);
+  assert.deepEqual(old.attachments, []);
   db.close();
 });
 
@@ -512,4 +524,137 @@ test('live change events: per user, tagged with source, auth required', async ()
   a.res.destroy();
   b.res.destroy();
   await app.close(); // must not hang on open streams
+});
+
+test('steps (sub-tasks): tree rules and the task completes only when every step is done', async () => {
+  const { as } = await setup();
+  const call = await as('steps');
+  const id = 'task-steps-1';
+  const steps = [
+    { id: 'step-aaaa1', parentId: null, title: 'Set up server', done: false },
+    { id: 'step-aaaa2', parentId: null, title: 'Ports', done: false },
+    { id: 'step-aaaa3', parentId: 'step-aaaa2', title: ' 25  and 587 ', done: false },
+    { id: 'step-aaaa4', parentId: 'step-aaaa2', title: '993', done: true },
+  ];
+  let res = await call('POST', '/api/tasks', { id, title: 'Mail server', date: '2026-10-17', subtasks: steps });
+  assert.equal(res.statusCode, 201);
+  let t = res.json();
+  assert.equal(t.status, 'pending');
+  assert.equal(t.subtasks.length, 4);
+  assert.equal(t.subtasks[2].title, '25 and 587');
+  assert.equal(t.subtasks[1].done, false, 'parent is done only when all children are');
+
+  // Can't complete while steps are open.
+  res = await call('PATCH', `/api/tasks/${id}`, { status: 'done' });
+  assert.equal(res.statusCode, 409);
+  assert.match(res.json().error, /2 steps/);
+
+  // Checking every leaf completes the task; a parent's own flag is ignored.
+  const all = steps.map((x) => ({ ...x, done: x.id !== 'step-aaaa2' }));
+  t = (await call('PATCH', `/api/tasks/${id}`, { subtasks: all })).json();
+  assert.equal(t.status, 'done');
+  assert.ok(t.completedAt);
+  assert.equal(t.subtasks[1].done, true);
+
+  // Un-checking one reopens it.
+  t = (await call('PATCH', `/api/tasks/${id}`, { subtasks: all.map((x) => (x.id === 'step-aaaa1' ? { ...x, done: false } : x)) })).json();
+  assert.equal(t.status, 'pending');
+  assert.equal(t.completedAt, null);
+
+  // Cancelled stays cancelled when steps change; explicit status always allowed except early "done".
+  t = (await call('PATCH', `/api/tasks/${id}`, { status: 'cancelled' })).json();
+  assert.equal(t.status, 'cancelled');
+  t = (await call('PATCH', `/api/tasks/${id}`, { subtasks: all })).json();
+  assert.equal(t.status, 'cancelled');
+  t = (await call('PATCH', `/api/tasks/${id}`, { status: 'pending' })).json();
+  assert.equal(t.status, 'pending');
+  t = (await call('PATCH', `/api/tasks/${id}`, { status: 'done' })).json();
+  assert.equal(t.status, 'done');
+
+  // Postpone keeps the steps.
+  await call('PATCH', `/api/tasks/${id}`, { subtasks: steps });
+  t = (await call('POST', `/api/tasks/${id}/postpone`, { today: '2026-10-17' })).json();
+  assert.equal(t.date, '2026-10-18');
+  assert.equal(t.subtasks.length, 4);
+
+  // Removing all steps leaves the status alone.
+  t = (await call('PATCH', `/api/tasks/${id}`, { subtasks: [] })).json();
+  assert.deepEqual(t.subtasks, []);
+  assert.equal(t.status, 'pending');
+
+  // Bad trees are refused.
+  const bad = [
+    [{ id: 'step-bbbb1', parentId: 'step-nope1', title: 'x' }],
+    [{ id: 'step-bbbb1', parentId: 'step-bbbb2', title: 'x' }, { id: 'step-bbbb2', parentId: 'step-bbbb1', title: 'y' }],
+    [{ id: 'step-bbbb1', title: 'x' }, { id: 'step-bbbb1', title: 'y' }],
+    [{ id: 'step-bbbb1', title: '   ' }],
+    [1, 2, 3, 4, 5].map((n) => ({ id: `step-deep${n}`, parentId: n > 1 ? `step-deep${n - 1}` : null, title: `L${n}` })),
+  ];
+  for (const b of bad) {
+    res = await call('PATCH', `/api/tasks/${id}`, { subtasks: b });
+    assert.equal(res.statusCode, 400, JSON.stringify(b));
+  }
+  // Four levels is fine.
+  res = await call('PATCH', `/api/tasks/${id}`, { subtasks: bad[4].slice(0, 4) });
+  assert.equal(res.statusCode, 200);
+});
+
+// 1x1 images
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+const JPEG = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
+
+test('image attachments: upload, read, owner only, delete, survive undo, cleaned up later', async () => {
+  const { as, app, db, filesDir } = await setup();
+  const me = await as('pics');
+  const other = await as('other-pics');
+  const id = 'task-pics-1';
+  await me('POST', '/api/tasks', { id, title: 'Router', date: '2026-10-17' });
+  const body = { id: 'att-00001', image: `data:image/jpeg;base64,${JPEG}`, thumb: `data:image/jpeg;base64,${JPEG}`, width: 1, height: 1 };
+
+  let res = await me('POST', `/api/tasks/${id}/attachments`, body);
+  assert.equal(res.statusCode, 201);
+  let t = res.json();
+  assert.equal(t.attachments.length, 1);
+  assert.equal(t.attachments[0].type, 'jpeg');
+  // Retrying the same upload is harmless.
+  res = await me('POST', `/api/tasks/${id}/attachments`, body);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().attachments.length, 1);
+
+  // Day view carries the attachments.
+  const day = (await me('GET', '/api/tasks?date=2026-10-17')).json();
+  assert.equal(day.tasks[0].attachments[0].id, 'att-00001');
+
+  res = await me('GET', '/api/attachments/att-00001?size=thumb');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers['content-type'], 'image/jpeg');
+  assert.match(res.headers['cache-control'], /private/);
+  assert.deepEqual(res.rawPayload, Buffer.from(JPEG, 'base64'));
+  assert.equal((await other('GET', '/api/attachments/att-00001')).statusCode, 404);
+  assert.equal((await other('POST', `/api/tasks/${id}/attachments`, { ...body, id: 'att-00002' })).statusCode, 404);
+
+  // Wrong content, mismatched thumb, bad ids.
+  assert.equal((await me('POST', `/api/tasks/${id}/attachments`, { ...body, id: 'att-00003', image: `data:image/png;base64,${JPEG}` })).statusCode, 400);
+  assert.equal((await me('POST', `/api/tasks/${id}/attachments`, { ...body, id: 'att-00003', thumb: `data:image/png;base64,${PNG}` })).statusCode, 400);
+  assert.equal((await me('POST', `/api/tasks/${id}/attachments`, { ...body, id: '../../etc' })).statusCode, 400);
+
+  // Deleting the task keeps the image for "Undo"; re-creating the task brings it back.
+  assert.equal((await me('DELETE', `/api/tasks/${id}`)).statusCode, 204);
+  assert.equal((await me('GET', '/api/attachments/att-00001')).statusCode, 200);
+  t = (await me('POST', '/api/tasks', { id, title: 'Router', date: '2026-10-17' })).json();
+  assert.equal(t.attachments.length, 1);
+
+  // Delete one image.
+  res = await me('DELETE', '/api/attachments/att-00001');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().attachments.length, 0);
+  assert.equal(fs.readdirSync(filesDir).length, 0);
+
+  // Orphans older than a day are removed by the sweep.
+  await me('POST', `/api/tasks/${id}/attachments`, { ...body, id: 'att-00009' });
+  await me('DELETE', `/api/tasks/${id}`);
+  db.prepare('UPDATE attachments SET orphaned_at = 1').run();
+  app.sweepAttachments();
+  assert.equal(fs.readdirSync(filesDir).length, 0);
+  assert.equal((await me('GET', '/api/attachments/att-00009')).statusCode, 404);
 });

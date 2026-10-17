@@ -4,6 +4,7 @@ import path from 'node:path';
 import Fastify, { LogController } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { createRepo } from './db.js';
+import { MAX_SUBTASKS, SUBTASK_TITLE_MAX, normalizeSubtasks, progress } from './subtasks.js';
 import { createEvents } from './events.js';
 import { AuthError } from './auth.js';
 import { addDays, daysBetween, isValidDate, maxDate } from './dates.js';
@@ -27,6 +28,27 @@ const TAG_LOGO = {
   ],
 };
 const MAX_TAGS = 50;
+const SUBTASKS = {
+  type: 'array',
+  maxItems: MAX_SUBTASKS,
+  items: {
+    type: 'object',
+    required: ['id', 'title'],
+    properties: {
+      id: ID,
+      parentId: { anyOf: [{ type: 'null' }, ID] },
+      title: { type: 'string', minLength: 1, maxLength: SUBTASK_TITLE_MAX },
+      done: { type: 'boolean' },
+    },
+    additionalProperties: false,
+  },
+};
+// Images are resized on the device first (~1600 px JPEG, a few hundred KB).
+const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+const MAX_THUMB_BYTES = 300 * 1024;
+const MAX_ATTACHMENTS = 20;
+const IMAGE_DATA_URL = '^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$';
+const ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
 const TIMESTAMP = { type: 'integer', minimum: 0 };
 
 const PUBLIC_PATHS = new Set(['/api/health', '/api/config']);
@@ -69,6 +91,41 @@ function assertLogo(logo) {
   if (!ok) throw new HttpError(400, 'Logo is not a valid image');
 }
 
+/** Decodes a data URL and checks the bytes really are that image type. */
+function decodeImage(dataUrl, what, maxBytes) {
+  const [, type, b64] = dataUrl.match(/^data:image\/(png|jpeg|webp);base64,(.*)$/s) || [];
+  if (!type || b64.length % 4 !== 0) throw new HttpError(400, `${what} is not a valid image`);
+  const buf = Buffer.from(b64, 'base64');
+  if (buf.length > maxBytes) throw new HttpError(413, `${what} is too large`);
+  const ok = {
+    png: buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+    jpeg: buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff,
+    webp: buf.length > 12 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP',
+  }[type];
+  if (!ok) throw new HttpError(400, `${what} is not a valid image`);
+  return { type, buf };
+}
+
+const MIME = { jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+
+/**
+ * Status for a task with steps. Explicit status in the request wins, except that a
+ * task can't be marked done while steps are open. Without one, a change to the
+ * steps decides: all done -> done, otherwise pending (a cancelled task stays cancelled).
+ */
+function resolveStatus(current, requested, subtasks, subtasksChanged) {
+  const p = progress(subtasks);
+  if (requested !== undefined) {
+    if (requested === 'done' && p.total > 0 && p.done < p.total) {
+      const left = p.total - p.done;
+      throw new HttpError(409, `Finish the remaining ${left} step${left === 1 ? '' : 's'} first`);
+    }
+    return requested;
+  }
+  if (subtasksChanged && p.total > 0 && current !== 'cancelled') return p.done === p.total ? 'done' : 'pending';
+  return current;
+}
+
 export function buildApp({ db, verify, config, logger = false, events = createEvents() }) {
   const repo = createRepo(db);
   const app = Fastify({
@@ -88,7 +145,7 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
   };
   app.addHook('onSend', async (req, reply, payload) => {
     reply.headers(SECURITY_HEADERS);
-    if (req.url.startsWith('/api/')) reply.header('Cache-Control', 'no-store');
+    if (req.url.startsWith('/api/') && !reply.getHeader('Cache-Control')) reply.header('Cache-Control', 'no-store');
     return payload;
   });
 
@@ -225,7 +282,7 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
         required: ['title', 'date'],
         properties: {
           id: ID, title: TITLE, notes: NOTES, priority: PRIORITY, date: DATE,
-          status: STATUS, originalDate: DATE, postponed: COUNT, tagIds: TAG_IDS,
+          status: STATUS, originalDate: DATE, postponed: COUNT, tagIds: TAG_IDS, subtasks: SUBTASKS,
           // Only used when undoing a delete, so the task keeps its place and history.
           createdAt: TIMESTAMP, completedAt: TIMESTAMP,
         },
@@ -247,7 +304,8 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     const tagIds = b.tagIds ?? [];
     if (!repo.ownsTags(uid, tagIds)) throw new HttpError(400, 'Unknown tag');
     const now = Date.now();
-    const status = b.status || 'pending';
+    const subtasks = normalizeSubtasks(b.subtasks ?? []);
+    const status = resolveStatus('pending', b.status, subtasks, subtasks.length > 0);
     if ((b.createdAt ?? 0) > now + 60000 || (b.completedAt ?? 0) > now + 60000) {
       throw new HttpError(400, 'Timestamps cannot be in the future');
     }
@@ -264,6 +322,7 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
       updatedAt: now,
       completedAt: status === 'done' ? (b.completedAt ?? now) : null,
       tagIds,
+      subtasks,
     });
     taskChange(req, task.date);
     return reply.code(201).send(task);
@@ -281,7 +340,7 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
         minProperties: 1,
         properties: {
           title: TITLE, notes: NOTES, priority: PRIORITY, date: DATE, status: STATUS, postponed: COUNT,
-          tagIds: TAG_IDS,
+          tagIds: TAG_IDS, subtasks: SUBTASKS,
         },
         additionalProperties: false,
       },
@@ -300,9 +359,11 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     if (b.priority !== undefined) next.priority = b.priority;
     if (b.date !== undefined) next.date = b.date;
     if (b.postponed !== undefined) next.postponed = b.postponed;
-    if (b.status !== undefined && b.status !== current.status) {
-      next.status = b.status;
-      next.completedAt = b.status === 'done' ? next.updatedAt : null;
+    if (b.subtasks !== undefined) next.subtasks = normalizeSubtasks(b.subtasks);
+    const status = resolveStatus(current.status, b.status, next.subtasks, b.subtasks !== undefined);
+    if (status !== current.status) {
+      next.status = status;
+      next.completedAt = status === 'done' ? next.updatedAt : null;
     }
     const saved = repo.update(uid, next);
     taskChange(req, current.date, saved.date);
@@ -343,6 +404,122 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     taskChange(req, current.date);
     return reply.code(204).send();
   });
+
+  // ---- Attachments (images) ------------------------------------------------
+  // Files live next to the database: <filesDir>/<id>.<type> and <id>.thumb.<type>.
+  const filesDir = config.filesDir;
+  const filePath = (id, type, thumb) => path.join(filesDir, `${id}${thumb ? '.thumb' : ''}.${type}`);
+  function writeFileAtomic(file, buf) {
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, buf);
+    fs.renameSync(tmp, file);
+  }
+  function removeFiles(id, type) {
+    for (const thumb of [false, true]) fs.rmSync(filePath(id, type, thumb), { force: true });
+  }
+
+  app.post('/api/tasks/:id/attachments', {
+    bodyLimit: Math.ceil((MAX_IMAGE_BYTES + MAX_THUMB_BYTES) * 1.37) + 4096,
+    schema: {
+      params: idParams,
+      body: {
+        type: 'object',
+        required: ['id', 'image', 'thumb', 'width', 'height'],
+        properties: {
+          id: ID,
+          image: { type: 'string', pattern: IMAGE_DATA_URL },
+          thumb: { type: 'string', pattern: IMAGE_DATA_URL },
+          width: { type: 'integer', minimum: 1, maximum: 20000 },
+          height: { type: 'integer', minimum: 1, maximum: 20000 },
+        },
+        additionalProperties: false,
+      },
+    },
+  }, async (req, reply) => {
+    const uid = req.user.uid;
+    const b = req.body;
+    const task = repo.get(uid, req.params.id);
+    if (!task) throw new HttpError(404, 'Task not found');
+    const existing = repo.getAttachment(uid, b.id);
+    if (existing) {
+      if (existing.task_id !== task.id) throw new HttpError(409, 'Id already in use');
+      return reply.code(200).send(task); // retry of an upload that already worked
+    }
+    if (repo.attachmentIdTaken(b.id)) throw new HttpError(409, 'Id already in use');
+    if (repo.attachmentCount(uid, task.id) >= MAX_ATTACHMENTS) {
+      throw new HttpError(400, `A task can have at most ${MAX_ATTACHMENTS} images`);
+    }
+    const image = decodeImage(b.image, 'Image', MAX_IMAGE_BYTES);
+    const thumb = decodeImage(b.thumb, 'Thumbnail', MAX_THUMB_BYTES);
+    if (thumb.type !== image.type) throw new HttpError(400, 'Thumbnail must be the same image type');
+    fs.mkdirSync(filesDir, { recursive: true });
+    writeFileAtomic(filePath(b.id, image.type, false), image.buf);
+    writeFileAtomic(filePath(b.id, image.type, true), thumb.buf);
+    try {
+      repo.insertAttachment(uid, {
+        id: b.id, taskId: task.id, type: image.type, width: b.width, height: b.height,
+        size: image.buf.length, createdAt: Date.now(),
+      });
+    } catch (err) {
+      removeFiles(b.id, image.type);
+      throw err;
+    }
+    taskChange(req, task.date);
+    return reply.code(201).send(repo.get(uid, task.id));
+  });
+
+  app.get('/api/attachments/:id', {
+    schema: {
+      params: idParams,
+      querystring: {
+        type: 'object', properties: { size: { type: 'string', enum: ['full', 'thumb'] } }, additionalProperties: false,
+      },
+    },
+  }, async (req, reply) => {
+    const a = repo.getAttachment(req.user.uid, req.params.id);
+    if (!a) throw new HttpError(404, 'Image not found');
+    const file = filePath(a.id, a.type, req.query.size === 'thumb');
+    let buf;
+    try {
+      buf = fs.readFileSync(file);
+    } catch {
+      throw new HttpError(404, 'Image file is missing');
+    }
+    // Ids never get new content, so devices may keep their copy for good.
+    reply.header('Cache-Control', 'private, max-age=31536000, immutable');
+    reply.type(MIME[a.type]);
+    return reply.send(buf);
+  });
+
+  app.delete('/api/attachments/:id', { schema: { params: idParams } }, async (req) => {
+    const uid = req.user.uid;
+    const a = repo.getAttachment(uid, req.params.id);
+    if (!a || !repo.removeAttachment(uid, a.id)) throw new HttpError(404, 'Image not found');
+    removeFiles(a.id, a.type);
+    const task = repo.get(uid, a.task_id);
+    if (task) taskChange(req, task.date);
+    return task ?? { deleted: true };
+  });
+
+  // Images of tasks deleted more than a day ago (past any "Undo") are removed for good.
+  function sweepAttachments() {
+    try {
+      for (const a of repo.expiredAttachments(Date.now() - ORPHAN_TTL_MS)) {
+        removeFiles(a.id, a.type);
+        repo.dropAttachment(a.id);
+      }
+    } catch (err) {
+      app.log.error(err, 'attachment cleanup failed');
+    }
+  }
+  let sweepTimer = null;
+  app.addHook('onReady', async () => {
+    sweepAttachments();
+    sweepTimer = setInterval(sweepAttachments, 60 * 60 * 1000);
+    sweepTimer.unref();
+  });
+  app.addHook('onClose', async () => clearInterval(sweepTimer));
+  app.decorate('sweepAttachments', sweepAttachments);
 
   // ---- Tags ----------------------------------------------------------------
   app.get('/api/tags', async (req) => ({ tags: repo.listTags(req.user.uid) }));

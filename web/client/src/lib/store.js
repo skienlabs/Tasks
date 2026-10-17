@@ -12,6 +12,8 @@
 import { useSyncExternalStore } from 'react';
 import { api, newId } from './api.js';
 import { addDays, shortLabel, todayKey } from './dates.js';
+import { clearImages, seedImage } from './images.js';
+import { progress, setAll, statusAfterSteps, toggle } from './subtasks.js';
 
 export const MAX_TAGS_PER_TASK = 10;
 
@@ -141,6 +143,7 @@ export function clearStore() {
   for (const m of [byId, confirmed, touched, latest, queues, loadedAt, dayRequest, summary, dateTouched, inflightDates, tags]) m.clear();
   tagsLoaded = false;
   toast = null;
+  clearImages();
   emit();
 }
 
@@ -253,16 +256,18 @@ function mutate(id, nextLocal, request, errorLabel) {
 }
 
 /** Returns the new task and a promise resolving to true once the server saved it. */
-export function createTask({ title, notes = '', priority = 4, date, tagIds = [] }) {
+export function createTask({ title, notes = '', priority = 4, date, tagIds = [], subtasks = [] }) {
   const now = Date.now();
   const ids = cleanTagIds(tagIds);
+  const status = statusAfterSteps('pending', subtasks);
   const task = {
     id: newId(), title: title.replace(/\s+/g, ' ').trim(), notes: notes.trim(), priority, date,
-    status: 'pending', originalDate: date, postponed: 0, createdAt: now, updatedAt: now, completedAt: null,
-    tagIds: ids,
+    status, originalDate: date, postponed: 0, createdAt: now, updatedAt: now,
+    completedAt: status === 'done' ? now : null, tagIds: ids, subtasks, attachments: [],
   };
   const saved = mutate(task.id, task, () => api('POST', '/api/tasks', {
     id: task.id, title: task.title, notes: task.notes, priority, date, tagIds: ids,
+    ...(subtasks.length ? { subtasks } : {}),
   }), "Couldn't add task");
   return { task, saved };
 }
@@ -275,7 +280,9 @@ export function updateTask(id, patch) {
   const next = { ...old, ...patch, updatedAt: Date.now() };
   if (patch.title !== undefined) next.title = patch.title.replace(/\s+/g, ' ').trim();
   if (patch.notes !== undefined) next.notes = patch.notes.trim();
-  if (patch.status && patch.status !== old.status) next.completedAt = patch.status === 'done' ? Date.now() : null;
+  // Same rule as the server: changing the steps decides done/pending unless a status is given.
+  if (patch.subtasks !== undefined && patch.status === undefined) next.status = statusAfterSteps(old.status, patch.subtasks);
+  if (next.status !== old.status) next.completedAt = next.status === 'done' ? Date.now() : null;
   mutate(id, next, () => api('PATCH', `/api/tasks/${id}`, patch), "Couldn't save");
   return old;
 }
@@ -285,7 +292,60 @@ function setStatus(id, status, message) {
   if (old) showToast(message, () => updateTask(id, { status: old.status }));
 }
 
-export const completeTask = (id) => setStatus(id, 'done', 'Task completed');
+/** A task with open steps isn't completed directly; the toast offers to tick them all. */
+export function completeTask(id) {
+  const t = byId.get(id);
+  if (!t) return;
+  const p = progress(t.subtasks);
+  if (p.total > 0 && p.done < p.total) {
+    const left = p.total - p.done;
+    showToast(`${left} step${left === 1 ? '' : 's'} still open`, () => {
+      const cur = byId.get(id);
+      if (!cur) return;
+      const before = cur.subtasks;
+      updateTask(id, { subtasks: setAll(before, true) });
+      showToast('All steps done, task completed', () => updateTask(id, { subtasks: before }));
+    }, 'Complete all');
+    return;
+  }
+  setStatus(id, 'done', 'Task completed');
+}
+
+/** Ticks one step; completing the last one completes the task (with Undo). */
+export function toggleStep(id, stepId) {
+  const t = byId.get(id);
+  if (!t) return;
+  const before = t.subtasks ?? [];
+  const after = toggle(before, stepId);
+  updateTask(id, { subtasks: after });
+  if (t.status !== 'done' && statusAfterSteps(t.status, after) === 'done') {
+    showToast('All steps done, task completed', () => updateTask(id, { subtasks: before }));
+  }
+}
+
+// ---- Images ----------------------------------------------------------------------
+
+/** Uploads a prepared image (lib/images.js prepareImage) after any pending write to the task. */
+export function addAttachment(id, img) {
+  const old = byId.get(id);
+  if (!old) return Promise.resolve(false);
+  seedImage(img.id, 'thumb', img.previewUrl);
+  const local = { id: img.id, type: 'jpeg', width: img.width, height: img.height, size: 0, createdAt: Date.now(), uploading: true };
+  const next = { ...old, attachments: [...(old.attachments ?? []), local] };
+  return mutate(id, next, () => api('POST', `/api/tasks/${id}/attachments`, {
+    id: img.id, image: img.image, thumb: img.thumb, width: img.width, height: img.height,
+  }), "Couldn't add image");
+}
+
+export function removeAttachment(id, attachmentId) {
+  const old = byId.get(id);
+  if (!old) return Promise.resolve(false);
+  const next = { ...old, attachments: (old.attachments ?? []).filter((a) => a.id !== attachmentId) };
+  return mutate(id, next, async () => {
+    const res = await api('DELETE', `/api/attachments/${attachmentId}`);
+    return res?.id ? res : null; // null: the task itself is gone on the server
+  }, "Couldn't remove image");
+}
 export const cancelTask = (id) => setStatus(id, 'cancelled', 'Task cancelled');
 export const restoreTask = (id) => setStatus(id, 'pending', 'Task restored');
 
@@ -323,6 +383,7 @@ export function deleteTask(id) {
     mutate(id, { ...old, tagIds }, () => api('POST', '/api/tasks', {
       id: old.id, title: old.title, notes: old.notes, priority: old.priority, date: old.date,
       status: old.status, originalDate: old.originalDate, postponed: old.postponed, tagIds,
+      ...(old.subtasks?.length ? { subtasks: old.subtasks } : {}),
       createdAt: old.createdAt, ...(old.completedAt ? { completedAt: old.completedAt } : {}),
     }), "Couldn't restore");
   });
