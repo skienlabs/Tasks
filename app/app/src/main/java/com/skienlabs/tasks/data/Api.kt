@@ -1,6 +1,8 @@
 package com.skienlabs.tasks.data
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -104,7 +106,12 @@ class HttpTasksApi(
         return http.newCall(builder.build()).await()
     }
 
-    private suspend fun <T> call(method: String, path: String, body: JsonElement?, serializer: KSerializer<T>?, http: OkHttpClient = client): T? {
+    // The whole exchange runs on IO: a large reply (a tag logo, a full day) is still streaming in
+    // after the headers arrive, and reading it on the main thread throws NetworkOnMainThreadException.
+    private suspend fun <T> call(method: String, path: String, body: JsonElement?, serializer: KSerializer<T>?, http: OkHttpClient = client): T? =
+        withContext(Dispatchers.IO) { callBlocking(method, path, body, serializer, http) }
+
+    private suspend fun <T> callBlocking(method: String, path: String, body: JsonElement?, serializer: KSerializer<T>?, http: OkHttpClient): T? {
         val response = try {
             var res = send(method, path, body, force = false, http = http)
             if (res.code == 401) { // the token may have just expired: refresh once and retry
@@ -179,7 +186,9 @@ class HttpTasksApi(
         }
     }
 
-    override suspend fun image(id: String, size: String): ByteArray {
+    override suspend fun image(id: String, size: String): ByteArray = withContext(Dispatchers.IO) { imageBlocking(id, size) }
+
+    private suspend fun imageBlocking(id: String, size: String): ByteArray {
         val path = "/api/attachments/$id?size=$size"
         val response = try {
             var res = send("GET", path, null, force = false)
