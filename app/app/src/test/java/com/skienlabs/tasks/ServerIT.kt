@@ -107,6 +107,31 @@ class ServerIT {
             assertNull(store.state.value.tasks[id])
             val (_, restore) = store.createTask("x", today) // queue keeps order; make sure the server is fine after deletes
             assertTrue(restore.await())
+
+            // Steps: the task completes when the last step is ticked, on the server too.
+            val steps = listOf(
+                com.skienlabs.tasks.data.Subtask("st-aaaaaaa1", null, "Server"),
+                com.skienlabs.tasks.data.Subtask("st-aaaaaaa2", null, "Ports"),
+                com.skienlabs.tasks.data.Subtask("st-aaaaaaa3", "st-aaaaaaa2", "25"),
+            )
+            val (mail, ok) = store.createTask("Mail server", today, subtasks = steps)
+            assertTrue(ok.await())
+            store.completeTask(mail.id) // refused locally: steps open
+            store.toggleStep(mail.id, "st-aaaaaaa1")
+            store.toggleStep(mail.id, "st-aaaaaaa2") // parent ticks its child
+            delay(800)
+            val onServer = api.day(today, today).tasks.first { it.id == mail.id }
+            assertEquals(Status.DONE, onServer.status)
+            assertTrue(onServer.subtasks.all { it.done })
+
+            // Images: upload (JPEG bytes), download, delete.
+            val jpeg = java.util.Base64.getDecoder().decode("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==")
+            val img = com.skienlabs.tasks.data.PreparedImage(java.util.UUID.randomUUID().toString(), jpeg, jpeg, 1, 1)
+            assertTrue(store.addAttachment(mail.id, img)!!.await())
+            assertEquals(img.id, store.state.value.tasks[mail.id]!!.attachments.single().id)
+            assertTrue(api.image(img.id, "thumb").contentEquals(jpeg))
+            assertTrue(store.removeAttachment(mail.id, img.id)!!.await())
+            assertTrue(api.day(today, today).tasks.first { it.id == mail.id }.attachments.isEmpty())
             assertNotNull(api.tags())
             live.stop()
         }

@@ -6,6 +6,10 @@ import com.skienlabs.tasks.data.NoCache
 import com.skienlabs.tasks.data.Profile
 import com.skienlabs.tasks.data.Stats
 import com.skienlabs.tasks.data.Status
+import com.skienlabs.tasks.data.Steps
+import com.skienlabs.tasks.data.Subtask
+import com.skienlabs.tasks.data.Attachment
+import com.skienlabs.tasks.data.PreparedImage
 import com.skienlabs.tasks.data.Store
 import com.skienlabs.tasks.data.SummaryResponse
 import com.skienlabs.tasks.data.Tag
@@ -66,6 +70,7 @@ class FakeApi : TasksApi {
             status = body["status"]?.jsonPrimitive?.content ?: Status.PENDING,
             tagIds = body["tagIds"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList(),
             createdAt = body["createdAt"]?.jsonPrimitive?.content?.toLong() ?: clock++, updatedAt = clock++,
+            subtasks = body["subtasks"]?.let { com.skienlabs.tasks.data.AppJson.decodeFromJsonElement(kotlinx.serialization.builtins.ListSerializer(Subtask.serializer()), it) } ?: emptyList(),
         )
         tasks[id] = t
         return t
@@ -79,6 +84,11 @@ class FakeApi : TasksApi {
         patch["status"]?.let { n = n.copy(status = it.jsonPrimitive.content) }
         patch["priority"]?.let { n = n.copy(priority = it.jsonPrimitive.intOrNull!!) }
         patch["tagIds"]?.let { a -> n = n.copy(tagIds = a.jsonArray.map { it.jsonPrimitive.content }) }
+        patch["subtasks"]?.let { a ->
+            val steps = Steps.normalize(com.skienlabs.tasks.data.AppJson.decodeFromJsonElement(kotlinx.serialization.builtins.ListSerializer(Subtask.serializer()), a))
+            n = n.copy(subtasks = steps)
+            if (patch["status"] == null) n = n.copy(status = Steps.statusAfter(cur.status, steps))
+        }
         n = n.copy(updatedAt = clock++)
         tasks[id] = n
         return n
@@ -102,6 +112,21 @@ class FakeApi : TasksApi {
         return t
     }
     override suspend fun updateTag(id: String, patch: JsonObject) = tags.getValue(id)
+    override suspend fun addAttachment(taskId: String, body: JsonObject): Task {
+        calls += "attach"; fail()
+        val cur = tasks[taskId] ?: throw ApiException(404, "Task not found")
+        val n = cur.copy(attachments = cur.attachments + Attachment(body["id"]!!.jsonPrimitive.content, width = 10, height = 10))
+        tasks[taskId] = n
+        return n
+    }
+    override suspend fun deleteAttachment(id: String): Task? {
+        calls += "detach"; fail()
+        val cur = tasks.values.firstOrNull { t -> t.attachments.any { it.id == id } } ?: throw ApiException(404, "Image not found")
+        val n = cur.copy(attachments = cur.attachments.filter { it.id != id })
+        tasks[n.id] = n
+        return n
+    }
+    override suspend fun image(id: String, size: String) = ByteArray(0)
     override suspend fun deleteTag(id: String) {
         tags.remove(id)
         tasks.replaceAll { _, t -> t.copy(tagIds = t.tagIds - id) }
@@ -117,7 +142,8 @@ class StoreTest {
         val scope = CoroutineScope(dispatcher)
         val store = Store(api, NoCache, scope, io = dispatcher)
         val toasts = mutableListOf<Toast>()
-        backgroundScope.launch(dispatcher) { store.toasts.collect { toasts += it } }
+        // Unconfined: messages are recorded the moment they are sent (advanceUntilIdle skips background work).
+        backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) { store.toasts.collect { toasts += it } }
         return store to toasts
     }
 
@@ -253,5 +279,94 @@ class StoreTest {
         store.removeTag(tag.id)
         assertTrue(store.state.value.tasks[task.id]!!.tagIds.isEmpty())
         assertTrue(store.state.value.tags.isEmpty())
+    }
+
+    private fun steps() = listOf(
+        Subtask("s1-aaaaaaaa", null, "Set up server"),
+        Subtask("s2-aaaaaaaa", null, "Ports"),
+        Subtask("s3-aaaaaaaa", "s2-aaaaaaaa", "25"),
+        Subtask("s4-aaaaaaaa", "s2-aaaaaaaa", "993"),
+    )
+
+    @Test
+    fun stepsTreeRules() {
+        var l = steps()
+        assertEquals(Steps.Progress(0, 3), Steps.progress(l))
+        l = Steps.toggle(l, "s2-aaaaaaaa") // a parent ticks all its children
+        assertEquals(Steps.Progress(2, 3), Steps.progress(l))
+        assertTrue(l.first { it.id == "s2-aaaaaaaa" }.done)
+        l = Steps.toggle(l, "s3-aaaaaaaa")
+        assertFalse("parent is open again when a child is", l.first { it.id == "s2-aaaaaaaa" }.done)
+        l = Steps.add(l, "new under ports", "s2-aaaaaaaa")
+        assertEquals("added after the parent's last child", "new under ports", l[4].title)
+        assertEquals(listOf(0, 0, 1, 1, 1), Steps.flatten(l).map { it.depth })
+        l = Steps.remove(l, "s2-aaaaaaaa")
+        assertEquals(listOf("s1-aaaaaaaa"), l.map { it.id })
+        // depth limit
+        var deep = listOf(Subtask("d1-aaaaaaaa", null, "1"))
+        repeat(5) { i -> deep = Steps.add(deep, "x$i", deep.last().id) }
+        assertEquals(Steps.MAX_DEPTH, deep.size)
+    }
+
+    @Test
+    fun taskWithStepsCompletesOnlyWhenAllStepsAre() = runTest {
+        val api = FakeApi()
+        val (store, toasts) = newStore(api)
+        store.start("u", today)
+        val (task, saved) = store.createTask("Mail server", today, subtasks = steps())
+        advanceUntilIdle()
+        assertTrue(saved.await())
+        assertEquals(4, api.tasks[task.id]!!.subtasks.size)
+
+        // Completing directly is refused with an offer, and nothing is sent.
+        api.calls.clear()
+        store.completeTask(task.id)
+        advanceUntilIdle()
+        assertEquals(Status.PENDING, store.state.value.tasks[task.id]!!.status)
+        assertTrue(api.calls.isEmpty())
+        val offer = toasts.last()
+        assertEquals("3 steps still open", offer.message)
+
+        // Ticking every leaf completes it, locally and on the server.
+        store.toggleStep(task.id, "s1-aaaaaaaa")
+        store.toggleStep(task.id, "s2-aaaaaaaa")
+        assertEquals(Status.DONE, store.state.value.tasks[task.id]!!.status)
+        assertEquals(1, store.state.value.summary[today]!!.done)
+        advanceUntilIdle()
+        assertEquals(Status.DONE, api.tasks[task.id]!!.status)
+        val undo = toasts.last()
+        assertEquals("All steps done, task completed", undo.message)
+        undo.action!!.invoke()
+        advanceUntilIdle()
+        assertEquals(Status.PENDING, api.tasks[task.id]!!.status)
+        assertEquals(Steps.Progress(1, 3), Steps.progress(api.tasks[task.id]!!.subtasks))
+
+        // "Complete all" from the offer ticks everything.
+        store.completeTask(task.id)
+        toasts.last().action!!.invoke()
+        advanceUntilIdle()
+        assertEquals(Status.DONE, api.tasks[task.id]!!.status)
+    }
+
+    @Test
+    fun imageUploadWaitsForCreateAndRollsBackOnFailure() = runTest {
+        val api = FakeApi()
+        val (store, toasts) = newStore(api)
+        store.start("u", today)
+        val (task, _) = store.createTask("With photo", today)
+        val img = PreparedImage("img-aaaaaaaa", ByteArray(3), ByteArray(2), 10, 10)
+        val up = store.addAttachment(task.id, img)!!
+        assertTrue("shows right away", store.state.value.tasks[task.id]!!.attachments.single().uploading)
+        advanceUntilIdle()
+        assertTrue(up.await())
+        assertEquals(listOf("create", "attach"), api.calls.filter { it == "create" || it == "attach" })
+        assertFalse(store.state.value.tasks[task.id]!!.attachments.single().uploading)
+
+        api.failWrites = true
+        store.removeAttachment(task.id, "img-aaaaaaaa")
+        assertTrue(store.state.value.tasks[task.id]!!.attachments.isEmpty())
+        advanceUntilIdle()
+        assertEquals("back after the failed delete", 1, store.state.value.tasks[task.id]!!.attachments.size)
+        assertTrue(toasts.any { it.message.startsWith("Couldn't remove image") })
     }
 }

@@ -77,7 +77,15 @@ class ScreensTest {
         tasks = listOf(
             task("a", "Send invoice for September", Dates.addDays(today, -1), 1, tags = listOf("t1")),
             task("b", "Review pull request #42", p = 1, tags = listOf("t1"), notes = "Check the auth changes first"),
-            task("c", "Prepare sprint demo", p = 2, tags = listOf("t2"), postponed = 1),
+            task("c", "Prepare sprint demo", p = 2, tags = listOf("t2"), postponed = 1).copy(
+                subtasks = listOf(
+                    com.skienlabs.tasks.data.Subtask("s1-aaaaaaaa", null, "Slides", true),
+                    com.skienlabs.tasks.data.Subtask("s2-aaaaaaaa", null, "Demo data", false),
+                    com.skienlabs.tasks.data.Subtask("s3-aaaaaaaa", "s2-aaaaaaaa", "Seed users", true),
+                    com.skienlabs.tasks.data.Subtask("s4-aaaaaaaa", "s2-aaaaaaaa", "Reset script", false),
+                ),
+                attachments = listOf(com.skienlabs.tasks.data.Attachment("img-aaaaaaa1"), com.skienlabs.tasks.data.Attachment("img-aaaaaaa2")),
+            ),
             task("d", "Call the bank", p = 3),
             task("e", "Reply to client email", p = 4, tags = listOf("t2")),
             task("f", "Morning stand-up notes", status = Status.DONE, tags = listOf("t1")),
@@ -162,4 +170,25 @@ class ScreensTest {
     }
     @Test fun signin_dark() = shot("signin_dark", true) { SignInScreen(Auth(ApplicationProvider.getApplicationContext())) }
     @Test fun signin_light() = shot("signin_light", false) { SignInScreen(Auth(ApplicationProvider.getApplicationContext())) }
+
+    private val tree = listOf(
+        com.skienlabs.tasks.data.Subtask("s1-aaaaaaaa", null, "Set up server", true),
+        com.skienlabs.tasks.data.Subtask("s2-aaaaaaaa", null, "Open ports", false),
+        com.skienlabs.tasks.data.Subtask("s3-aaaaaaaa", "s2-aaaaaaaa", "25 and 587", true),
+        com.skienlabs.tasks.data.Subtask("s4-aaaaaaaa", "s2-aaaaaaaa", "993 (IMAP)", false),
+        com.skienlabs.tasks.data.Subtask("s5-aaaaaaaa", null, "DNS records", false),
+        com.skienlabs.tasks.data.Subtask("s6-aaaaaaaa", "s5-aaaaaaaa", "MX record", false),
+        com.skienlabs.tasks.data.Subtask("s7-aaaaaaaa", "s6-aaaaaaaa", "Check TTL", false),
+    )
+
+    @Test fun steps_dark() = shot("steps_dark", true) {
+        Column(Modifier.padding(16.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(20.dp)) {
+            Text("On the task row", style = MaterialTheme.typography.titleMedium)
+            com.skienlabs.tasks.ui.day.StepsProgress(tree, true) {}
+            com.skienlabs.tasks.ui.day.StepsInline(tree, true) {}
+            Text("In the task sheet", style = MaterialTheme.typography.titleMedium)
+            com.skienlabs.tasks.ui.day.StepsEditor(tree) {}
+            com.skienlabs.tasks.ui.task.ImagesEditor(emptyList(), emptyList(), false, {}, {}, {}, {}, {})
+        }
+    }
 }

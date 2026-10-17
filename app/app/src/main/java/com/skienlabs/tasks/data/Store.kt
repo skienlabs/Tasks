@@ -63,6 +63,7 @@ data class TaskPatch(
     val status: String? = null,
     val postponed: Int? = null,
     val tagIds: List<String>? = null,
+    val subtasks: List<Subtask>? = null,
 ) {
     fun toJson(): JsonObject = buildJsonObject {
         title?.let { put("title", it) }
@@ -72,6 +73,7 @@ data class TaskPatch(
         status?.let { put("status", it) }
         postponed?.let { put("postponed", it) }
         tagIds?.let { ids -> putJsonArray("tagIds") { ids.forEach { add(JsonPrimitive(it)) } } }
+        subtasks?.let { put("subtasks", subtasksJson(it)) }
     }
 }
 
@@ -369,12 +371,17 @@ class Store(
     private fun normalizeTitle(s: String) = s.replace(Regex("\\s+"), " ").trim()
 
     /** Adds a task; [Pair.second] completes with true once the server saved it. */
-    fun createTask(title: String, date: String, priority: Int = 4, notes: String = "", tagIds: List<String> = emptyList()): Pair<Task, Deferred<Boolean>> {
+    fun createTask(
+        title: String, date: String, priority: Int = 4, notes: String = "", tagIds: List<String> = emptyList(),
+        subtasks: List<Subtask> = emptyList(),
+    ): Pair<Task, Deferred<Boolean>> {
         val t = now()
+        val steps = Steps.normalize(subtasks)
+        val status = Steps.statusAfter(Status.PENDING, steps)
         val task = Task(
             id = UUID.randomUUID().toString(), title = normalizeTitle(title), notes = notes.trim(), priority = priority,
-            date = date, status = Status.PENDING, originalDate = date, postponed = 0, createdAt = t, updatedAt = t,
-            completedAt = null, tagIds = cleanTagIds(tagIds),
+            date = date, status = status, originalDate = date, postponed = 0, createdAt = t, updatedAt = t,
+            completedAt = if (status == Status.DONE) t else null, tagIds = cleanTagIds(tagIds), subtasks = steps,
         )
         return task to mutate(task.id, task, "Couldn't add task") { api.createTask(taskBody(task)) }
     }
@@ -382,7 +389,8 @@ class Store(
     /** Applies a partial change; returns the task as it was before (null if unknown). */
     fun updateTask(id: String, patch: TaskPatch): Task? {
         val old = _state.value.tasks[id] ?: return null
-        val p = if (patch.tagIds != null) patch.copy(tagIds = cleanTagIds(patch.tagIds)) else patch
+        var p = if (patch.tagIds != null) patch.copy(tagIds = cleanTagIds(patch.tagIds)) else patch
+        if (p.subtasks != null) p = p.copy(subtasks = Steps.normalize(p.subtasks))
         val t = now()
         var next = old.copy(
             title = p.title?.let(::normalizeTitle) ?: old.title,
@@ -391,10 +399,13 @@ class Store(
             date = p.date ?: old.date,
             postponed = p.postponed ?: old.postponed,
             tagIds = p.tagIds ?: old.tagIds,
+            subtasks = p.subtasks ?: old.subtasks,
             updatedAt = t,
         )
-        if (p.status != null && p.status != old.status) {
-            next = next.copy(status = p.status, completedAt = if (p.status == Status.DONE) t else null)
+        // Same rule as the server: changing the steps decides done/pending unless a status is given.
+        val status = p.status ?: if (p.subtasks != null) Steps.statusAfter(old.status, p.subtasks) else old.status
+        if (status != old.status) {
+            next = next.copy(status = status, completedAt = if (status == Status.DONE) t else null)
         }
         mutate(id, next, "Couldn't save") { api.updateTask(id, p.toJson()) }
         return old
@@ -405,7 +416,52 @@ class Store(
         toast(message, "Undo") { updateTask(id, TaskPatch(status = old.status)) }
     }
 
-    fun completeTask(id: String) = setStatus(id, Status.DONE, "Task completed")
+    /** A task with open steps isn't completed directly; the message offers to tick them all. */
+    fun completeTask(id: String) {
+        val t = _state.value.tasks[id] ?: return
+        val p = Steps.progress(t.subtasks)
+        if (p.total > 0 && !p.complete) {
+            toast("${p.open} step${if (p.open == 1) "" else "s"} still open", "Complete all") {
+                val cur = _state.value.tasks[id] ?: return@toast
+                val before = cur.subtasks
+                updateTask(id, TaskPatch(subtasks = Steps.setAll(before, true)))
+                toast("All steps done, task completed", "Undo") { updateTask(id, TaskPatch(subtasks = before)) }
+            }
+            return
+        }
+        setStatus(id, Status.DONE, "Task completed")
+    }
+
+    /** Ticks one step; ticking the last one completes the task (with Undo). */
+    fun toggleStep(id: String, stepId: String) {
+        val t = _state.value.tasks[id] ?: return
+        val before = t.subtasks
+        val after = Steps.toggle(before, stepId)
+        updateTask(id, TaskPatch(subtasks = after))
+        if (t.status != Status.DONE && Steps.statusAfter(t.status, after) == Status.DONE) {
+            toast("All steps done, task completed", "Undo") { updateTask(id, TaskPatch(subtasks = before)) }
+        }
+    }
+
+    // ---- Images ---------------------------------------------------------------------
+
+    /** Uploads an image after any pending write to the task (so it also works right after creating it). */
+    fun addAttachment(taskId: String, img: PreparedImage): Deferred<Boolean>? {
+        val old = _state.value.tasks[taskId] ?: return null
+        onImagePrepared?.invoke(img)
+        val local = Attachment(img.id, "jpeg", img.width, img.height, img.full.size.toLong(), now(), uploading = true)
+        val next = old.copy(attachments = old.attachments + local)
+        return mutate(taskId, next, "Couldn't add image") { api.addAttachment(taskId, img.body()) }
+    }
+
+    fun removeAttachment(taskId: String, attachmentId: String): Deferred<Boolean>? {
+        val old = _state.value.tasks[taskId] ?: return null
+        val next = old.copy(attachments = old.attachments.filter { it.id != attachmentId })
+        return mutate(taskId, next, "Couldn't remove image") { api.deleteAttachment(attachmentId) }
+    }
+
+    /** Lets the image cache keep the local copy of an image being uploaded. */
+    var onImagePrepared: ((PreparedImage) -> Unit)? = null
     fun cancelTask(id: String) = setStatus(id, Status.CANCELLED, "Task cancelled")
     fun restoreTask(id: String) = setStatus(id, Status.PENDING, "Task restored")
 
@@ -437,7 +493,7 @@ class Store(
             null
         }
         toast("Task deleted", "Undo") {
-            val restored = old.copy(tagIds = cleanTagIds(old.tagIds))
+            val restored = old.copy(tagIds = cleanTagIds(old.tagIds), attachments = old.attachments.filter { !it.uploading })
             mutate(id, restored, "Couldn't restore") { api.createTask(taskBody(restored, includeHistory = true)) }
         }
     }
@@ -475,5 +531,16 @@ class Store(
         _state.value = s.copy(tags = s.tags.filter { it.id != id }, tasks = tasks)
         tagsDirty = true
         schedulePersist()
+    }
+}
+
+/** An image shrunk on the phone, ready to upload (JPEG bytes). */
+class PreparedImage(val id: String, val full: ByteArray, val thumb: ByteArray, val width: Int, val height: Int) {
+    fun body(): JsonObject = buildJsonObject {
+        put("id", id)
+        put("image", "data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(full))
+        put("thumb", "data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(thumb))
+        put("width", width)
+        put("height", height)
     }
 }

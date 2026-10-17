@@ -7,6 +7,9 @@ Native Android app (Kotlin + Jetpack Compose, Material 3) for the same account a
 - Tasks still open from earlier days are listed at the top of Today ("Move all to today").
 - Week strip (tap a day, swipe it sideways to change week), month calendar from the title, monthly summary with charts.
 - AMOLED black, light, or follow the system (Account → Theme).
+- Steps (sub-tasks), nested like a Reddit thread. The task completes itself when the last step is ticked; it can't be completed while steps are open ("Complete all" ticks them).
+- Images on tasks: from the gallery or the camera, shrunk on the phone before upload; tap to view full screen (pinch to zoom, swipe between images).
+- End-of-day summary notification (default 9 PM, change it in Account): what you finished, what's left, high-priority tasks first. Works offline from the saved copy.
 - Opens instantly from a local cache, then refreshes; offline it shows the saved copy.
 
 Requires Android 9 or newer. Tuned for big, high-refresh phones like the OnePlus 12.
@@ -43,6 +46,8 @@ keytool -list -v -keystore keystore/tasks-release.jks -alias tasks
 1. Copy `app-release.apk` to the phone (USB, Drive, or Quick Share).
 2. Open it in Files; allow "Install unknown apps" for that app when asked.
 3. To update later, install the new APK over the old one (same key → data and sign-in are kept).
+
+If the end-of-day notification doesn't show up on OnePlus/OxygenOS: long-press the app icon → App info → Battery → **Allow background activity** (OxygenOS can hold alarms of apps it considers idle).
 
 With USB debugging on: `adb install -r app/build/outputs/apk/release/app-release.apk`.
 

@@ -54,6 +54,7 @@ import com.skienlabs.tasks.data.Tag
 import com.skienlabs.tasks.data.Task
 import com.skienlabs.tasks.data.TaskPatch
 import com.skienlabs.tasks.ui.common.TagChip
+import com.skienlabs.tasks.ui.day.StepsEditor
 import com.skienlabs.tasks.ui.theme.LocalExtra
 import com.skienlabs.tasks.ui.theme.Palette
 import kotlinx.coroutines.launch
@@ -88,6 +89,14 @@ fun TaskSheet(
     var date by rememberSaveable(key) { mutableStateOf(task?.date ?: defaultDate) }
     var tagIds by rememberSaveable(key) { mutableStateOf(task?.tagIds ?: listOfNotNull(defaultTagId)) }
     var tagsChanged by rememberSaveable(key) { mutableStateOf(false) }
+    // Steps are kept as JSON so they survive rotation.
+    var stepsJson by rememberSaveable(key) { mutableStateOf(encodeSteps(task?.subtasks ?: emptyList())) }
+    val steps = remember(stepsJson) { decodeSteps(stepsJson) }
+    var stepsChanged by rememberSaveable(key) { mutableStateOf(false) }
+    // Images: saved ones minus removed, plus new ones; applied on Save.
+    var removedImages by remember(key) { mutableStateOf(emptySet<String>()) }
+    var newImages by remember(key) { mutableStateOf(emptyList<NewImage>()) }
+    var imagesBusy by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
     val valid = title.isNotBlank() && Dates.isValid(date)
@@ -99,12 +108,17 @@ fun TaskSheet(
 
     fun save() {
         if (!valid) return
+        fun applyImages(id: String) {
+            removedImages.forEach { store.removeAttachment(id, it) }
+            newImages.forEach { store.addAttachment(id, it.prepared) }
+        }
         if (task == null) {
-            store.createTask(title, date, priority, notes, tagIds)
+            val (created, _) = store.createTask(title, date, priority, notes, tagIds, steps)
+            applyImages(created.id)
         } else if (store.state.value.tasks[task.id] == null) {
             // Deleted (maybe on another device) while open: keep the edits on offer.
-            val t = title; val n = notes; val p = priority; val d = date; val ids = tagIds
-            store.toast("This task was deleted, so changes weren't saved", "Add as new") { store.createTask(t, d, p, n, ids) }
+            val t = title; val n = notes; val p = priority; val d = date; val ids = tagIds; val st = steps
+            store.toast("This task was deleted, so changes weren't saved", "Add as new") { store.createTask(t, d, p, n, ids, st) }
         } else {
             // Compare with the task as it was when the sheet opened, so a field changed meanwhile
             // on another device is only overwritten if it was edited here too.
@@ -115,8 +129,10 @@ fun TaskSheet(
                 priority = priority.takeIf { it != o.priority },
                 date = date.takeIf { it != o.date },
                 tagIds = tagIds.takeIf { tagsChanged && it.sorted() != o.tagIds.sorted() },
+                subtasks = steps.takeIf { stepsChanged && it != o.subtasks },
             )
             if (patch != TaskPatch()) store.updateTask(task.id, patch)
+            applyImages(task.id)
         }
         close()
     }
@@ -141,6 +157,19 @@ fun TaskSheet(
                 label = { Text("Details") }, placeholder = { Text("Add notes") }, minLines = 2, maxLines = 8,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier.fillMaxWidth(),
+            )
+            StepsEditor(steps) {
+                stepsJson = encodeSteps(it)
+                stepsChanged = true
+            }
+            val saved = (task?.attachments ?: emptyList()).filter { it.id !in removedImages && !it.uploading }
+            ImagesEditor(
+                saved = saved, added = newImages, busy = imagesBusy,
+                onBusy = { imagesBusy = it },
+                onAdd = { newImages = newImages + it },
+                onRemoveSaved = { removedImages = removedImages + it.id },
+                onRemoveNew = { img -> newImages = newImages.filter { it.prepared.id != img.prepared.id } },
+                onError = { store.toast(it) },
             )
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -197,7 +226,7 @@ fun TaskSheet(
                 }
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = { close() }) { Text("Cancel") }
-                Button(onClick = { save() }, enabled = valid, modifier = Modifier.padding(start = 8.dp)) { Text(if (task == null) "Add task" else "Save") }
+                Button(onClick = { save() }, enabled = valid && !imagesBusy, modifier = Modifier.padding(start = 8.dp)) { Text(if (task == null) "Add task" else "Save") }
             }
         }
     }
@@ -216,3 +245,7 @@ fun TaskSheet(
         ) { DatePicker(state) }
     }
 }
+
+private val stepsSerializer = kotlinx.serialization.builtins.ListSerializer(com.skienlabs.tasks.data.Subtask.serializer())
+private fun encodeSteps(list: List<com.skienlabs.tasks.data.Subtask>) = com.skienlabs.tasks.data.AppJson.encodeToString(stepsSerializer, list)
+private fun decodeSteps(json: String) = runCatching { com.skienlabs.tasks.data.AppJson.decodeFromString(stepsSerializer, json) }.getOrDefault(emptyList())

@@ -98,6 +98,9 @@ import com.skienlabs.tasks.data.MAX_TAGS_PER_TASK
 import com.skienlabs.tasks.data.Tag
 import com.skienlabs.tasks.data.Task
 import com.skienlabs.tasks.ui.common.TagAvatar
+import com.skienlabs.tasks.ui.images.ImageStrip
+import com.skienlabs.tasks.ui.images.ImageViewer
+import androidx.compose.runtime.saveable.rememberSaveable
 import com.skienlabs.tasks.ui.common.TagChip
 import com.skienlabs.tasks.ui.common.tagColor
 import com.skienlabs.tasks.ui.theme.LocalExtra
@@ -302,6 +305,7 @@ data class RowActions(
     val setPriority: (Task, Int) -> Unit,
     val setTags: (Task, List<String>) -> Unit,
     val manageTags: () -> Unit,
+    val toggleStep: (Task, String) -> Unit = { _, _ -> },
 )
 
 /**
@@ -317,6 +321,9 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
     var tagMenu by remember { mutableStateOf(false) }
+    var stepsOpen by rememberSaveable(task.id) { mutableStateOf(false) }
+    var viewer by remember { mutableStateOf<Int?>(null) }
+    viewer?.let { start -> ImageViewer(task.attachments, start) { viewer = null } }
     val rowTags = remember(task.tagIds, tags) { task.tagIds.mapNotNull { id -> tags.firstOrNull { it.id == id } } }
     val target = Dates.postponeTarget(task.date, today)
     val postponeLabel = Dates.shortLabel(target, today).let { if (it == "Tomorrow") "Postpone to tomorrow" else "Postpone to $it" }
@@ -382,6 +389,10 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
                         rowTags.forEach { TagChip(it, dense = true) }
                     }
                 }
+                if (task.subtasks.isNotEmpty()) {
+                    StepsProgress(task.subtasks, stepsOpen) { stepsOpen = !stepsOpen }
+                    if (stepsOpen) StepsInline(task.subtasks, enabled = !task.isCancelled) { actions.toggleStep(task, it) }
+                }
                 val metas = buildList {
                     if (showOrigin) add(Triple(Icons.Outlined.CalendarToday, Dates.shortLabel(task.date, today), x.overdue))
                     if (task.priority < 4 && task.isPending) add(Triple(Icons.Filled.Flag, Palette.priorityLabel(task.priority), Palette.priority(task.priority, x.dark)))
@@ -403,6 +414,7 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
                         }
                     }
                 }
+                if (task.attachments.isNotEmpty()) ImageStrip(task.attachments) { viewer = it }
             }
             Box {
                 IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "More actions for \"${task.title}\"", tint = MaterialTheme.colorScheme.onSurfaceVariant) }

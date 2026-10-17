@@ -44,8 +44,9 @@ class AppController(context: Context) {
     val prefs = Prefs(context)
     val auth = Auth(context)
     val api = HttpTasksApi(BuildConfig.API_URL, auth)
-    private val cache: Cache by lazy { RoomCache(context) }
-    val store by lazy { Store(api, cache, scope) }
+    private val cache: Cache by lazy { RoomCache.get(context) }
+    val images by lazy { com.skienlabs.tasks.ui.images.ImageStore(context, api) }
+    val store by lazy { Store(api, cache, scope).also { s -> s.onImagePrepared = { images.seed(it) } } }
 
     private val _session = MutableStateFlow<Session>(Session.Starting)
     val session: StateFlow<Session> = _session.asStateFlow()
@@ -85,14 +86,20 @@ class AppController(context: Context) {
 
     private suspend fun onUser(user: AuthUser?) {
         if (user == null) {
-            if (currentUid != null) store.clear()
+            if (currentUid != null) {
+                store.clear()
+                images.clear()
+            }
             currentUid = null
             live?.stop()
             _session.value = Session.SignedOut
             return
         }
         if (user.uid != currentUid) {
-            if (currentUid != null) store.clear() // another account
+            if (currentUid != null) { // another account
+                store.clear()
+                images.clear()
+            }
             currentUid = user.uid
             // Show the last known profile instantly (works offline), then refresh it.
             val cached = runCatching { withContext(Dispatchers.IO) { cacheProfile(user.uid) } }.getOrNull()

@@ -81,6 +81,7 @@ import com.skienlabs.tasks.ui.tags.TagsScreen
 import com.skienlabs.tasks.ui.task.TaskSheet
 import com.skienlabs.tasks.ui.theme.LocalExtra
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.YearMonth
@@ -162,6 +163,19 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
     }
     LaunchedEffect(profile.uid) { app.refreshTags() }
 
+    // Ask once for permission to post the end-of-day summary (Android 13+).
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val notifPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { scope.launch { com.skienlabs.tasks.notify.DailySummary.reschedule(context) } }
+    LaunchedEffect(profile.uid) {
+        if (android.os.Build.VERSION.SDK_INT < 33 || com.skienlabs.tasks.notify.DailySummary.canNotify(context)) return@LaunchedEffect
+        if (app.prefs.notificationsAsked.first() || !app.prefs.dailySummary.first().enabled) return@LaunchedEffect
+        app.prefs.setNotificationsAsked()
+        kotlinx.coroutines.delay(1200) // let the day appear first
+        notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     // ---- Day pager (moves with the selected date) -------------------------------------
     val pager = rememberPagerState(initialPage = pageOf(date)) { PAGE_COUNT }
     LaunchedEffect(pager) {
@@ -193,6 +207,7 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
             setPriority = { t, p -> store.updateTask(t.id, TaskPatch(priority = p)) },
             setTags = { t, ids -> store.updateTask(t.id, TaskPatch(tagIds = ids)) },
             manageTags = { manageTags() },
+            toggleStep = { t, stepId -> store.toggleStep(t.id, stepId) },
         )
     }
 

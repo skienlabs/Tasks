@@ -58,6 +58,9 @@ import com.skienlabs.tasks.AppController
 import com.skienlabs.tasks.BuildConfig
 import com.skienlabs.tasks.data.Profile
 import com.skienlabs.tasks.data.ThemePref
+import com.skienlabs.tasks.notify.DailySummary
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material.icons.outlined.NotificationsActive
 import com.skienlabs.tasks.ui.theme.LocalExtra
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -174,6 +177,8 @@ fun AccountSheet(app: AppController, profile: Profile, theme: ThemePref, onDismi
                 Text(text, color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
             }
 
+            SummarySetting(app)
+
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Theme", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -207,4 +212,77 @@ fun AccountSheet(app: AppController, profile: Profile, theme: ThemePref, onDismi
             }
         }
     }
+}
+
+/** End-of-day summary notification: on/off and time. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SummarySetting(app: AppController) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    val pref by app.prefs.dailySummary.collectAsStateWithLifecycle(com.skienlabs.tasks.data.DailySummaryPref())
+    var allowed by remember { mutableStateOf(DailySummary.canNotify(context)) }
+    var picking by remember { mutableStateOf(false) }
+    // Re-check when coming back from the system settings.
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        allowed = DailySummary.canNotify(context)
+        onPauseOrDispose {}
+    }
+    fun save(enabled: Boolean, minutes: Int) {
+        scope.launch {
+            app.prefs.setDailySummary(enabled, minutes)
+            DailySummary.schedule(context, enabled, minutes)
+        }
+    }
+    val permission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { ok -> allowed = ok || DailySummary.canNotify(context) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.NotificationsActive, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text("End-of-day summary", style = MaterialTheme.typography.titleSmall)
+                Text("What you finished and what's still open, with high-priority tasks", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            androidx.compose.material3.Switch(
+                checked = pref.enabled,
+                onCheckedChange = { on ->
+                    save(on, pref.minutes)
+                    if (on && !allowed && android.os.Build.VERSION.SDK_INT >= 33) permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                },
+            )
+        }
+        if (pref.enabled) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 34.dp)) {
+                Text("Every day at", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = { picking = true }) { Text(timeLabel(context, pref.minutes)) }
+            }
+            if (!allowed) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 34.dp)) {
+                    Text("Notifications are off for Tasks.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        runCatching { context.startActivity(intent) }
+                    }) { Text("Turn on") }
+                }
+            }
+        }
+    }
+    if (picking) {
+        val state = androidx.compose.material3.rememberTimePickerState(pref.minutes / 60, pref.minutes % 60, android.text.format.DateFormat.is24HourFormat(context))
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { picking = false },
+            confirmButton = { TextButton(onClick = { picking = false; save(true, state.hour * 60 + state.minute) }) { Text("OK") } },
+            dismissButton = { TextButton(onClick = { picking = false }) { Text("Cancel") } },
+            text = { androidx.compose.material3.TimePicker(state) },
+        )
+    }
+}
+
+private fun timeLabel(context: android.content.Context, minutes: Int): String {
+    val t = java.time.LocalTime.of(minutes / 60, minutes % 60)
+    val pattern = if (android.text.format.DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a"
+    return java.time.format.DateTimeFormatter.ofPattern(pattern, java.util.Locale.getDefault()).format(t)
 }

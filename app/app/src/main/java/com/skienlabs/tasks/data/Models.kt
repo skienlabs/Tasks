@@ -2,6 +2,7 @@ package com.skienlabs.tasks.data
 
 import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 // Mirrors the server API (web/server/src/app.js). Unknown fields are ignored.
 
@@ -26,11 +27,37 @@ data class Task(
     val updatedAt: Long = 0,
     val completedAt: Long? = null,
     val tagIds: List<String> = emptyList(),
+    val subtasks: List<Subtask> = emptyList(),
+    val attachments: List<Attachment> = emptyList(),
 ) {
     val isPending get() = status == Status.PENDING
     val isDone get() = status == Status.DONE
     val isCancelled get() = status == Status.CANCELLED
 }
+
+/** A step of a task; steps form a tree through [parentId] (see Steps.kt). */
+@Immutable
+@Serializable
+data class Subtask(
+    val id: String,
+    val parentId: String? = null,
+    val title: String,
+    val done: Boolean = false,
+)
+
+/** An image on a task. The files are fetched from /api/attachments/{id}. */
+@Immutable
+@Serializable
+data class Attachment(
+    val id: String,
+    val type: String = "jpeg",
+    val width: Int = 0,
+    val height: Int = 0,
+    val size: Long = 0,
+    val createdAt: Long = 0,
+    /** Shown while the upload is still running (never sent or stored). */
+    @Transient val uploading: Boolean = false,
+)
 
 @Immutable
 @Serializable
@@ -114,3 +141,4 @@ data class Change(
 )
 
 const val MAX_TAGS_PER_TASK = 10
+const val MAX_IMAGES_PER_TASK = 20

@@ -3,7 +3,10 @@ package com.skienlabs.tasks.data
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -45,6 +48,12 @@ interface TasksApi {
     suspend fun createTag(body: JsonObject): Tag
     suspend fun updateTag(id: String, patch: JsonObject): Tag
     suspend fun deleteTag(id: String)
+    /** Uploads an image; returns the task with its updated image list. */
+    suspend fun addAttachment(taskId: String, body: JsonObject): Task
+    /** Deletes an image; returns the task, or null if the task itself no longer exists. */
+    suspend fun deleteAttachment(id: String): Task?
+    /** Image file bytes; [size] is "thumb" or "full". */
+    suspend fun image(id: String, size: String): ByteArray
 }
 
 /** Supplies the Firebase ID token; `force` asks Firebase for a fresh one. */
@@ -79,20 +88,20 @@ class HttpTasksApi(
         return headers
     }
 
-    private suspend fun send(method: String, path: String, body: JsonElement?, force: Boolean): Response {
+    private suspend fun send(method: String, path: String, body: JsonElement?, force: Boolean, http: OkHttpClient = client): Response {
         val builder = Request.Builder().url(baseUrl + path)
         authHeaders(force).forEach { (k, v) -> builder.header(k, v) }
         val requestBody = body?.let { AppJson.encodeToString(JsonElement.serializer(), it).toRequestBody(JSON_TYPE) }
         builder.method(method, requestBody ?: if (method == "POST" || method == "PATCH") "{}".toRequestBody(JSON_TYPE) else null)
-        return client.newCall(builder.build()).await()
+        return http.newCall(builder.build()).await()
     }
 
-    private suspend fun <T> call(method: String, path: String, body: JsonElement?, serializer: KSerializer<T>?): T? {
+    private suspend fun <T> call(method: String, path: String, body: JsonElement?, serializer: KSerializer<T>?, http: OkHttpClient = client): T? {
         val response = try {
-            var res = send(method, path, body, force = false)
+            var res = send(method, path, body, force = false, http = http)
             if (res.code == 401) { // the token may have just expired: refresh once and retry
                 res.close()
-                res = send(method, path, body, force = true)
+                res = send(method, path, body, force = true, http = http)
             }
             res
         } catch (e: IOException) {
@@ -136,6 +145,46 @@ class HttpTasksApi(
     override suspend fun createTag(body: JsonObject) = req("POST", "/api/tags", body, Tag.serializer())
     override suspend fun updateTag(id: String, patch: JsonObject) = req("PATCH", "/api/tags/$id", patch, Tag.serializer())
     override suspend fun deleteTag(id: String) { call("DELETE", "/api/tags/$id", null, null as KSerializer<Unit>?) }
+
+    // Uploads can be a couple of MB on a slow connection: give them more time.
+    private val uploadClient by lazy {
+        client.newBuilder().writeTimeout(90, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).callTimeout(180, TimeUnit.SECONDS).build()
+    }
+
+    override suspend fun addAttachment(taskId: String, body: JsonObject): Task =
+        call("POST", "/api/tasks/$taskId/attachments", body, Task.serializer(), uploadClient) ?: throw ApiException(0, "Empty server response")
+
+    override suspend fun deleteAttachment(id: String): Task? {
+        val obj = call("DELETE", "/api/attachments/$id", null, JsonObject.serializer()) ?: return null
+        if (!obj.containsKey("id")) return null
+        return try {
+            AppJson.decodeFromJsonElement(Task.serializer(), obj)
+        } catch (e: Exception) {
+            throw ApiException(200, "Unexpected server response")
+        }
+    }
+
+    override suspend fun image(id: String, size: String): ByteArray {
+        val path = "/api/attachments/$id?size=$size"
+        val response = try {
+            var res = send("GET", path, null, force = false)
+            if (res.code == 401) {
+                res.close()
+                res = send("GET", path, null, force = true)
+            }
+            res
+        } catch (e: IOException) {
+            throw ApiException(0, "You appear to be offline")
+        }
+        response.use { res ->
+            if (!res.isSuccessful) throw ApiException(res.code, "Image not available")
+            return try {
+                res.body.bytes()
+            } catch (e: IOException) {
+                throw ApiException(0, "You appear to be offline")
+            }
+        }
+    }
 }
 
 /** Runs an OkHttp call without blocking a thread; cancelling the coroutine cancels the request. */
@@ -162,6 +211,7 @@ fun taskBody(
     put("priority", t.priority)
     put("date", t.date)
     putJsonArray("tagIds") { t.tagIds.forEach { add(JsonPrimitive(it)) } }
+    if (t.subtasks.isNotEmpty()) put("subtasks", subtasksJson(t.subtasks))
     if (includeHistory) {
         put("status", t.status)
         put("originalDate", t.originalDate)
@@ -169,4 +219,13 @@ fun taskBody(
         put("createdAt", t.createdAt)
         t.completedAt?.let { put("completedAt", it) }
     }
+}
+
+fun subtasksJson(list: List<Subtask>): JsonArray = buildJsonArray {
+    for (s in list) add(buildJsonObject {
+        put("id", s.id)
+        if (s.parentId == null) put("parentId", JsonNull) else put("parentId", s.parentId)
+        put("title", s.title)
+        put("done", s.done)
+    })
 }

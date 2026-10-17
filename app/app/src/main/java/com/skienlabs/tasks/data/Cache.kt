@@ -111,7 +111,16 @@ abstract class CacheDatabase : RoomDatabase() {
     abstract fun dao(): CacheDao
 }
 
-class RoomCache(context: Context) : Cache {
+class RoomCache private constructor(context: Context) : Cache {
+    companion object {
+        @Volatile private var instance: RoomCache? = null
+
+        /** One instance per process (the app and the end-of-day summary share it). */
+        fun get(context: Context): RoomCache = instance ?: synchronized(this) {
+            instance ?: RoomCache(context.applicationContext).also { instance = it }
+        }
+    }
+
     private val db = Room.databaseBuilder(context, CacheDatabase::class.java, "tasks-cache.db")
         // It is only a cache: if a future version changes the format, start fresh rather than crash.
         .fallbackToDestructiveMigration(dropAllTables = true)

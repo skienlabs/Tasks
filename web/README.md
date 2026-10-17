@@ -108,6 +108,12 @@ To try real sign-up / sign-in locally, run the Firebase Auth emulator (`npx fire
 
 Tests: `cd web/server && npm test`. Build the image locally: `docker build -t tasks web`.
 
+## Steps (sub-tasks)
+
+A task can carry `subtasks: [{ id, parentId, title, done }]`, a tree up to 4 levels deep (max 100 steps). Only leaves are ticked; a parent is done when all its children are. Changing the steps completes the task when every leaf is done and reopens it otherwise (a cancelled task stays cancelled). Setting `status: "done"` while steps are open is refused (409).
+
+Images are stored as files under `DATA_DIR/files` (on the same volume as the database, so the existing backup of `/data` covers them).
+
 ## API
 
 All endpoints except `/api/health` and `/api/config` need `Authorization: Bearer <Firebase ID token>`.
@@ -119,9 +125,12 @@ All endpoints except `/api/health` and `/api/config` need `Authorization: Bearer
 | GET | `/api/tasks?date=YYYY-MM-DD&today=YYYY-MM-DD` | Tasks for a day; when `date == today`, also `overdue` (pending from earlier days) |
 | GET | `/api/summary?from=&to=` | Per-day counts for the calendar (max 92 days) |
 | POST | `/api/tasks` | `{ title, date, priority?, notes?, id? }` (client `id` makes retries safe) |
-| PATCH | `/api/tasks/:id` | Any of `title, notes, priority, date, status, postponed` |
+| PATCH | `/api/tasks/:id` | Any of `title, notes, priority, date, status, postponed, tagIds, subtasks` |
 | POST | `/api/tasks/:id/postpone` | `{ today }` moves to the day after today (or after its own date, if later) |
-| DELETE | `/api/tasks/:id` | |
+| DELETE | `/api/tasks/:id` | Its images are kept for a day so Undo can bring them back |
+| POST | `/api/tasks/:id/attachments` | `{ id, image, thumb, width, height }` (JPEG/PNG/WebP data URLs, resized on the device; max 6 MB, 20 per task). Returns the task |
+| GET | `/api/attachments/:id?size=thumb\|full` | The image file (needs the sign-in header) |
+| DELETE | `/api/attachments/:id` | Returns the task |
 | GET | `/api/tags` | The user's tags |
 | POST | `/api/tags` | `{ name, color?, logo? }` (logo: PNG/JPEG/WebP data URL, ~96px, resized in the browser) |
 | PATCH | `/api/tags/:id` | Any of `name, color, logo, position` |
