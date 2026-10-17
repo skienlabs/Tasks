@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert, AppBar, Avatar, BottomNavigation, BottomNavigationAction, Box, Button, ButtonBase, Divider, Drawer, Fab,
   IconButton, ListItemIcon, ListItemText, Menu, MenuItem, Paper, Toolbar, Tooltip, Typography, useMediaQuery,
@@ -20,10 +20,11 @@ import SellOutlined from '@mui/icons-material/SellOutlined';
 import InstallDesktopOutlined from '@mui/icons-material/InstallDesktopOutlined';
 import AccountCircleOutlined from '@mui/icons-material/AccountCircleOutlined';
 import AccountDialog from './AccountDialog.jsx';
+
+const SummaryView = lazy(() => import('./SummaryView.jsx'));
 import Logo from './Logo.jsx';
 import MiniCalendar from './MiniCalendar.jsx';
 import DayView from './DayView.jsx';
-import SummaryView from './SummaryView.jsx';
 import TaskDialog from './TaskDialog.jsx';
 import TagManager from './TagManager.jsx';
 import { TagAvatar } from './TagChip.jsx';
@@ -616,7 +617,9 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
             wide={large}
           />
         ) : (
-          <SummaryView today={today} onOpenDay={selectDate} />
+          <Suspense fallback={null}>
+            <SummaryView today={today} onOpenDay={selectDate} />
+          </Suspense>
         )}
       </Box>
 

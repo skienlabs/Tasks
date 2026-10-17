@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, CssBaseline, LinearProgress, ThemeProvider, Typography, useMediaQuery } from '@mui/material';
 import { makeTheme } from './theme.js';
 import { refreshUser, resendVerification, signOut, startAuth } from './lib/auth.js';
@@ -6,9 +6,11 @@ import { api } from './lib/api.js';
 import { clearStore } from './lib/store.js';
 import { readPref, writePref } from './lib/prefs.js';
 import Logo from './components/Logo.jsx';
-import SignIn from './components/SignIn.jsx';
 import Home from './components/Home.jsx';
-import Onboarding from './components/Onboarding.jsx';
+
+// Only needed when signed out / on first run: loaded on demand to keep the app quick to open.
+const SignIn = lazy(() => import('./components/SignIn.jsx'));
+const Onboarding = lazy(() => import('./components/Onboarding.jsx'));
 
 export default function App() {
   const systemDark = useMediaQuery('(prefers-color-scheme: dark)', { noSsr: true });
@@ -113,7 +115,7 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      {screen}
+      <Suspense fallback={<Splash />}>{screen}</Suspense>
     </ThemeProvider>
   );
 }

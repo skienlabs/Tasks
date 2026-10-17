@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react';
 import {
-  Alert, Box, Button, CircularProgress, Divider, IconButton, InputAdornment, Link, TextField, Typography,
+  Alert, Box, Button, CircularProgress, Divider, IconButton, InputAdornment, Link, TextField, Typography, useMediaQuery,
 } from '@mui/material';
 import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import ArrowBack from '@mui/icons-material/ArrowBack';
-import Logo from './Logo.jsx';
+import WelcomeArt from './WelcomeArt.jsx';
 import { resetPassword, signInWithEmail, signInWithGoogle, signUpWithEmail } from '../lib/auth.js';
 
 function GoogleG() {
@@ -21,17 +21,20 @@ function GoogleG() {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/** Split screen: the feature showcase on the left (a band on top on phones), the form on the right. */
 function Shell({ children }) {
+  const wide = useMediaQuery((t) => t.breakpoints.up('md'));
   return (
-    <Box sx={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', p: 2 }}>
-      <Box
-        sx={(t) => ({
-          width: '100%', maxWidth: 440, p: { xs: 1, sm: 5 }, borderRadius: '28px',
-          bgcolor: { xs: 'transparent', sm: t.tokens.surfaceHigh },
-          border: { xs: 'none', sm: `1px solid ${t.palette.divider}` },
-        })}
-      >
-        {children}
+    <Box
+      sx={{
+        minHeight: '100dvh', display: 'grid',
+        gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1.15fr) minmax(440px, 1fr)' },
+        gridTemplateRows: { xs: 'auto 1fr', md: '1fr' },
+      }}
+    >
+      <WelcomeArt compact={!wide} />
+      <Box component="main" sx={{ display: 'grid', placeItems: 'center', px: { xs: 2.5, sm: 4, md: 6 }, py: { xs: 4, md: 6 } }}>
+        <Box sx={{ width: '100%', maxWidth: 400 }}>{children}</Box>
       </Box>
     </Box>
   );
@@ -39,10 +42,9 @@ function Shell({ children }) {
 
 function Header({ title, subtitle }) {
   return (
-    <Box sx={{ display: 'grid', justifyItems: 'center', textAlign: 'center', mb: 3 }}>
-      <Logo size={56} />
-      <Typography variant="h4" sx={{ mt: 2, fontWeight: 400, fontSize: { xs: 28, sm: 32 } }}>{title}</Typography>
-      {subtitle && <Typography color="text.secondary" sx={{ mt: 0.5 }}>{subtitle}</Typography>}
+    <Box sx={{ mb: 3 }}>
+      <Typography component="h1" sx={{ fontWeight: 500, fontSize: { xs: 28, sm: 34 }, letterSpacing: '-0.015em', lineHeight: 1.15 }}>{title}</Typography>
+      {subtitle && <Typography color="text.secondary" sx={{ mt: 0.75, fontSize: 16 }}>{subtitle}</Typography>}
     </Box>
   );
 }
@@ -108,7 +110,7 @@ export default function SignIn({ variant, error, onError }) {
   if (variant) {
     return (
       <Shell>
-        <Header title="Tasks" subtitle="Plan each day. Finish what matters." />
+        <Header title="Plan each day. Finish what matters." />
         {variant === 'setup' && (
           <Alert severity="info" sx={{ borderRadius: 3 }}>
             Sign-in isn&apos;t configured yet. Put your Firebase web config in <code>/config/firebase-config.json</code>

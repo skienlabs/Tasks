@@ -12,44 +12,7 @@ import Check from '@mui/icons-material/Check';
 import { TAG_COLORS, tagColor } from '../theme.js';
 import { TagAvatar } from './TagChip.jsx';
 import { removeTag, saveTag, selectTags, useStoreVersion } from '../lib/store.js';
-
-const LOGO_PX = 96;
-const MAX_LOGO_CHARS = 60000;
-
-/** Shrinks any image the browser can read to a small square logo (data URL). */
-async function toLogo(file) {
-  if (!file.type.startsWith('image/')) throw new Error('Please choose an image file');
-  if (file.size > 10 * 1024 * 1024) throw new Error('Image is larger than 10 MB');
-  const url = URL.createObjectURL(file);
-  try {
-    const img = new Image();
-    img.src = url;
-    await img.decode();
-    // SVGs without a size report 0x0 in some browsers; treat them as square.
-    const iw = img.naturalWidth || LOGO_PX;
-    const ih = img.naturalHeight || LOGO_PX;
-    if (iw * ih > 40_000_000) throw new Error('Logo image is too large (over 40 megapixels)');
-    const canvas = document.createElement('canvas');
-    canvas.width = LOGO_PX;
-    canvas.height = LOGO_PX;
-    const ctx = canvas.getContext('2d');
-    const scale = Math.min(LOGO_PX / iw, LOGO_PX / ih);
-    const w = Math.max(1, Math.round(iw * scale));
-    const h = Math.max(1, Math.round(ih * scale));
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, (LOGO_PX - w) / 2, (LOGO_PX - h) / 2, w, h);
-    let data = canvas.toDataURL('image/webp', 0.9);
-    if (!data.startsWith('data:image/webp')) data = canvas.toDataURL('image/png');
-    if (data.length > MAX_LOGO_CHARS) data = canvas.toDataURL('image/jpeg', 0.85);
-    if (data.length > MAX_LOGO_CHARS) throw new Error('Logo is too detailed; try a simpler image');
-    return data;
-  } catch (err) {
-    if (err instanceof Error && /^Logo/.test(err.message)) throw err;
-    throw new Error("Couldn't read that image");
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
+import LogoCropper, { loadImage } from './LogoCropper.jsx';
 
 function TagForm({ tag, onDone }) {
   const [name, setName] = useState(tag?.name ?? '');
@@ -57,6 +20,7 @@ function TagForm({ tag, onDone }) {
   const [logo, setLogo] = useState(tag?.logo ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [cropping, setCropping] = useState(null); // loaded image being cropped
   const fileRef = useRef(null);
   const preview = { name: name || '?', color, logo };
 
@@ -66,7 +30,7 @@ function TagForm({ tag, onDone }) {
     if (!file) return;
     setError('');
     try {
-      setLogo(await toLogo(file));
+      setCropping(await loadImage(file));
     } catch (err) {
       setError(err.message);
     }
@@ -112,6 +76,16 @@ function TagForm({ tag, onDone }) {
             </Button>
           )}
           <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" hidden onChange={pick} />
+          {cropping && (
+            <LogoCropper
+              source={cropping}
+              onCancel={() => setCropping(null)}
+              onDone={(data) => {
+                setLogo(data);
+                setCropping(null);
+              }}
+            />
+          )}
         </Box>
       </Box>
 
