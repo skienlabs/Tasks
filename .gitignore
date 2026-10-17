@@ -14,8 +14,4 @@ app/.kotlin/
 app/build/
 app/app/build/
 app/local.properties
-# Release signing key and its passwords: never commit (keep a backup somewhere safe)
-app/keystore/
-app/keystore.properties
-*.jks
-*.keystore
+# The release signing key (app/keystore/) is committed on purpose: keep this repo private.

@@ -19,7 +19,7 @@ Needs JDK 17+ and the Android SDK (platform 37).
 | --- | --- | --- |
 | `app/google-services.json` | Firebase Android config (Firebase console → Project settings → Your apps) | yes |
 | `tasks.properties` | `apiUrl=https://tasks.skienlab.com` (your server) | yes |
-| `keystore/tasks-release.jks` + `keystore.properties` | release signing key and passwords | **no — back them up** |
+| `keystore/tasks-release.jks` + `keystore.properties` | release signing key and passwords | yes — **keep the repo private** |
 
 ```bash
 cd app
@@ -30,7 +30,7 @@ cd app
 
 The release build refuses to run without the Firebase file, an `https://` server address and the signing key.
 
-**Keep the keystore safe.** Updates must be signed with the same key, and Google sign-in is registered to its SHA-1/SHA-256 in Firebase. If you lose it, you have to uninstall the app (and its cached data) and register a new key.
+**Keep the keystore safe.** It's committed so any clone can build a release; that's only OK while the repo is private. Updates must be signed with the same key, and Google sign-in is registered to its SHA-1/SHA-256 in Firebase. If you lose it, you have to uninstall the app (and its cached data) and register a new key.
 
 Get the fingerprints for Firebase (Project settings → Android app → Add fingerprint):
 
