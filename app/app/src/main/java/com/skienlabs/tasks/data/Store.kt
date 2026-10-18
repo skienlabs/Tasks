@@ -64,6 +64,8 @@ data class TaskPatch(
     val postponed: Int? = null,
     val tagIds: List<String>? = null,
     val subtasks: List<Subtask>? = null,
+    /** Only for Undo of a move/postpone: brings back the "from earlier" mark. */
+    val carriedFrom: String? = null,
 ) {
     fun toJson(): JsonObject = buildJsonObject {
         title?.let { put("title", it) }
@@ -74,6 +76,7 @@ data class TaskPatch(
         postponed?.let { put("postponed", it) }
         tagIds?.let { ids -> putJsonArray("tagIds") { ids.forEach { add(JsonPrimitive(it)) } } }
         subtasks?.let { put("subtasks", subtasksJson(it)) }
+        carriedFrom?.let { put("carriedFrom", it) }
     }
 }
 
@@ -400,6 +403,12 @@ class Store(
             postponed = p.postponed ?: old.postponed,
             tagIds = p.tagIds ?: old.tagIds,
             subtasks = p.subtasks ?: old.subtasks,
+            // Same rule as the server: moving a task on purpose clears its "from earlier" mark.
+            carriedFrom = when {
+                p.carriedFrom != null -> p.carriedFrom.takeIf { it < (p.date ?: old.date) }
+                p.date != null && p.date != old.date -> null
+                else -> old.carriedFrom
+            },
             updatedAt = t,
         )
         // Same rule as the server: changing the steps decides done/pending unless a status is given.
@@ -469,11 +478,11 @@ class Store(
         val old = _state.value.tasks[id] ?: return
         if (!old.isPending) return
         val target = Dates.postponeTarget(old.date, today)
-        val next = old.copy(date = target, postponed = old.postponed + 1, updatedAt = now())
+        val next = old.copy(date = target, postponed = old.postponed + 1, carriedFrom = null, updatedAt = now())
         mutate(id, next, "Couldn't postpone") { api.postpone(id, today) }
         val label = Dates.shortLabel(target, today)
         toast(if (label == "Tomorrow") "Postponed to tomorrow" else "Postponed to $label", "Undo") {
-            updateTask(id, TaskPatch(date = old.date, postponed = old.postponed))
+            updateTask(id, TaskPatch(date = old.date, postponed = old.postponed, carriedFrom = old.carriedFrom))
         }
     }
 
@@ -482,7 +491,7 @@ class Store(
         if (olds.isEmpty()) return
         olds.forEach { updateTask(it.id, TaskPatch(date = date)) }
         toast("${olds.size} task${if (olds.size == 1) "" else "s"} moved", "Undo") {
-            olds.forEach { updateTask(it.id, TaskPatch(date = it.date)) }
+            olds.forEach { updateTask(it.id, TaskPatch(date = it.date, carriedFrom = it.carriedFrom)) }
         }
     }
 

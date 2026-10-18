@@ -2,6 +2,17 @@ package com.skienlabs.tasks.ui.account
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import com.skienlabs.tasks.ui.theme.AppTheme
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -18,9 +29,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
-import androidx.compose.material.icons.outlined.BrightnessAuto
-import androidx.compose.material.icons.outlined.DarkMode
-import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.LockReset
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.Verified
@@ -34,9 +42,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -192,22 +197,12 @@ fun AccountSheet(app: AppController, profile: Profile, theme: ThemePref, onDismi
 
             SummarySetting(app)
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Theme", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    val options = listOf(
-                        Triple(ThemePref.SYSTEM, "System", Icons.Outlined.BrightnessAuto),
-                        Triple(ThemePref.LIGHT, "Light", Icons.Outlined.LightMode),
-                        Triple(ThemePref.DARK, "Black", Icons.Outlined.DarkMode),
-                    )
-                    options.forEachIndexed { i, (t, label, icon) ->
-                        SegmentedButton(
-                            selected = theme == t, onClick = { scope.launch { app.prefs.setTheme(t) } },
-                            shape = SegmentedButtonDefaults.itemShape(i, options.size),
-                            icon = { Icon(icon, null, Modifier.size(18.dp)) },
-                        ) { Text(label) }
-                    }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Theme", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    Text(themeLabel(theme), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                ThemeSwatches(theme) { t -> scope.launch { app.prefs.setTheme(t) } }
             }
 
             HorizontalDivider()
@@ -217,7 +212,7 @@ fun AccountSheet(app: AppController, profile: Profile, theme: ThemePref, onDismi
                         val since = DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()).format(Instant.ofEpochMilli(profile.createdAt).atZone(ZoneId.systemDefault()))
                         Text("Member since $since", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text("Tasks ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Tasks ${BuildConfig.VERSION_NAME} · © 2026 Skien Software Lab", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp)) {
                         com.skienlabs.tasks.ui.common.PrivacyLink()
                         com.skienlabs.tasks.ui.common.PrivacyLink(delete = true)
@@ -302,4 +297,71 @@ private fun timeLabel(context: android.content.Context, minutes: Int): String {
     val t = java.time.LocalTime.of(minutes / 60, minutes % 60)
     val pattern = if (android.text.format.DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a"
     return java.time.format.DateTimeFormatter.ofPattern(pattern, java.util.Locale.getDefault()).format(t)
+}
+
+private fun themeLabel(t: ThemePref) = when (t) {
+    ThemePref.SYSTEM -> "System"
+    ThemePref.LIGHT -> AppTheme.LIGHT.label
+    ThemePref.DIM -> AppTheme.DIM.label
+    ThemePref.DARK -> AppTheme.MIDNIGHT.label
+    ThemePref.ABYSS -> AppTheme.ABYSS.label
+}
+
+/** Five little pictures of the app, one per theme; the chosen one is outlined. */
+@Composable
+fun ThemeSwatches(selected: ThemePref, onSelect: (ThemePref) -> Unit) {
+    val options = listOf(
+        ThemePref.SYSTEM to null,
+        ThemePref.LIGHT to AppTheme.LIGHT,
+        ThemePref.DIM to AppTheme.DIM,
+        ThemePref.DARK to AppTheme.MIDNIGHT,
+        ThemePref.ABYSS to AppTheme.ABYSS,
+    )
+    Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { (pref, look) ->
+            val on = pref == selected
+            Column(
+                Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
+                    .selectable(on, role = Role.RadioButton) { onSelect(pref) }.padding(2.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    Modifier.fillMaxWidth().aspectRatio(0.8f)
+                        .border(if (on) 2.dp else 1.dp, if (on) MaterialTheme.colorScheme.primary else LocalExtra.current.outline, RoundedCornerShape(12.dp))
+                        .padding(if (on) 3.dp else 1.dp).clip(RoundedCornerShape(10.dp)),
+                ) {
+                    androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                        fun look(t: AppTheme) {
+                            drawRect(t.background)
+                            val pad = size.width * 0.14f
+                            drawCircle(t.accent, size.width * 0.07f, androidx.compose.ui.geometry.Offset(pad + size.width * 0.07f, pad + size.width * 0.07f))
+                            drawRoundRect(
+                                t.card, androidx.compose.ui.geometry.Offset(pad, size.height * 0.36f),
+                                androidx.compose.ui.geometry.Size(size.width - pad * 2, size.height * 0.4f),
+                                androidx.compose.ui.geometry.CornerRadius(size.width * 0.08f),
+                            )
+                            val line = if (t.dark) Color.White.copy(alpha = 0.55f) else Color.Black.copy(alpha = 0.45f)
+                            drawRoundRect(line, androidx.compose.ui.geometry.Offset(pad * 1.6f, size.height * 0.46f), androidx.compose.ui.geometry.Size(size.width * 0.5f, size.height * 0.05f), androidx.compose.ui.geometry.CornerRadius(4f))
+                            drawRoundRect(line.copy(alpha = line.alpha * 0.6f), androidx.compose.ui.geometry.Offset(pad * 1.6f, size.height * 0.58f), androidx.compose.ui.geometry.Size(size.width * 0.34f, size.height * 0.05f), androidx.compose.ui.geometry.CornerRadius(4f))
+                        }
+                        if (look != null) look(look) else {
+                            look(AppTheme.LIGHT)
+                            val half = androidx.compose.ui.graphics.Path().apply {
+                                moveTo(size.width, 0f); lineTo(size.width, size.height); lineTo(0f, size.height); close()
+                            }
+                            clipPath(half) { look(AppTheme.MIDNIGHT) }
+                        }
+                    }
+                }
+                Text(
+                    look?.label ?: "System",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                    textAlign = TextAlign.Center, maxLines = 2, minLines = 2,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+        }
+    }
 }

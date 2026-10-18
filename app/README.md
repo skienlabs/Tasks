@@ -4,9 +4,9 @@ Native Android app (Kotlin + Jetpack Compose, Material 3) for the same account a
 
 - Tasks per day, with priorities, notes, company tags and logos.
 - Swipe a task **right to complete** it, **left to postpone** it to tomorrow. Tap to edit; long-press or ⋮ for everything else (cancel, move to today, priority, tags, delete). Each action can be undone from the snackbar.
-- Tasks still open from earlier days are listed at the top of Today ("Move all to today").
+- Tasks left unfinished move to today by themselves, outlined in red with where they came from ("From yesterday").
 - Week strip (tap a day, swipe it sideways to change week), month calendar from the title, monthly summary with charts.
-- AMOLED black, light, or follow the system (Account → Theme).
+- Five themes (Account → Theme): System, Light, Dark (soft grey), Midnight Black (true black for OLED) and Abyss (deep navy, like the VS Code theme).
 - Steps (sub-tasks), nested like a Reddit thread. The task completes itself when the last step is ticked; it can't be completed while steps are open ("Complete all" ticks them).
 - Images on tasks: from the gallery or the camera, shrunk on the phone before upload; tap to view full screen (pinch to zoom, swipe between images).
 - End-of-day summary notification (default 9 PM, change it in Account): what you finished, what's left, high-priority tasks first. Works offline from the saved copy.

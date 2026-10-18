@@ -116,21 +116,10 @@ fun DayPage(
             }
         }
 
-        if (l.overdue.isNotEmpty()) {
-            item(key = "overdue-header", contentType = "overdue-header") {
-                Column(
-                    Modifier.padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(20.dp))
-                        .background(x.overdueBg).border(1.dp, x.overdueBorder, RoundedCornerShape(20.dp)),
-                ) {
-                    OverdueHeader(l.overdue.size) { onMoveAllToToday(l.overdue) }
-                    l.overdue.forEach { t ->
-                        androidx.compose.runtime.key(t.id) {
-                            TaskRow(t, tags, today, showOrigin = true, actions = actions, containerColor = x.overdueBg)
-                        }
-                    }
-                    Box(Modifier.height(4.dp))
-                }
-            }
+        // Unfinished tasks move to today on their own (the server does it). `overdue` only has
+        // entries when this phone's clock disagrees with the server's; they're listed with the day.
+        items(l.overdue, key = { "o-" + it.id }, contentType = { "task" }) { t ->
+            Box(Modifier.animateItem()) { TaskRow(t, tags, today, showOrigin = true, actions = actions) }
         }
 
         if (!known && !failed) {
@@ -183,11 +172,12 @@ private fun DayHeader(date: String, today: String, l: DayLists) {
         )
         Text(if (label in setOf("Today", "Tomorrow", "Yesterday")) Dates.fullLabel(date) else Dates.longDate(date), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         val active = pending + done
+        val earlier = l.pending.count { it.isCarried } + l.overdue.size
         if (active > 0 || l.overdue.isNotEmpty()) {
             Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (pending > 0) Pill("$pending left", if (date < today) x.overdue else x.pending)
                 if (done > 0) Pill("$done done", x.done)
-                if (l.overdue.isNotEmpty()) Pill("${l.overdue.size} overdue", x.overdue)
+                if (earlier > 0) Pill("$earlier from earlier", x.overdue)
             }
             if (active > 0) {
                 StackBar(com.skienlabs.tasks.data.Counts(pending, done, 0), Modifier.padding(top = 10.dp), height = 6.dp, overdue = date < today)

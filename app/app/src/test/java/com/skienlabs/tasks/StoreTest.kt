@@ -51,6 +51,8 @@ class FakeApi : TasksApi {
     override suspend fun updateMe(name: String?, onboarded: Boolean?) = me()
     override suspend fun day(date: String, today: String): DayResponse {
         calls += "day:$date"
+        // Like the server: unfinished tasks from earlier days move to today, remembering where they came from.
+        tasks.replaceAll { _, t -> if (t.isPending && t.date < today) t.copy(carriedFrom = t.carriedFrom ?: t.date, date = today) else t }
         val snapshot = DayResponse(
             tasks.values.filter { it.date == date },
             if (date == today) tasks.values.filter { it.isPending && it.date < today } else emptyList(),
@@ -80,7 +82,8 @@ class FakeApi : TasksApi {
         val cur = tasks[id] ?: throw ApiException(404, "Task not found")
         var n = cur
         patch["title"]?.let { n = n.copy(title = it.jsonPrimitive.content) }
-        patch["date"]?.let { n = n.copy(date = it.jsonPrimitive.content) }
+        patch["date"]?.let { d -> if (d.jsonPrimitive.content != cur.date) n = n.copy(date = d.jsonPrimitive.content, carriedFrom = null) }
+        patch["carriedFrom"]?.let { n = n.copy(carriedFrom = it.jsonPrimitive.content.takeIf { c -> c < n.date }) }
         patch["status"]?.let { n = n.copy(status = it.jsonPrimitive.content) }
         patch["priority"]?.let { n = n.copy(priority = it.jsonPrimitive.intOrNull!!) }
         patch["tagIds"]?.let { a -> n = n.copy(tagIds = a.jsonArray.map { it.jsonPrimitive.content }) }
@@ -97,7 +100,7 @@ class FakeApi : TasksApi {
         calls += "postpone"; fail()
         val cur = tasks[id] ?: throw ApiException(404, "Task not found")
         val base = if (cur.date > today) cur.date else today
-        val n = cur.copy(date = java.time.LocalDate.parse(base).plusDays(1).toString(), postponed = cur.postponed + 1)
+        val n = cur.copy(date = java.time.LocalDate.parse(base).plusDays(1).toString(), postponed = cur.postponed + 1, carriedFrom = null)
         tasks[id] = n
         return n
     }
@@ -235,18 +238,36 @@ class StoreTest {
     }
 
     @Test
-    fun overdueShowsOnTodayAndPostponeGoesToTomorrow() = runTest {
+    fun leftoversArriveOnTodayMarkedAndPostponeClearsTheMarkUntilUndo() = runTest {
         val api = FakeApi()
         api.tasks["old"] = Task("old", "Old", date = "2026-10-15", createdAt = 1)
         val (store, toasts) = newStore(api)
         store.start("u", today)
         store.loadDay(today, today)
-        assertEquals(listOf("old"), store.state.value.overdue(today).map { it.id })
+        val carried = store.state.value.tasks.getValue("old")
+        assertEquals(today, carried.date)
+        assertTrue(carried.isCarried)
+        assertEquals("2026-10-15", carried.carriedFrom)
+        assertTrue(store.state.value.overdue(today).isEmpty())
+        assertEquals(listOf("old"), store.state.value.day(today).map { it.id })
+
         store.postponeTask("old", today)
+        assertEquals(null, store.state.value.tasks.getValue("old").carriedFrom) // shows at once
         advanceUntilIdle()
         assertEquals("2026-10-18", api.tasks["old"]!!.date)
-        assertTrue(store.state.value.overdue(today).isEmpty())
+        assertEquals(null, api.tasks["old"]!!.carriedFrom)
         assertEquals("Postponed to tomorrow", toasts.last().message)
+
+        toasts.last().action!!.invoke() // Undo brings back the day and the mark
+        advanceUntilIdle()
+        assertEquals(today, api.tasks["old"]!!.date)
+        assertEquals("2026-10-15", api.tasks["old"]!!.carriedFrom)
+        assertTrue(store.state.value.tasks.getValue("old").isCarried)
+
+        // Moving it to a day on purpose clears the mark
+        store.moveTasks(listOf("old"), "2026-10-20")
+        advanceUntilIdle()
+        assertEquals(null, api.tasks["old"]!!.carriedFrom)
     }
 
     @Test

@@ -47,6 +47,10 @@ object Dates {
     private val monthYear = DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault())
     private val monthOnly = DateTimeFormatter.ofPattern("MMMM", Locale.getDefault())
 
+    /** "From yesterday" / "From Fri, 16 Oct": where a carried-over task came from. */
+    fun carriedLabel(from: String, today: String): String =
+        shortLabel(from, today).let { if (it == "Yesterday") "From yesterday" else "From $it" }
+
     fun shortLabel(key: String, today: String): String = when (between(today, key)) {
         0L -> "Today"
         1L -> "Tomorrow"

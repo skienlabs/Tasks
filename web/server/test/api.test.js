@@ -20,6 +20,7 @@ async function setup({ allowList = [] } = {}) {
   const filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tasks-files-'));
   const app = buildApp({
     db, verify, config: { firebase: { projectId: PROJECT }, devAuth: false, staticDir: '/nonexistent', filesDir },
+    clock: () => Date.parse('2026-10-17T09:00:00Z'), // the tests' "today"
   });
 
   async function token(sub, extra = {}, opts = {}) {
@@ -93,7 +94,7 @@ test('allow list', async () => {
   assert.match(r.json().error, /verify your email/);
 });
 
-test('task lifecycle, overdue, postpone, isolation', async () => {
+test('task lifecycle, carry-over, postpone, isolation', async () => {
   const { as } = await setup();
   const u1 = await as('alice');
   const u2 = await as('bob');
@@ -122,16 +123,19 @@ test('task lifecycle, overdue, postpone, isolation', async () => {
   assert.equal((await u1('POST', '/api/tasks', { title: 'x', date: today, priority: 9 })).statusCode, 400);
   assert.equal((await u1('POST', '/api/tasks', { title: 'x', date: today, uid: 'bob' })).statusCode, 400);
 
-  // Today view: overdue on top, tasks sorted by priority
+  // Opening today moves yesterday's unfinished task onto today, marked with the day it came from
   r = await u1('GET', `/api/tasks?date=${today}&today=${today}`);
   let body = r.json();
-  assert.deepEqual(body.overdue.map((t) => t.id), [old.id]);
-  assert.deepEqual(body.tasks.map((t) => t.title), ['Today high', 'Today low']);
+  assert.deepEqual(body.overdue, []);
+  assert.deepEqual(body.tasks.map((t) => t.title), ['Old task', 'Today high', 'Today low']);
+  assert.equal(body.tasks[0].carriedFrom, yesterday);
+  assert.equal(body.tasks[0].date, today);
+  assert.equal(body.tasks[1].carriedFrom, null);
 
-  // Other days carry no overdue list
+  // Yesterday is now empty
   r = await u1('GET', `/api/tasks?date=${yesterday}&today=${today}`);
   assert.deepEqual(r.json().overdue, []);
-  assert.equal(r.json().tasks.length, 1);
+  assert.equal(r.json().tasks.length, 0);
 
   // Another user sees nothing and cannot touch alice's tasks
   r = await u2('GET', `/api/tasks?date=${today}&today=${today}`);
@@ -140,12 +144,13 @@ test('task lifecycle, overdue, postpone, isolation', async () => {
   assert.equal((await u2('DELETE', `/api/tasks/${high.id}`)).statusCode, 404);
   assert.equal((await u2('POST', '/api/tasks', { id: 'client-id-0001', title: 'steal', date: today })).statusCode, 409);
 
-  // Postpone overdue task: goes to tomorrow (today + 1), not yesterday + 1
+  // Postpone the carried task: tomorrow, and no longer "from earlier" (it was moved on purpose)
   r = await u1('POST', `/api/tasks/${old.id}/postpone`, { today });
   assert.equal(r.statusCode, 200);
   assert.equal(r.json().date, '2026-10-18');
   assert.equal(r.json().postponed, 1);
   assert.equal(r.json().originalDate, yesterday);
+  assert.equal(r.json().carriedFrom, null);
   // Postpone again from a future date: day after its own date
   r = await u1('POST', `/api/tasks/${old.id}/postpone`, { today });
   assert.equal(r.json().date, '2026-10-19');
@@ -189,6 +194,54 @@ test('task lifecycle, overdue, postpone, isolation', async () => {
   });
   assert.equal(r.statusCode, 201);
   assert.equal(r.json().originalDate, today);
+});
+
+test('carry-over: only unfinished tasks, keeps the first missed day, ignores a wrong clock', async () => {
+  const { as } = await setup();
+  const u = await as('alice');
+  const mk = async (title, date, extra = {}) => (await u('POST', '/api/tasks', { title, date, ...extra })).json();
+  const a = await mk('Two days old', '2026-10-15');
+  const done = await mk('Done earlier', '2026-10-15', { status: 'done' });
+  const cancelled = await mk('Cancelled earlier', '2026-10-16', { status: 'cancelled' });
+  const future = await mk('Next week', '2026-10-24');
+
+  // A device whose clock says next month must not move anything
+  let r = await u('GET', '/api/tasks?date=2026-11-20&today=2026-11-20');
+  assert.equal(r.json().tasks.length, 0);
+  assert.equal((await u('GET', '/api/tasks?date=2026-10-15&today=2026-10-15')).json().tasks.length, 2);
+
+  // Yesterday (in the user's zone) is still within a day of the server: carried there first
+  r = await u('GET', '/api/tasks?date=2026-10-16&today=2026-10-16');
+  assert.deepEqual(r.json().tasks.map((t) => t.title).sort(), ['Cancelled earlier', 'Two days old']);
+  // ... then on to today, still remembering the 15th
+  r = await u('GET', '/api/tasks?date=2026-10-17&today=2026-10-17');
+  const carried = r.json().tasks.find((t) => t.id === a.id);
+  assert.equal(carried.carriedFrom, '2026-10-15');
+
+  // Done, cancelled and future tasks stay where they are
+  const day = async (d) => (await u('GET', `/api/tasks?date=${d}`)).json().tasks.map((t) => t.id);
+  assert.deepEqual(await day('2026-10-15'), [done.id]);
+  assert.deepEqual(await day('2026-10-16'), [cancelled.id]);
+  assert.deepEqual(await day('2026-10-24'), [future.id]);
+
+  // Completing keeps the mark; moving it to a day on purpose clears it
+  r = await u('PATCH', `/api/tasks/${a.id}`, { status: 'done' });
+  assert.equal(r.json().carriedFrom, '2026-10-15');
+  r = await u('PATCH', `/api/tasks/${a.id}`, { status: 'pending', date: '2026-10-20' });
+  assert.equal(r.json().carriedFrom, null);
+
+  // Undo of a move restores the mark (only if it is still earlier than the task's day)
+  r = await u('PATCH', `/api/tasks/${a.id}`, { date: '2026-10-17', carriedFrom: '2026-10-15' });
+  assert.equal(r.json().carriedFrom, '2026-10-15');
+  r = await u('PATCH', `/api/tasks/${a.id}`, { carriedFrom: '2026-10-18' });
+  assert.equal(r.json().carriedFrom, null);
+  assert.equal((await u('PATCH', `/api/tasks/${a.id}`, { carriedFrom: '2026-02-30' })).statusCode, 400);
+
+  // Undo of a delete restores the mark
+  r = await u('POST', '/api/tasks', { id: 'undo-carried-1', title: 'Back', date: '2026-10-17', carriedFrom: '2026-10-14' });
+  assert.equal(r.json().carriedFrom, '2026-10-14');
+  r = await u('POST', '/api/tasks', { id: 'undo-carried-2', title: 'Odd', date: '2026-10-17', carriedFrom: '2026-10-19' });
+  assert.equal(r.json().carriedFrom, null, 'a "from" day after its own day is ignored');
 });
 
 test('unknown api path is 404 json, bad json is 400', async () => {
@@ -296,14 +349,14 @@ test('tags: CRUD, ownership, task assignment, stats', async () => {
   r = await u1('GET', `/api/stats?from=2026-10-01&to=2026-10-31&today=${today}`);
   assert.equal(r.statusCode, 200);
   const s = r.json();
-  assert.equal(s.overdue, 1);
+  assert.equal(s.overdue, 1, 'the 10th task was carried to today');
   assert.equal(s.postponed, 1);
   const tag = (id) => s.byTag.find((x) => x.tagId === id);
   assert.deepEqual(tag(skien.id), { tagId: skien.id, pending: 1, done: 1, cancelled: 0 });
   assert.deepEqual(tag(zup.id), { tagId: zup.id, pending: 1, done: 0, cancelled: 0 });
   assert.deepEqual(tag(null), { tagId: null, pending: 1, done: 0, cancelled: 0 });
   assert.equal(s.byPriority[0].priority, 4);
-  assert.equal(s.days.length, 3);
+  assert.deepEqual(s.days.map((d) => d.date), [today, '2026-10-18'], 'nothing left behind on the 10th');
   assert.equal((await u1('GET', '/api/stats?from=2026-10-01&to=2026-10-31')).statusCode, 400);
 
   // Delete tag removes it from tasks
@@ -358,13 +411,14 @@ test('migration from v2 to the latest keeps users and tasks', async () => {
   let db = openDb(file);
   db.prepare("INSERT INTO users (uid, email, name, photo, created_at, last_seen) VALUES ('u', 'u@x.com', 'U', null, 1, 1)").run();
   // Back to the v2 schema, with a v2-era task.
-  db.exec(`DROP TABLE attachments; ALTER TABLE tasks DROP COLUMN subtasks;
+  db.exec(`DROP INDEX idx_tasks_pending; ALTER TABLE tasks DROP COLUMN carried_from;
+    DROP TABLE attachments; ALTER TABLE tasks DROP COLUMN subtasks;
     ALTER TABLE users DROP COLUMN display_name; ALTER TABLE users DROP COLUMN onboarded_at; PRAGMA user_version = 2;`);
   db.prepare(`INSERT INTO tasks (id, uid, title, date, original_date, created_at, updated_at)
     VALUES ('old-task-1', 'u', 'Old', '2026-01-01', '2026-01-01', 1, 1)`).run();
   db.close();
   db = openDb(file);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
   const { createRepo } = await import('../src/db.js');
   const repo = createRepo(db);
   assert.deepEqual(repo.getProfile('u'), { uid: 'u', email: 'u@x.com', name: 'U', photo: null, createdAt: 1, onboarded: false });

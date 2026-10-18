@@ -1,17 +1,17 @@
 import { useMemo, useState } from 'react';
-import { Box, Button, ButtonBase, CircularProgress, Collapse, Skeleton, Typography } from '@mui/material';
+import { Box, Button, ButtonBase, CircularProgress, Collapse, Drawer, Skeleton, Typography, useMediaQuery } from '@mui/material';
 import ExpandMore from '@mui/icons-material/ExpandMore';
-import HistoryRounded from '@mui/icons-material/HistoryRounded';
 import TaskAltRounded from '@mui/icons-material/TaskAltRounded';
 import EventOutlined from '@mui/icons-material/EventOutlined';
 import InsightsOutlined from '@mui/icons-material/InsightsOutlined';
 import SellOutlined from '@mui/icons-material/SellOutlined';
 import AddTask from './AddTask.jsx';
 import TaskItem from './TaskItem.jsx';
+import TaskDetails from './TaskDetails.jsx';
 import TagChip from './TagChip.jsx';
 import { StackBar } from './SummaryView.jsx';
-import { addDays, formatDate, fromKey, relativeLabel, startOfWeek, toKey, weekdayNames } from '../lib/dates.js';
-import { moveTasks, selectDay, selectOverdue, selectSummary, selectTags, useStoreVersion } from '../lib/store.js';
+import { addDays, formatDate, fromKey, isCarried, relativeLabel, startOfWeek, toKey, weekdayNames } from '../lib/dates.js';
+import { getTask, selectDay, selectOverdue, selectSummary, selectTags, useStoreVersion } from '../lib/store.js';
 import { hexAlpha, statusColors } from '../theme.js';
 
 const NAMES = weekdayNames();
@@ -159,10 +159,19 @@ function Section({ title, count, icon, open, onToggle, children, color }) {
 }
 
 export default function DayView({
-  date, today, loading, failed, onRetry, onSelectDate, onOpenTask, addInputRef,
+  date, today, loading, failed, onRetry, onSelectDate, selectedId, onSelectTask, onEditTask, addInputRef,
   tagFilter, onTagFilter, onManageTags, onOpenSummary, userName, wide,
 }) {
   const version = useStoreVersion();
+  const desktop = useMediaQuery((t) => t.breakpoints.up('md'));
+  const selected = selectedId ? getTask(selectedId) : null;
+  const select = (task) => onSelectTask(task.id === selectedId ? null : task.id);
+  const item = (t, extra) => (
+    <TaskItem
+      key={t.id} task={t} today={today} selected={t.id === selectedId}
+      onSelect={select} onEdit={onEditTask} onManageTags={onManageTags} {...extra}
+    />
+  );
   const tags = selectTags();
   const [showDone, setShowDone] = useState(true);
   const [showCancelled, setShowCancelled] = useState(false);
@@ -179,6 +188,9 @@ export default function DayView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date, today, version, tagFilter]);
 
+  // Unfinished tasks move to today on their own (server side). `overdue` only has entries
+  // when this device's clock disagrees with the server; they're listed with the day's tasks.
+  const carriedCount = pending.filter(isCarried).length + overdue.length;
   const total = pending.length + done.length;
   const isPast = date < today;
   const nothing = !loading && !failed && pending.length + done.length + cancelled.length + overdue.length === 0;
@@ -257,7 +269,7 @@ export default function DayView({
                 ['pending', `${total} task${total === 1 ? '' : 's'}`, true],
                 ['done', `${done.length} done`, true],
                 [isPast ? 'overdue' : 'pending', `${pending.length} left`, true],
-                ['overdue', `${overdue.length} from earlier`, overdue.length > 0],
+                ['overdue', `${carriedCount} from earlier`, carriedCount > 0],
               ].filter((x) => x[2]).map(([k, label]) => (
                 <Box
                   key={label}
@@ -287,30 +299,6 @@ export default function DayView({
 
       <AddTask date={date} inputRef={addInputRef} defaultTagId={tagFilter} onManageTags={onManageTags} />
 
-      {overdue.length > 0 && (
-        <Box
-          sx={(t) => ({
-            mt: 2.5, borderRadius: '20px', border: `1px solid ${t.palette.mode === 'dark' ? '#5c2b29' : '#f6cfcb'}`,
-            bgcolor: t.palette.mode === 'dark' ? '#140807' : '#fdf3f2', p: 0.5,
-          })}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1.5, pt: 1, pb: 0.5 }}>
-            <HistoryRounded sx={{ fontSize: 20, color: 'error.main' }} />
-            <Typography sx={{ flex: 1, fontSize: 14, fontWeight: 500, color: 'error.main' }}>
-              Pending from earlier ({overdue.length})
-            </Typography>
-            <Button size="small" onClick={() => moveTasks(overdue.map((t) => t.id), today)} sx={{ color: 'error.main' }}>
-              Move all to today
-            </Button>
-          </Box>
-          <Box role="list">
-            {overdue.map((t) => (
-              <TaskItem key={t.id} task={t} today={today} showOrigin onOpen={onOpenTask} onManageTags={onManageTags} />
-            ))}
-          </Box>
-        </Box>
-      )}
-
       <Box role="list" sx={{ mt: 1.5 }}>
         {loading && pending.length === 0 && done.length === 0 && [0, 1, 2].map((i) => (
           <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 2, px: 1.5, py: 1.5 }}>
@@ -318,9 +306,8 @@ export default function DayView({
             <Skeleton variant="text" sx={{ flex: 1, maxWidth: 260 + i * 60 }} />
           </Box>
         ))}
-        {pending.map((t) => (
-          <TaskItem key={t.id} task={t} today={today} onOpen={onOpenTask} onManageTags={onManageTags} />
-        ))}
+        {overdue.map((t) => item(t, { showOrigin: true }))}
+        {pending.map((t) => item(t))}
       </Box>
 
       {failed && pending.length === 0 && (
@@ -349,32 +336,45 @@ export default function DayView({
 
       {done.length > 0 && (
         <Section title="Completed" count={done.length} open={showDone} onToggle={() => setShowDone((v) => !v)}>
-          {done.map((t) => (
-            <TaskItem key={t.id} task={t} today={today} onOpen={onOpenTask} onManageTags={onManageTags} />
-          ))}
+          {done.map((t) => item(t))}
         </Section>
       )}
       {cancelled.length > 0 && (
         <Section title="Cancelled" count={cancelled.length} open={showCancelled} onToggle={() => setShowCancelled((v) => !v)}>
-          {cancelled.map((t) => (
-            <TaskItem key={t.id} task={t} today={today} onOpen={onOpenTask} onManageTags={onManageTags} />
-          ))}
+          {cancelled.map((t) => item(t))}
         </Section>
       )}
     </Box>
   );
 
+  const close = () => onSelectTask(null);
+  const pane = selected && desktop;
+  // The details pane takes the side column (in place of the week/month cards) while a task is open.
+  const side = pane ? (wide ? '380px' : '360px') : wide ? '300px' : null;
   return (
     <Box
       sx={{
-        maxWidth: wide ? 1140 : 760, mx: 'auto', px: { xs: 1.5, sm: 3 }, pt: { xs: 2, sm: 3 },
+        maxWidth: wide || pane ? 1180 : 760, mx: 'auto', px: { xs: 1.5, sm: 3 }, pt: { xs: 2, sm: 3 },
         // Phones: room for the bottom bar (72) + the + button (56) + spacing.
         pb: { xs: 'calc(176px + env(safe-area-inset-bottom))', md: 14 },
-        display: 'grid', gridTemplateColumns: wide ? 'minmax(0, 1fr) 300px' : '1fr', gap: 4,
+        display: 'grid', gridTemplateColumns: side ? `minmax(0, 1fr) ${side}` : '1fr', gap: { md: 3, lg: 4 },
       }}
     >
       {main}
-      {wide && <SidePanel date={date} today={today} onOpenSummary={onOpenSummary} />}
+      {pane ? (
+        <TaskDetails key={selected.id} task={selected} today={today} onClose={close} onEdit={onEditTask} onManageTags={onManageTags} />
+      ) : wide && <SidePanel date={date} today={today} onOpenSummary={onOpenSummary} />}
+      {!desktop && (
+        <Drawer
+          anchor="bottom"
+          open={Boolean(selected)}
+          onClose={close}
+          slotProps={{ paper: { sx: (t) => ({ maxHeight: '88dvh', borderRadius: '28px 28px 0 0', bgcolor: t.tokens.surfaceHigh, pb: 'env(safe-area-inset-bottom)' }) } }}
+        >
+          <Box sx={(t) => ({ width: 32, height: 4, borderRadius: 2, bgcolor: t.tokens.outline, mx: 'auto', mt: 1.5 })} />
+          {selected && <TaskDetails task={selected} today={today} onClose={close} onEdit={onEditTask} onManageTags={onManageTags} variant="sheet" />}
+        </Drawer>
+      )}
     </Box>
   );
 }

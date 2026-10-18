@@ -79,7 +79,8 @@ class ScreensTest {
 
     private val state = StoreState(
         tasks = listOf(
-            task("a", "Send invoice for September", Dates.addDays(today, -1), 1, tags = listOf("t1")),
+            task("a", "Send invoice for September", today, 1, tags = listOf("t1")).copy(carriedFrom = Dates.addDays(today, -1)),
+            task("a2", "Renew SSL certificates", today, 2).copy(carriedFrom = Dates.addDays(today, -3)),
             task("b", "Review pull request #42", p = 1, tags = listOf("t1"), notes = "Check the auth changes first"),
             task("c", "Prepare sprint demo", p = 2, tags = listOf("t2"), postponed = 1).copy(
                 subtasks = listOf(
@@ -138,14 +139,26 @@ class ScreensTest {
         }
     }
 
-    private fun shot(name: String, dark: Boolean, content: @Composable () -> Unit) {
-        rule.setContent { TasksTheme(dark) { androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { content() } } }
+    private fun shot(name: String, dark: Boolean, content: @Composable () -> Unit) =
+        shot(name, if (dark) com.skienlabs.tasks.ui.theme.AppTheme.MIDNIGHT else com.skienlabs.tasks.ui.theme.AppTheme.LIGHT, content)
+
+    private fun shot(name: String, theme: com.skienlabs.tasks.ui.theme.AppTheme, content: @Composable () -> Unit) {
+        rule.setContent { TasksTheme(theme) { androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { content() } } }
         rule.waitForIdle()
         rule.onRoot().captureRoboImage("build/screens/$name.png")
     }
 
     @Test fun today_dark() = shot("today_dark", true) { Home(state, today) }
     @Test fun today_light() = shot("today_light", false) { Home(state, today) }
+    @Test fun today_dim() = shot("today_dim", com.skienlabs.tasks.ui.theme.AppTheme.DIM) { Home(state, today) }
+    @Test fun today_abyss() = shot("today_abyss", com.skienlabs.tasks.ui.theme.AppTheme.ABYSS) { Home(state, today) }
+    @Test fun theme_swatches() = shot("theme_swatches", com.skienlabs.tasks.ui.theme.AppTheme.ABYSS) {
+        Column(Modifier.padding(20.dp)) {
+            com.skienlabs.tasks.ui.account.ThemeSwatches(com.skienlabs.tasks.data.ThemePref.ABYSS) {}
+            Box(Modifier.size(20.dp))
+            com.skienlabs.tasks.ui.account.ThemeSwatches(com.skienlabs.tasks.data.ThemePref.SYSTEM) {}
+        }
+    }
     @Test fun filtered_dark() = shot("filtered_dark", true) { Home(state, today, "t2") }
     @Test fun empty_light() = shot("empty_light", false) { Home(state.copy(loadedDays = state.loadedDays + Dates.addDays(today, 2)), Dates.addDays(today, 2)) }
     @Test fun loading_dark() = shot("loading_dark", true) { Home(StoreState(tags = state.tags, tagsLoaded = true), Dates.addDays(today, 5)) }

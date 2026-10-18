@@ -6,12 +6,13 @@ A fast, lightweight daily task planner with Google sign-in. One Docker container
 - **Calendar-style days**: month calendar, week strip and a day view. Dots show days with pending (blue), overdue (red) or finished (green) work.
 - **Per-day tasks** with priority (High / Medium / Low / None) and optional notes.
 - **Complete, postpone to tomorrow, cancel, restore, edit, move, delete**, each with Undo.
-- **Pending tasks from earlier days appear at the top of Today**, with a one-click "Move all to today".
+- **Unfinished tasks move to today by themselves**: the server carries them over the first time a device opens today. They're outlined in red with where they came from ("From yesterday", "From Thu, 15 Oct"). Moving or postponing one on purpose clears the mark.
+- **Click a task to see everything about it** in a pane on the right (a sheet on phones): steps you can tick, images, notes, dates. Editing is under ⋮ → Edit. Esc closes the pane.
 - **Tags** for each company or project, with a color and an uploaded logo, shown on every task card. Filter any day by tag.
 - **Summary**: per-day counts (tasks / done / left) on every day, a side panel with week and month progress on large screens, and a monthly summary page with a daily chart, per-company and per-priority breakdowns, and a day-by-day list.
 - **Installable app** (PWA): in Chrome or Edge use *Install app* (sidebar, account menu or the address bar icon), then pin it to the Windows taskbar. Works on Android too.
 - **Built for PC and phone**: sidebar + side panel on desktop, bottom navigation and a floating add button on mobile.
-- **AMOLED black dark mode**, light mode, or follow the system. Google Sans, Material Design.
+- **Five themes**: System, Light, Dark (soft grey), Midnight Black (true black) and Abyss (deep navy, like the VS Code theme). Google Sans, Material Design.
 - Keyboard: `←` `→` change day, `T` today, `N` new task, `S` summary.
 - Every action updates the screen instantly and syncs in the background.
 
@@ -122,7 +123,7 @@ All endpoints except `/api/health` and `/api/config` need `Authorization: Bearer
 | --- | --- | --- |
 | GET | `/api/me` | Profile (creates it on first call): `name, email, provider, emailVerified, onboarded` |
 | PATCH | `/api/me` | `{ name?, onboarded?: true }` |
-| GET | `/api/tasks?date=YYYY-MM-DD&today=YYYY-MM-DD` | Tasks for a day; when `date == today`, also `overdue` (pending from earlier days) |
+| GET | `/api/tasks?date=YYYY-MM-DD&today=YYYY-MM-DD` | Tasks for a day. With `today` (within a day of the server's date), unfinished tasks from earlier days first move to `today`, keeping `carriedFrom` (the day they were first due). `overdue` stays for older apps and is normally empty |
 | GET | `/api/summary?from=&to=` | Per-day counts for the calendar (max 92 days) |
 | POST | `/api/tasks` | `{ title, date, priority?, notes?, id? }` (client `id` makes retries safe) |
 | PATCH | `/api/tasks/:id` | Any of `title, notes, priority, date, status, postponed, tagIds, subtasks` |

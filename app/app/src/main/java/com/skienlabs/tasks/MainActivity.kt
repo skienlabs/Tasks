@@ -14,6 +14,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.skienlabs.tasks.data.ThemePref
 import com.skienlabs.tasks.ui.Root
+import com.skienlabs.tasks.ui.theme.AppTheme
 import com.skienlabs.tasks.ui.theme.TasksTheme
 
 class MainActivity : ComponentActivity() {
@@ -48,18 +49,22 @@ class MainActivity : ComponentActivity() {
             val saved by app.prefs.theme.collectAsStateWithLifecycle(null)
             val pref = saved ?: return@setContent
             SideEffect { themeReady = true }
-            val dark = when (pref) {
-                ThemePref.SYSTEM -> isSystemInDarkTheme()
-                ThemePref.LIGHT -> false
-                ThemePref.DARK -> true
+            val systemDark = isSystemInDarkTheme()
+            val theme = when (pref) {
+                ThemePref.SYSTEM -> if (systemDark) AppTheme.MIDNIGHT else AppTheme.LIGHT
+                ThemePref.LIGHT -> AppTheme.LIGHT
+                ThemePref.DIM -> AppTheme.DIM
+                ThemePref.DARK -> AppTheme.MIDNIGHT
+                ThemePref.ABYSS -> AppTheme.ABYSS
             }
+            val dark = theme.dark
             DisposableEffect(dark) {
                 val style = if (dark) SystemBarStyle.dark(Color.TRANSPARENT)
                 else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
                 onDispose {}
             }
-            TasksTheme(dark) { Root(app, pref) }
+            TasksTheme(theme) { Root(app, pref) }
         }
     }
 }

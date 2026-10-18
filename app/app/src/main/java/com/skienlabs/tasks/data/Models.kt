@@ -29,7 +29,10 @@ data class Task(
     val tagIds: List<String> = emptyList(),
     val subtasks: List<Subtask> = emptyList(),
     val attachments: List<Attachment> = emptyList(),
+    /** Set when the server moved this unfinished task here from an earlier day: the day it was first due. */
+    val carriedFrom: String? = null,
 ) {
+    val isCarried get() = carriedFrom != null && carriedFrom < date
     val isPending get() = status == Status.PENDING
     val isDone get() = status == Status.DONE
     val isCancelled get() = status == Status.CANCELLED

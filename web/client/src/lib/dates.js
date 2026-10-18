@@ -81,3 +81,12 @@ export function weekdayNames(weekStart = 0) {
     return fmt({ weekday: 'narrow' }).format(d);
   });
 }
+
+/** "From yesterday" / "From Fri, 16 Oct": where a carried-over task came from. */
+export function carriedLabel(from, today) {
+  const label = shortLabel(from, today);
+  return label === 'Yesterday' ? 'From yesterday' : `From ${label}`;
+}
+
+/** True when a task was moved here on its own from an earlier day. */
+export const isCarried = (task) => Boolean(task.carriedFrom && task.carriedFrom < task.date);

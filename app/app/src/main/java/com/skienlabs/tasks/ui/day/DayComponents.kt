@@ -367,8 +367,16 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
         },
     ) {
         val stripe = rowTags.firstOrNull()?.let { tagColor(it.color) }
+        // Moved here by itself from an earlier day and still open: red outline, like the web app.
+        val late = task.isPending && (task.isCarried || showOrigin)
+        val lateShape = RoundedCornerShape(16.dp)
         Row(
-            Modifier.fillMaxWidth().background(containerColor)
+            Modifier.fillMaxWidth()
+                .then(
+                    if (late) Modifier.padding(horizontal = 12.dp, vertical = 3.dp).clip(lateShape)
+                        .border(1.dp, x.overdueBorder, lateShape).background(x.overdueBg)
+                    else Modifier.background(containerColor),
+                )
                 .combinedClickable(onClick = { actions.open(task) }, onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menu = true })
                 .drawBehind {
                     if (stripe != null) drawRoundRect(stripe.copy(alpha = if (task.isPending) 1f else 0.4f), Offset(4.dp.toPx(), 12.dp.toPx()), Size(3.dp.toPx(), size.height - 24.dp.toPx()), CornerRadius(2.dp.toPx()))
@@ -384,8 +392,9 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
                     color = if (task.isPending) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (task.isCancelled) 0.7f else 1f),
                     textDecoration = if (task.isPending) null else TextDecoration.LineThrough,
                 )
-                if (rowTags.isNotEmpty()) {
+                if (rowTags.isNotEmpty() || task.isCarried) {
                     FlowRow(Modifier.padding(top = 5.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (task.isCarried) CarriedBadge(task, today, muted = !task.isPending)
                         rowTags.forEach { TagChip(it, dense = true) }
                     }
                 }
@@ -500,12 +509,21 @@ fun SectionHeader(title: String, count: Int, open: Boolean, onToggle: () -> Unit
     }
 }
 
+
+/** Red pill on a task that moved here by itself from an earlier day. */
 @Composable
-fun OverdueHeader(count: Int, onMoveAll: () -> Unit) {
+fun CarriedBadge(task: Task, today: String, muted: Boolean = false) {
     val x = LocalExtra.current
-    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Outlined.History, null, tint = x.overdue, modifier = Modifier.size(20.dp))
-        Text("  Pending from earlier ($count)", color = x.overdue, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-        TextButton(onClick = onMoveAll) { Text("Move all to today", color = x.overdue) }
+    val from = task.carriedFrom ?: return
+    val color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else x.overdue
+    Row(
+        Modifier.height(22.dp).clip(RoundedCornerShape(50))
+            .background(if (muted) x.surfaceHighest else x.overdueBg)
+            .border(1.dp, if (muted) Color.Transparent else x.overdueBorder, RoundedCornerShape(50))
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.History, null, Modifier.size(13.dp), tint = color)
+        Text(" " + Dates.carriedLabel(from, today), color = color, style = MaterialTheme.typography.labelMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, maxLines = 1)
     }
 }

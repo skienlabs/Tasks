@@ -303,6 +303,7 @@ internal fun WidgetContent(context: Context, d: WidgetData, ringImg: ImageProvid
                 Text(t.title, style = TextStyle(color = text, fontSize = 14.sp), maxLines = 1)
                 val meta = buildList {
                     if (t.date < d.today) add(Dates.shortLabel(t.date, d.today))
+                    else if (t.isCarried) add(Dates.carriedLabel(t.carriedFrom!!, d.today))
                     if (t.priority == 1) add("High")
                     if (steps.total > 0) add("${steps.done}/${steps.total} steps")
                     tag?.let { add(it.name) }
@@ -310,7 +311,7 @@ internal fun WidgetContent(context: Context, d: WidgetData, ringImg: ImageProvid
                 if (meta.isNotEmpty()) {
                     Text(
                         meta.joinToString("  ·  "), maxLines = 1,
-                        style = TextStyle(color = if (t.date < d.today) overdue else muted, fontSize = 11.5.sp),
+                        style = TextStyle(color = if (t.date < d.today || t.isCarried) overdue else muted, fontSize = 11.5.sp),
                     )
                 }
             }

@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, CssBaseline, LinearProgress, ThemeProvider, Typography, useMediaQuery } from '@mui/material';
-import { makeTheme } from './theme.js';
+import { isThemeName, makeTheme } from './theme.js';
 import { refreshUser, resendVerification, signOut, startAuth } from './lib/auth.js';
 import { api } from './lib/api.js';
 import { clearStore } from './lib/store.js';
@@ -14,9 +14,14 @@ const Onboarding = lazy(() => import('./components/Onboarding.jsx'));
 
 export default function App() {
   const systemDark = useMediaQuery('(prefers-color-scheme: dark)', { noSsr: true });
-  const [themePref, setThemePref] = useState(() => readPref('tasks.theme')); // 'light' | 'dark' | null
-  const mode = themePref ?? (systemDark ? 'dark' : 'light');
-  const theme = useMemo(() => makeTheme(mode), [mode]);
+  // null follows the system; otherwise one of THEMES ('light' | 'dim' | 'dark' | 'abyss').
+  const [themePref, setThemePref] = useState(() => {
+    const v = readPref('tasks.theme');
+    return isThemeName(v) ? v : null;
+  });
+  const themeName = themePref ?? (systemDark ? 'dark' : 'light');
+  const theme = useMemo(() => makeTheme(themeName), [themeName]);
+  const mode = theme.palette.mode;
 
   const [boot, setBoot] = useState('loading'); // loading | ready | setup | error
   const [user, setUser] = useState(undefined); // undefined = still checking

@@ -78,6 +78,11 @@ const MIGRATIONS = [
   CREATE INDEX idx_attachments_task ON attachments (uid, task_id);
   CREATE INDEX idx_attachments_orphaned ON attachments (orphaned_at) WHERE orphaned_at IS NOT NULL;
   `,
+  // v5: unfinished tasks move to today on their own; carried_from keeps the day they were first due.
+  `
+  ALTER TABLE tasks ADD COLUMN carried_from TEXT;
+  CREATE INDEX idx_tasks_pending ON tasks (uid, date) WHERE status = 'pending';
+  `,
 ];
 
 export function openDb(file) {
@@ -130,7 +135,7 @@ function migrate(db) {
 }
 
 const COLUMNS = `id, title, notes, priority, date, status, original_date, postponed,
-  created_at, updated_at, completed_at, subtasks,
+  created_at, updated_at, completed_at, subtasks, carried_from,
   (SELECT json_group_array(tag_id) FROM task_tags WHERE task_id = tasks.id) AS tag_ids,
   (SELECT json_group_array(json_object('id', a.id, 'type', a.type, 'width', a.width, 'height', a.height,
       'size', a.size, 'createdAt', a.created_at))
@@ -146,6 +151,7 @@ export function toTask(row) {
     status: row.status,
     originalDate: row.original_date,
     postponed: row.postponed,
+    carriedFrom: row.carried_from ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at ?? null,
@@ -190,12 +196,15 @@ export function createRepo(db) {
     exists: db.prepare('SELECT uid FROM tasks WHERE id = ?'),
     insert: db.prepare(`INSERT INTO tasks
       (id, uid, title, notes, priority, date, status, original_date, postponed,
-       created_at, updated_at, completed_at, subtasks)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+       created_at, updated_at, completed_at, subtasks, carried_from)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
     update: db.prepare(`UPDATE tasks SET
       title = ?, notes = ?, priority = ?, date = ?, status = ?, postponed = ?,
-      updated_at = ?, completed_at = ?, subtasks = ?
+      updated_at = ?, completed_at = ?, subtasks = ?, carried_from = ?
       WHERE uid = ? AND id = ?`),
+    carryDates: db.prepare(`SELECT DISTINCT date FROM tasks WHERE uid = ? AND status = 'pending' AND date < ?`),
+    carry: db.prepare(`UPDATE tasks SET carried_from = COALESCE(carried_from, date), date = ?, updated_at = ?
+      WHERE uid = ? AND status = 'pending' AND date < ?`),
     remove: db.prepare('DELETE FROM tasks WHERE uid = ? AND id = ?'),
 
     // attachments
@@ -249,7 +258,7 @@ export function createRepo(db) {
       FROM tasks WHERE uid = ? AND date BETWEEN ? AND ?
       GROUP BY priority ORDER BY priority`),
     statsExtra: db.prepare(`SELECT
-        SUM(status = 'pending' AND date < ?) AS overdue,
+        SUM(carried_from IS NOT NULL OR (status = 'pending' AND date < ?)) AS overdue,
         SUM(postponed > 0)                   AS postponed
       FROM tasks WHERE uid = ? AND date BETWEEN ? AND ?`),
   };
@@ -307,6 +316,18 @@ export function createRepo(db) {
       return stmts.overdue.all(uid, today).map(toTask);
     },
 
+    /**
+     * Moves every unfinished task from an earlier day to `today`. Returns the days it
+     * took tasks from (empty when nothing moved). The first missed day is kept in carried_from.
+     */
+    carryOver(uid, today, now = Date.now()) {
+      return tx(() => {
+        const dates = stmts.carryDates.all(uid, today).map((r) => r.date);
+        if (dates.length) stmts.carry.run(today, now, uid, today);
+        return dates;
+      });
+    },
+
     get(uid, id) {
       const row = stmts.get.get(uid, id);
       return row ? toTask(row) : null;
@@ -322,6 +343,7 @@ export function createRepo(db) {
         stmts.insert.run(
           t.id, uid, t.title, t.notes, t.priority, t.date, t.status, t.originalDate,
           t.postponed, t.createdAt, t.updatedAt, t.completedAt ?? null, JSON.stringify(t.subtasks ?? []),
+          t.carriedFrom ?? null,
         );
         writeTaskTags(t.id, t.tagIds ?? []);
         stmts.adoptAttachments.run(uid, t.id); // re-created by "Undo": its images come back
@@ -334,7 +356,7 @@ export function createRepo(db) {
       tx(() => {
         stmts.update.run(
           t.title, t.notes, t.priority, t.date, t.status, t.postponed,
-          t.updatedAt, t.completedAt ?? null, JSON.stringify(t.subtasks ?? []), uid, t.id,
+          t.updatedAt, t.completedAt ?? null, JSON.stringify(t.subtasks ?? []), t.carriedFrom ?? null, uid, t.id,
         );
         if (t.tagIds !== undefined) writeTaskTags(t.id, t.tagIds);
       });

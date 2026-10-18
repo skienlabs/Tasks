@@ -2,7 +2,17 @@ import { createTheme } from '@mui/material/styles';
 
 const FONT = '"Google Sans", "Roboto", system-ui, -apple-system, "Segoe UI", Arial, sans-serif';
 
-// Google Material 3 palette. "dark" is true-black AMOLED.
+// Material 3 palettes. Every theme is light or dark (palette.mode); the dark ones differ in depth.
+const DARK_ACCENTS = {
+  primary: '#a8c7fa',
+  onPrimary: '#062e6f',
+  primaryContainer: '#0842a0',
+  onPrimaryContainer: '#d3e3fd',
+  error: '#f2b8b5',
+  success: '#6dd58c',
+  warning: '#fdd663',
+};
+
 const TOKENS = {
   light: {
     primary: '#0b57d0',
@@ -20,12 +30,26 @@ const TOKENS = {
     error: '#b3261e',
     success: '#146c2e',
     warning: '#b06000',
+    carriedBg: '#fdf3f2',
+    carriedBorder: '#f1b4ae',
   },
+  // Soft dark grey, like Google's own dark mode.
+  dim: {
+    ...DARK_ACCENTS,
+    bg: '#131314',
+    surface: '#131314',
+    surfaceHigh: '#1e1f20',
+    surfaceHighest: '#282a2c',
+    text: '#e3e3e3',
+    textMuted: '#c4c7c5',
+    outline: '#444746',
+    divider: '#2d2f31',
+    carriedBg: '#2a1d1c',
+    carriedBorder: '#8c3b35',
+  },
+  // True black for OLED screens.
   dark: {
-    primary: '#a8c7fa',
-    onPrimary: '#062e6f',
-    primaryContainer: '#0842a0',
-    onPrimaryContainer: '#d3e3fd',
+    ...DARK_ACCENTS,
     bg: '#000000',
     surface: '#000000',
     surfaceHigh: '#0f1012',
@@ -34,11 +58,42 @@ const TOKENS = {
     textMuted: '#a6a8ab',
     outline: '#3c3f43',
     divider: '#222426',
-    error: '#f2b8b5',
-    success: '#6dd58c',
-    warning: '#fdd663',
+    carriedBg: '#140807',
+    carriedBorder: '#6e2e2a',
+  },
+  // Deep navy, after VS Code's Abyss.
+  abyss: {
+    primary: '#82aaff',
+    onPrimary: '#00204f',
+    primaryContainer: '#16336b',
+    onPrimaryContainer: '#d8e2ff',
+    bg: '#000c18',
+    surface: '#000c18',
+    surfaceHigh: '#060621',
+    surfaceHighest: '#0e1b3a',
+    text: '#d4dcf2',
+    textMuted: '#8695bb',
+    outline: '#22325a',
+    divider: '#0f1d36',
+    error: '#ff9e9e',
+    success: '#7fdba0',
+    warning: '#ffd580',
+    carriedBg: '#1d0b1c',
+    carriedBorder: '#7a3049',
   },
 };
+
+/** The themes people can pick. `v` is what's saved; null follows the system (Light or Midnight Black). */
+export const THEMES = [
+  { v: null, label: 'System', hint: 'Light or Midnight Black, following your device' },
+  { v: 'light', label: 'Light', hint: 'Bright and clean' },
+  { v: 'dim', label: 'Dark', hint: 'Soft dark grey' },
+  { v: 'dark', label: 'Midnight Black', hint: 'True black, easy on OLED screens' },
+  { v: 'abyss', label: 'Abyss', hint: 'Deep navy, like the VS Code theme' },
+];
+
+export const themeTokens = (name) => TOKENS[name] ?? TOKENS.light;
+export const isThemeName = (v) => v === null || Object.prototype.hasOwnProperty.call(TOKENS, v);
 
 export const PRIORITIES = [
   { value: 1, label: 'High', light: '#d93025', dark: '#f28b82' },
@@ -52,8 +107,9 @@ export function priorityColor(theme, value) {
   return theme.palette.mode === 'dark' ? p.dark : p.light;
 }
 
-export function makeTheme(mode) {
-  const t = TOKENS[mode];
+export function makeTheme(name) {
+  const t = themeTokens(name);
+  const mode = name === 'light' || !TOKENS[name] ? 'light' : 'dark';
   return createTheme({
     palette: {
       mode,
@@ -66,6 +122,7 @@ export function makeTheme(mode) {
       divider: t.divider,
     },
     tokens: t,
+    themeName: name,
     shape: { borderRadius: 12 },
     typography: {
       fontFamily: FONT,

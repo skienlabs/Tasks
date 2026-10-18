@@ -126,7 +126,7 @@ function resolveStatus(current, requested, subtasks, subtasksChanged) {
   return current;
 }
 
-export function buildApp({ db, verify, config, logger = false, events = createEvents() }) {
+export function buildApp({ db, verify, config, logger = false, events = createEvents(), clock = () => Date.now() }) {
   const repo = createRepo(db);
   const app = Fastify({
     logger,
@@ -168,6 +168,20 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
   const taskChange = (req, ...dates) => changed(req, { type: 'tasks', dates: [...new Set(dates.filter(Boolean))] });
 
   app.addHook('preClose', async () => events.closeAll()); // let shutdown finish promptly
+
+  // Unfinished tasks from earlier days move to the user's "today" on their own. The day comes
+  // from the device (time zones), so it must be within a day of the server's date: a phone with
+  // a wrong clock must not drag every open task into the future.
+  const plausibleToday = (today) => {
+    const serverDay = new Date(clock()).toISOString().slice(0, 10);
+    return Math.abs(daysBetween(serverDay, today)) <= 1;
+  };
+  const carryOver = (req, today) => {
+    if (!today || !plausibleToday(today)) return;
+    const from = repo.carryOver(req.user.uid, today);
+    // Other devices refresh those days; this device gets the moved tasks in its own reply.
+    if (from.length) taskChange(req, today, ...from);
+  };
 
   app.get('/api/events', async (req, reply) => {
     events.open(req, reply, req.user.uid, SECURITY_HEADERS);
@@ -251,6 +265,7 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     const { date, today } = req.query;
     assertDate(date, 'date');
     if (today) assertDate(today, 'today');
+    carryOver(req, today);
     return {
       tasks: repo.listByDate(req.user.uid, date),
       overdue: today && date === today ? repo.listOverdue(req.user.uid, today) : [],
@@ -284,7 +299,7 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
           id: ID, title: TITLE, notes: NOTES, priority: PRIORITY, date: DATE,
           status: STATUS, originalDate: DATE, postponed: COUNT, tagIds: TAG_IDS, subtasks: SUBTASKS,
           // Only used when undoing a delete, so the task keeps its place and history.
-          createdAt: TIMESTAMP, completedAt: TIMESTAMP,
+          createdAt: TIMESTAMP, completedAt: TIMESTAMP, carriedFrom: DATE,
         },
         additionalProperties: false,
       },
@@ -293,6 +308,7 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     const b = req.body;
     assertDate(b.date, 'date');
     if (b.originalDate) assertDate(b.originalDate, 'originalDate');
+    if (b.carriedFrom) assertDate(b.carriedFrom, 'carriedFrom');
     const uid = req.user.uid;
 
     if (b.id) {
@@ -318,6 +334,7 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
       status,
       originalDate: b.originalDate || b.date,
       postponed: b.postponed ?? 0,
+      carriedFrom: b.carriedFrom && b.carriedFrom < b.date ? b.carriedFrom : null,
       createdAt: b.createdAt ?? now,
       updatedAt: now,
       completedAt: status === 'done' ? (b.completedAt ?? now) : null,
@@ -341,6 +358,8 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
         properties: {
           title: TITLE, notes: NOTES, priority: PRIORITY, date: DATE, status: STATUS, postponed: COUNT,
           tagIds: TAG_IDS, subtasks: SUBTASKS,
+          // Only sent by "Undo" of a move/postpone, to bring back the "from earlier" mark.
+          carriedFrom: { anyOf: [DATE, { type: 'null' }] },
         },
         additionalProperties: false,
       },
@@ -357,8 +376,15 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     if (b.title !== undefined) next.title = cleanTitle(b.title);
     if (b.notes !== undefined) next.notes = cleanNotes(b.notes);
     if (b.priority !== undefined) next.priority = b.priority;
-    if (b.date !== undefined) next.date = b.date;
+    if (b.date !== undefined && b.date !== current.date) {
+      next.date = b.date;
+      next.carriedFrom = null; // moved on purpose: it's planned for that day now
+    }
     if (b.postponed !== undefined) next.postponed = b.postponed;
+    if (b.carriedFrom !== undefined) {
+      if (b.carriedFrom) assertDate(b.carriedFrom, 'carriedFrom');
+      next.carriedFrom = b.carriedFrom && b.carriedFrom < next.date ? b.carriedFrom : null;
+    }
     if (b.subtasks !== undefined) next.subtasks = normalizeSubtasks(b.subtasks);
     const status = resolveStatus(current.status, b.status, next.subtasks, b.subtasks !== undefined);
     if (status !== current.status) {
@@ -391,6 +417,7 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
       ...current,
       tagIds: undefined,
       date: nextDate,
+      carriedFrom: null,
       postponed: current.postponed + 1,
       updatedAt: Date.now(),
     });
@@ -609,6 +636,7 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     assertDate(today, 'today');
     const span = daysBetween(from, to);
     if (span < 0 || span > 92) throw new HttpError(400, 'Range must be 0-92 days');
+    carryOver(req, today);
     return repo.stats(req.user.uid, from, to, today);
   });
 

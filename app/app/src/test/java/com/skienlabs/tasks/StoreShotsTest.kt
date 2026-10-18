@@ -216,7 +216,7 @@ class StoreShotsTest {
 
     private val state = StoreState(
         tasks = listOf(
-            task("a", "Send invoice for September", Dates.addDays(today, -1), 1, tags = listOf("t3")),
+            task("a", "Send invoice for September", today, 1, tags = listOf("t3")).copy(carriedFrom = Dates.addDays(today, -1)),
             mail,
             task("b", "Review pull request #42", p = 2, tags = listOf("t2"), notes = "Check the auth changes first"),
             task("c", "Book the venue for the offsite", p = 2, tags = listOf("t4"), postponed = 1).copy(

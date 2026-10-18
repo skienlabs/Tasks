@@ -74,6 +74,25 @@ private val DarkExtra = Extra(
     overdueBorder = Color(0xFF5C2B29),
 )
 
+// Soft dark grey, like Google's own dark mode.
+private val DimExtra = DarkExtra.copy(
+    surfaceHigh = Color(0xFF1E1F20),
+    surfaceHighest = Color(0xFF282A2C),
+    outline = Color(0xFF444746),
+    overdueBg = Color(0xFF2A1D1C),
+    overdueBorder = Color(0xFF8C3B35),
+)
+
+// Deep navy, after VS Code's Abyss theme.
+private val AbyssExtra = DarkExtra.copy(
+    surfaceHigh = Color(0xFF060621),
+    surfaceHighest = Color(0xFF0E1B3A),
+    outline = Color(0xFF22325A),
+    pending = Color(0xFF82AAFF),
+    overdueBg = Color(0xFF1D0B1C),
+    overdueBorder = Color(0xFF7A3049),
+)
+
 val LocalExtra = staticCompositionLocalOf { LightExtra }
 
 private val LightColors = lightColorScheme(
@@ -129,6 +148,54 @@ private val DarkColors = darkColorScheme(
     inversePrimary = Color(0xFF0B57D0),
 )
 
+private val DimColors = DarkColors.copy(
+    background = Color(0xFF131314),
+    surface = Color(0xFF131314),
+    surfaceVariant = Color(0xFF282A2C),
+    onSurfaceVariant = Color(0xFFC4C7C5),
+    surfaceContainerLowest = Color(0xFF0E0E0F),
+    surfaceContainerLow = Color(0xFF1B1B1C),
+    surfaceContainer = Color(0xFF1E1F20),
+    surfaceContainerHigh = Color(0xFF282A2C),
+    surfaceContainerHighest = Color(0xFF333537),
+    outline = Color(0xFF444746),
+    outlineVariant = Color(0xFF2D2F31),
+)
+
+private val AbyssColors = DarkColors.copy(
+    primary = Color(0xFF82AAFF),
+    onPrimary = Color(0xFF00204F),
+    primaryContainer = Color(0xFF16336B),
+    onPrimaryContainer = Color(0xFFD8E2FF),
+    secondaryContainer = Color(0xFF16336B),
+    onSecondaryContainer = Color(0xFFD8E2FF),
+    background = Color(0xFF000C18),
+    onBackground = Color(0xFFD4DCF2),
+    surface = Color(0xFF000C18),
+    onSurface = Color(0xFFD4DCF2),
+    surfaceVariant = Color(0xFF0E1B3A),
+    onSurfaceVariant = Color(0xFF8695BB),
+    surfaceContainerLowest = Color(0xFF000812),
+    surfaceContainerLow = Color(0xFF030F22),
+    surfaceContainer = Color(0xFF060621),
+    surfaceContainerHigh = Color(0xFF0A1630),
+    surfaceContainerHighest = Color(0xFF0E1B3A),
+    outline = Color(0xFF22325A),
+    outlineVariant = Color(0xFF0F1D36),
+    error = Color(0xFFFF9E9E),
+    inverseSurface = Color(0xFFD4DCF2),
+    inverseOnSurface = Color(0xFF000C18),
+    inversePrimary = Color(0xFF2B5BB8),
+)
+
+/** The looks people can pick (Account → Theme). Same set as the web app. */
+enum class AppTheme(val dark: Boolean, val label: String, val background: Color, val card: Color, val accent: Color) {
+    LIGHT(false, "Light", Color.White, Color(0xFFF0F4F9), Color(0xFF0B57D0)),
+    DIM(true, "Dark", Color(0xFF131314), Color(0xFF1E1F20), Color(0xFFA8C7FA)),
+    MIDNIGHT(true, "Midnight Black", Color.Black, Color(0xFF0F1012), Color(0xFFA8C7FA)),
+    ABYSS(true, "Abyss", Color(0xFF000C18), Color(0xFF060621), Color(0xFF82AAFF)),
+}
+
 private val base = Typography()
 private fun TextStyle.g() = copy(fontFamily = GoogleSans)
 private val AppTypography = Typography(
@@ -148,10 +215,26 @@ private val AppShapes = Shapes(
 )
 
 @Composable
-fun TasksTheme(dark: Boolean, content: @Composable () -> Unit) {
-    androidx.compose.runtime.CompositionLocalProvider(LocalExtra provides if (dark) DarkExtra else LightExtra) {
+fun TasksTheme(dark: Boolean, content: @Composable () -> Unit) =
+    TasksTheme(if (dark) AppTheme.MIDNIGHT else AppTheme.LIGHT, content)
+
+@Composable
+fun TasksTheme(theme: AppTheme, content: @Composable () -> Unit) {
+    val extra = when (theme) {
+        AppTheme.LIGHT -> LightExtra
+        AppTheme.DIM -> DimExtra
+        AppTheme.MIDNIGHT -> DarkExtra
+        AppTheme.ABYSS -> AbyssExtra
+    }
+    val colors = when (theme) {
+        AppTheme.LIGHT -> LightColors
+        AppTheme.DIM -> DimColors
+        AppTheme.MIDNIGHT -> DarkColors
+        AppTheme.ABYSS -> AbyssColors
+    }
+    androidx.compose.runtime.CompositionLocalProvider(LocalExtra provides extra) {
         MaterialTheme(
-            colorScheme = if (dark) DarkColors else LightColors,
+            colorScheme = colors,
             typography = AppTypography,
             shapes = AppShapes,
             content = content,

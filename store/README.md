@@ -40,7 +40,7 @@ Tasks is a calm, fast day planner for people who juggle work for several compani
 PLAN EACH DAY
 • One list for today. Tick a task off, push it to tomorrow, or cancel it, and undo any of it.
 • Swipe right to complete, left to postpone.
-• Anything left over from earlier days waits at the top of Today, so nothing slips.
+• Anything left unfinished moves to today by itself, outlined in red so nothing slips.
 • Week strip and month calendar to jump to any day.
 
 BIG JOBS, SMALL STEPS
@@ -66,7 +66,7 @@ SEE WHERE THE MONTH WENT
 • Monthly summary with daily activity, completion rate, and progress per company.
 
 AND
-• AMOLED black, light, or follow the system.
+• Five themes: Light, Dark, Midnight Black (true black), Abyss (deep navy), or follow the system.
 • Syncs live with the web app at tasks.skienlab.com. Changes show up on your other devices within a second.
 • Opens instantly and works offline from the saved copy.
 • Sign in with Google or email.

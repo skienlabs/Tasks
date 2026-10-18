@@ -42,6 +42,18 @@ class DailySummaryTest {
     }
 
     @Test
+    fun carriedOverTasksCountAsFromEarlier() {
+        val c = DailySummary.summarize(today, listOf(
+            t("a", "Done one", status = Status.DONE),
+            t("d", "Old report", p = 1).copy(carriedFrom = "2026-10-16"),
+            t("c", "Call bank", p = 3),
+        ))!!
+        assertEquals("2 tasks still open", c.title)
+        assertEquals("You completed 1 of 3 today. 1 from earlier days. High priority: Old report", c.text)
+        assertEquals(listOf("High · Old report (from yesterday)", "Low · Call bank"), c.lines)
+    }
+
+    @Test
     fun manyOpenTasksAreCapped() {
         val c = DailySummary.summarize(today, (1..9).map { t("t$it", "Task $it") })!!
         assertEquals(7, c.lines.size)

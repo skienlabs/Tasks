@@ -1,27 +1,20 @@
 import { memo, useState } from 'react';
-import { Box, Divider, IconButton, ListItemIcon, ListItemText, Menu, MenuItem, Tooltip, Typography } from '@mui/material';
+import { Box, IconButton, Tooltip, Typography } from '@mui/material';
 import CheckCircle from '@mui/icons-material/CheckCircle';
 import BlockOutlined from '@mui/icons-material/BlockOutlined';
-import MoreVert from '@mui/icons-material/MoreVert';
 import EventRepeatOutlined from '@mui/icons-material/EventRepeatOutlined';
-import EditOutlined from '@mui/icons-material/EditOutlined';
-import DeleteOutlined from '@mui/icons-material/DeleteOutlined';
-import Replay from '@mui/icons-material/Replay';
 import Flag from '@mui/icons-material/Flag';
-import FlagOutlined from '@mui/icons-material/FlagOutlined';
 import TodayOutlined from '@mui/icons-material/TodayOutlined';
 import NotesRounded from '@mui/icons-material/NotesRounded';
+import HistoryRounded from '@mui/icons-material/HistoryRounded';
 import Check from '@mui/icons-material/Check';
-import SellOutlined from '@mui/icons-material/SellOutlined';
 import { PRIORITIES, priorityColor, tagColor } from '../theme.js';
 import TagChip from './TagChip.jsx';
-import TagPicker from './TagPicker.jsx';
+import TaskMenu, { postponeLabel } from './TaskMenu.jsx';
 import { StepsInline, StepsProgress } from './Steps.jsx';
 import { ImageStrip, ImageViewer } from './Images.jsx';
-import { shortLabel } from '../lib/dates.js';
-import {
-  cancelTask, completeTask, deleteTask, moveTasks, postponeTarget, postponeTask, restoreTask, selectTag, updateTask, useStoreVersion,
-} from '../lib/store.js';
+import { carriedLabel, isCarried, shortLabel } from '../lib/dates.js';
+import { completeTask, postponeTask, restoreTask, selectTag, useStoreVersion } from '../lib/store.js';
 
 function Meta({ icon, children, color = 'text.secondary' }) {
   return (
@@ -32,43 +25,76 @@ function Meta({ icon, children, color = 'text.secondary' }) {
   );
 }
 
-function TaskItem({ task, today, showOrigin, onOpen, onManageTags }) {
+/** Red pill on a task that moved here by itself from an earlier day. */
+export function CarriedBadge({ task, today, muted }) {
+  return (
+    <Box
+      component="span"
+      sx={(t) => ({
+        display: 'inline-flex', alignItems: 'center', gap: 0.5, height: 22, px: 1, borderRadius: 999,
+        fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+        color: muted ? 'text.secondary' : 'error.main',
+        bgcolor: muted ? t.tokens.surfaceHighest : t.tokens.carriedBg,
+        border: `1px solid ${muted ? 'transparent' : t.tokens.carriedBorder}`,
+      })}
+    >
+      <HistoryRounded sx={{ fontSize: 14 }} />
+      {carriedLabel(task.carriedFrom, today)}
+    </Box>
+  );
+}
+
+/**
+ * One task card. Clicking it selects it (details pane); editing is only in the ⋮ menu.
+ * `showOrigin` marks a task still sitting on an earlier day (a device whose clock was off).
+ */
+function TaskItem({ task, today, showOrigin, selected, onSelect, onEdit, onManageTags }) {
   useStoreVersion(); // re-render when a tag is renamed or recolored
-  const [menuEl, setMenuEl] = useState(null);
-  const [tagEl, setTagEl] = useState(null);
   const [stepsOpen, setStepsOpen] = useState(false);
   const [viewer, setViewer] = useState(null);
   const steps = task.subtasks ?? [];
   const images = task.attachments ?? [];
   const tags = (task.tagIds ?? []).map(selectTag).filter(Boolean);
-  // "Postpone" moves to the day after today, or after the task's own date if that is later.
-  const target = shortLabel(postponeTarget(task, today), today);
-  const postponeLabel = target === 'Tomorrow' ? 'Postpone to tomorrow' : `Postpone to ${target}`;
   const pending = task.status === 'pending';
   const done = task.status === 'done';
   const cancelled = task.status === 'cancelled';
-  const close = () => setMenuEl(null);
-  const act = (fn) => () => {
-    close();
-    fn();
-  };
+  const carried = isCarried(task);
+  const late = pending && (carried || showOrigin); // red outline while it's still open
+  const label = postponeLabel(task, today);
 
   return (
     <Box
       role="listitem"
-      onClick={() => onOpen(task)}
+      tabIndex={0}
+      aria-selected={selected || undefined}
+      aria-label={`${task.title}${late ? `, ${carried ? carriedLabel(task.carriedFrom, today).toLowerCase() : 'from an earlier day'}` : ''}`}
+      onClick={() => onSelect(task)}
+      onKeyDown={(e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+          e.preventDefault();
+          onSelect(task);
+        }
+      }}
       sx={(t) => ({
         display: 'flex', alignItems: 'flex-start', gap: 0.5, pl: 0.5, pr: 0.5, py: 0.5,
-        borderRadius: 3, cursor: 'pointer', transition: 'background-color 120ms', position: 'relative',
+        borderRadius: 3, cursor: 'pointer', transition: 'background-color 120ms, border-color 120ms', position: 'relative',
+        border: '1px solid transparent', outline: 'none',
+        ...(late && { borderColor: t.tokens.carriedBorder, bgcolor: t.tokens.carriedBg, my: 0.75 }),
+        ...(selected && {
+          bgcolor: late ? t.tokens.carriedBg : t.tokens.surfaceHigh,
+          borderColor: late ? 'error.main' : t.palette.primary.main,
+        }),
         ...(tags.length && {
           '&::before': {
             content: '""', position: 'absolute', left: 0, top: 12, bottom: 12, width: 3, borderRadius: 2,
             bgcolor: tagColor(t, tags[0].color).main, opacity: pending ? 1 : 0.4,
           },
         }),
-        '&:hover': { bgcolor: t.tokens.surfaceHigh },
+        '&:hover': { bgcolor: late ? t.tokens.carriedBg : t.tokens.surfaceHigh },
+        '&:focus-visible': { borderColor: t.palette.primary.main },
         '@media (hover: hover)': {
-          '& .task-actions': { opacity: menuEl ? 1 : 0 },
+          '& .task-actions': { opacity: selected ? 1 : 0 },
+          '& .task-actions:has(.menu-open)': { opacity: 1 },
           '&:hover .task-actions, &:focus-within .task-actions': { opacity: 1 },
         },
       })}
@@ -115,9 +141,14 @@ function TaskItem({ task, today, showOrigin, onOpen, onManageTags }) {
         >
           {task.title}
         </Typography>
-        {tags.length > 0 && (
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.6, opacity: pending ? 1 : 0.6 }}>
-            {tags.map((tag) => <TagChip key={tag.id} tag={tag} dense />)}
+        {(tags.length > 0 || carried) && (
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.5, mt: 0.6 }}>
+            {carried && <CarriedBadge task={task} today={today} muted={!pending} />}
+            {tags.map((tag) => (
+              <Box key={tag.id} component="span" sx={{ display: 'inline-flex', opacity: pending ? 1 : 0.6 }}>
+                <TagChip tag={tag} dense />
+              </Box>
+            ))}
           </Box>
         )}
         {steps.length > 0 && (
@@ -158,9 +189,9 @@ function TaskItem({ task, today, showOrigin, onOpen, onManageTags }) {
 
       <Box className="task-actions" sx={{ display: 'flex', alignItems: 'center', transition: 'opacity 120ms', pt: 0.25 }}>
         {pending && (
-          <Tooltip title={postponeLabel}>
+          <Tooltip title={label}>
             <IconButton
-              aria-label={`${postponeLabel}: "${task.title}"`}
+              aria-label={`${label}: "${task.title}"`}
               onClick={(e) => {
                 e.stopPropagation();
                 postponeTask(task.id, today);
@@ -170,106 +201,14 @@ function TaskItem({ task, today, showOrigin, onOpen, onManageTags }) {
             </IconButton>
           </Tooltip>
         )}
-        <IconButton
-          aria-label={`More actions for "${task.title}"`}
-          onClick={(e) => {
-            e.stopPropagation();
-            setMenuEl(e.currentTarget);
-          }}
-        >
-          <MoreVert fontSize="small" />
-        </IconButton>
+        <TaskMenu task={task} today={today} onEdit={onEdit} onManageTags={onManageTags} />
       </Box>
 
-      <Menu
-        anchorEl={menuEl}
-        open={Boolean(menuEl)}
-        onClose={close}
-        onClick={(e) => e.stopPropagation()}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-        slotProps={{ paper: { sx: { minWidth: 220 } } }}
-      >
-        <MenuItem onClick={act(() => onOpen(task))}>
-          <ListItemIcon><EditOutlined fontSize="small" /></ListItemIcon>
-          <ListItemText>Edit</ListItemText>
-        </MenuItem>
-        <MenuItem
-          onClick={(e) => {
-            setTagEl(menuEl);
-            close();
-            e.stopPropagation();
-          }}
-        >
-          <ListItemIcon><SellOutlined fontSize="small" /></ListItemIcon>
-          <ListItemText>Tags</ListItemText>
-        </MenuItem>
-        {!pending && (
-          <MenuItem onClick={act(() => restoreTask(task.id))}>
-            <ListItemIcon><Replay fontSize="small" /></ListItemIcon>
-            <ListItemText>Mark as pending</ListItemText>
-          </MenuItem>
-        )}
-        {pending && task.date !== today && (
-          <MenuItem onClick={act(() => moveTasks([task.id], today))}>
-            <ListItemIcon><TodayOutlined fontSize="small" /></ListItemIcon>
-            <ListItemText>Move to today</ListItemText>
-          </MenuItem>
-        )}
-        {pending && (
-          <MenuItem onClick={act(() => postponeTask(task.id, today))}>
-            <ListItemIcon><EventRepeatOutlined fontSize="small" /></ListItemIcon>
-            <ListItemText>{postponeLabel}</ListItemText>
-          </MenuItem>
-        )}
-        {pending && (
-          <Box sx={{ px: 2, py: 1 }}>
-            <Typography variant="caption" color="text.secondary">Priority</Typography>
-            <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5 }}>
-              {PRIORITIES.map((p) => (
-                <Tooltip key={p.value} title={p.label}>
-                  <IconButton
-                    size="small"
-                    aria-label={`Priority ${p.label}`}
-                    onClick={act(() => updateTask(task.id, { priority: p.value }))}
-                    sx={(t) => ({
-                      color: priorityColor(t, p.value),
-                      bgcolor: task.priority === p.value ? t.tokens.surfaceHigh : 'transparent',
-                      outline: task.priority === p.value ? `1px solid ${t.tokens.outline}` : 'none',
-                    })}
-                  >
-                    {p.value === 4 ? <FlagOutlined fontSize="small" /> : <Flag fontSize="small" />}
-                  </IconButton>
-                </Tooltip>
-              ))}
-            </Box>
-          </Box>
-        )}
-        <Divider />
-        {pending && (
-          <MenuItem onClick={act(() => cancelTask(task.id))}>
-            <ListItemIcon><BlockOutlined fontSize="small" /></ListItemIcon>
-            <ListItemText>Cancel task</ListItemText>
-          </MenuItem>
-        )}
-        <MenuItem onClick={act(() => deleteTask(task.id))} sx={{ color: 'error.main' }}>
-          <ListItemIcon><DeleteOutlined fontSize="small" color="error" /></ListItemIcon>
-          <ListItemText>Delete</ListItemText>
-        </MenuItem>
-      </Menu>
       {viewer !== null && (
         <Box onClick={(e) => e.stopPropagation()}>
           <ImageViewer attachments={images} index={viewer} onIndex={setViewer} onClose={() => setViewer(null)} />
         </Box>
       )}
-      <TagPicker
-        anchorEl={tagEl}
-        open={Boolean(tagEl)}
-        onClose={() => setTagEl(null)}
-        selected={task.tagIds ?? []}
-        onChange={(ids) => updateTask(task.id, { tagIds: ids })}
-        onManage={onManageTags}
-      />
     </Box>
   );
 }

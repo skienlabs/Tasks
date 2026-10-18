@@ -104,7 +104,9 @@ object DailySummary {
         val high = open.filter { it.priority == 1 }
         val text = buildString {
             append(if (day.isNotEmpty()) "You completed $done of ${day.size} today." else "Nothing was planned for today.")
-            if (overdue.isNotEmpty()) append(" ${overdue.size} from earlier days.")
+            // Leftovers move to today by themselves; count them with any still on an earlier day.
+            val earlier = day.count { it.isPending && it.isCarried } + overdue.size
+            if (earlier > 0) append(" $earlier from earlier days.")
             if (high.isNotEmpty()) append(" High priority: " + high.take(3).joinToString(", ") { it.title } + if (high.size > 3) "…" else "")
         }
         val labels = mapOf(1 to "High", 2 to "Medium", 3 to "Low")
@@ -113,6 +115,7 @@ object DailySummary {
                 labels[t.priority]?.let { append(it).append(" · ") }
                 append(t.title)
                 if (t.date < today) append(" (").append(Dates.shortLabel(t.date, today)).append(")")
+                else if (t.isCarried) append(" (").append(Dates.carriedLabel(t.carriedFrom!!, today).replaceFirstChar { it.lowercase() }).append(")")
             }
         } + if (open.size > 6) listOf("and ${open.size - 6} more") else emptyList()
         return Content("${open.size} ${tasksWord(open.size)} still open", text, lines)

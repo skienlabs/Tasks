@@ -242,6 +242,7 @@ fun taskBody(
         put("postponed", t.postponed)
         put("createdAt", t.createdAt)
         t.completedAt?.let { put("completedAt", it) }
+        t.carriedFrom?.let { put("carriedFrom", it) }
     }
 }
 

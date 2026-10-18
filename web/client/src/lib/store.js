@@ -263,7 +263,7 @@ export function createTask({ title, notes = '', priority = 4, date, tagIds = [],
   const task = {
     id: newId(), title: title.replace(/\s+/g, ' ').trim(), notes: notes.trim(), priority, date,
     status, originalDate: date, postponed: 0, createdAt: now, updatedAt: now,
-    completedAt: status === 'done' ? now : null, tagIds: ids, subtasks, attachments: [],
+    completedAt: status === 'done' ? now : null, tagIds: ids, subtasks, attachments: [], carriedFrom: null,
   };
   const saved = mutate(task.id, task, () => api('POST', '/api/tasks', {
     id: task.id, title: task.title, notes: task.notes, priority, date, tagIds: ids,
@@ -280,6 +280,8 @@ export function updateTask(id, patch) {
   const next = { ...old, ...patch, updatedAt: Date.now() };
   if (patch.title !== undefined) next.title = patch.title.replace(/\s+/g, ' ').trim();
   if (patch.notes !== undefined) next.notes = patch.notes.trim();
+  // Same rule as the server: moving a task on purpose clears its "from earlier" mark.
+  if (patch.date !== undefined && patch.date !== old.date && patch.carriedFrom === undefined) next.carriedFrom = null;
   // Same rule as the server: changing the steps decides done/pending unless a status is given.
   if (patch.subtasks !== undefined && patch.status === undefined) next.status = statusAfterSteps(old.status, patch.subtasks);
   if (next.status !== old.status) next.completedAt = next.status === 'done' ? Date.now() : null;
@@ -358,19 +360,22 @@ export function postponeTask(id, today = todayKey()) {
   const old = byId.get(id);
   if (!old || old.status !== 'pending') return;
   const target = postponeTarget(old, today);
-  const next = { ...old, date: target, postponed: old.postponed + 1, updatedAt: Date.now() };
+  const next = { ...old, date: target, postponed: old.postponed + 1, carriedFrom: null, updatedAt: Date.now() };
   mutate(id, next, () => api('POST', `/api/tasks/${id}/postpone`, { today }), "Couldn't postpone");
   const label = shortLabel(target, today);
   showToast(label === 'Tomorrow' ? 'Postponed to tomorrow' : `Postponed to ${label}`,
-    () => updateTask(id, { date: old.date, postponed: old.postponed }));
+    () => updateTask(id, { date: old.date, postponed: old.postponed, ...carried(old) }));
 }
+
+/** For undo: brings back a task's "from earlier" mark. */
+const carried = (t) => (t.carriedFrom ? { carriedFrom: t.carriedFrom } : {});
 
 export function moveTasks(ids, date) {
   const olds = ids.map((id) => byId.get(id)).filter((t) => t && t.date !== date);
   if (!olds.length) return;
   for (const t of olds) updateTask(t.id, { date });
   showToast(`${olds.length} task${olds.length === 1 ? '' : 's'} moved`, () => {
-    for (const t of olds) updateTask(t.id, { date: t.date });
+    for (const t of olds) updateTask(t.id, { date: t.date, ...carried(t) });
   });
 }
 
@@ -385,6 +390,7 @@ export function deleteTask(id) {
       status: old.status, originalDate: old.originalDate, postponed: old.postponed, tagIds,
       ...(old.subtasks?.length ? { subtasks: old.subtasks } : {}),
       createdAt: old.createdAt, ...(old.completedAt ? { completedAt: old.completedAt } : {}),
+      ...(old.carriedFrom ? { carriedFrom: old.carriedFrom } : {}),
     }), "Couldn't restore");
   });
 }
