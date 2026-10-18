@@ -3,7 +3,7 @@
 Native Android app (Kotlin + Jetpack Compose, Material 3) for the same account and data as the web app. Changes show up on the other devices within about a second (live sync over `/api/events`).
 
 - Tasks per day, with priorities, notes, company tags and logos.
-- Swipe a task **right to complete** it, **left to postpone** it to tomorrow. Tap to edit; long-press or ⋮ for everything else (cancel, move to today, priority, tags, delete). Each action can be undone from the snackbar.
+- Swipe a task **right to complete** it, **left to postpone** it to tomorrow. Tap to see its details (steps you can tick, images, notes, history); long-press or ⋮ for Edit and everything else (cancel, move to today, priority, tags, delete). Each action can be undone from the snackbar.
 - Tasks left unfinished move to today by themselves, outlined in red with where they came from ("From yesterday").
 - Week strip (tap a day, swipe it sideways to change week), month calendar from the title, monthly summary with charts.
 - Five themes (Account → Theme): System, Light, Dark (soft grey), Midnight Black (true black for OLED) and Abyss (deep navy, like the VS Code theme).

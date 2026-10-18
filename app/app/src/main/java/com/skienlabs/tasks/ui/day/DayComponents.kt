@@ -306,11 +306,13 @@ data class RowActions(
     val setTags: (Task, List<String>) -> Unit,
     val manageTags: () -> Unit,
     val toggleStep: (Task, String) -> Unit = { _, _ -> },
+    /** Tap on a task: show its details. Editing ([open]) is under ⋮ → Edit. */
+    val view: (Task) -> Unit = open,
 )
 
 /**
  * One task. Swipe right to complete, swipe left to postpone (pending tasks only).
- * Tap to edit; the ⋮ menu has everything else.
+ * Tap to see its details; the ⋮ menu (or a long press) has Edit and everything else.
  */
 @Composable
 fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, actions: RowActions, containerColor: Color = MaterialTheme.colorScheme.background) {
@@ -366,7 +368,8 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
             }
         },
     ) {
-        val stripe = rowTags.firstOrNull()?.let { tagColor(it.color) }
+        val spine = rowTags.take(4).map { tagColor(it.color) }
+        val wash = spine.firstOrNull()?.copy(alpha = if (x.dark) 0.09f else 0.07f)
         // Moved here by itself from an earlier day and still open: red outline, like the web app.
         val late = task.isPending && (task.isCarried || showOrigin)
         val lateShape = RoundedCornerShape(16.dp)
@@ -377,9 +380,26 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
                         .border(1.dp, x.overdueBorder, lateShape).background(x.overdueBg)
                     else Modifier.background(containerColor),
                 )
-                .combinedClickable(onClick = { actions.open(task) }, onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menu = true })
+                .combinedClickable(onClick = { actions.view(task) }, onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menu = true })
                 .drawBehind {
-                    if (stripe != null) drawRoundRect(stripe.copy(alpha = if (task.isPending) 1f else 0.4f), Offset(4.dp.toPx(), 12.dp.toPx()), Size(3.dp.toPx(), size.height - 24.dp.toPx()), CornerRadius(2.dp.toPx()))
+                    // A soft wash of the first tag's colour, fading in from the left (open tasks only).
+                    if (wash != null && task.isPending) {
+                        drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(wash, Color.Transparent), endX = size.width * 0.42f))
+                    }
+                    // Tag spine: a slim rounded bar set inside the edge, one segment per tag.
+                    if (spine.isNotEmpty()) {
+                        val gap = 3.dp.toPx()
+                        val top = 14.dp.toPx()
+                        val h = size.height - top * 2
+                        val seg = (h - gap * (spine.size - 1)) / spine.size
+                        val w = 4.dp.toPx()
+                        spine.forEachIndexed { i, c ->
+                            drawRoundRect(
+                                c.copy(alpha = if (task.isPending) 1f else 0.35f),
+                                Offset(7.dp.toPx(), top + i * (seg + gap)), Size(w, seg), CornerRadius(w / 2),
+                            )
+                        }
+                    }
                 }
                 .padding(start = 8.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
             verticalAlignment = Alignment.Top,
@@ -452,7 +472,7 @@ private fun CheckCircle(task: Task, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TaskMenu(open: Boolean, onDismiss: () -> Unit, task: Task, today: String, postponeLabel: String, a: RowActions, openTags: () -> Unit) {
+internal fun TaskMenu(open: Boolean, onDismiss: () -> Unit, task: Task, today: String, postponeLabel: String, a: RowActions, openTags: () -> Unit) {
     val dark = LocalExtra.current.dark
     DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
         DropdownMenuItem(text = { Text("Edit") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { onDismiss(); a.open(task) })

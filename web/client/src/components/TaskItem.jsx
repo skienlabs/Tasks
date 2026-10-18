@@ -8,7 +8,7 @@ import TodayOutlined from '@mui/icons-material/TodayOutlined';
 import NotesRounded from '@mui/icons-material/NotesRounded';
 import HistoryRounded from '@mui/icons-material/HistoryRounded';
 import Check from '@mui/icons-material/Check';
-import { PRIORITIES, priorityColor, tagColor } from '../theme.js';
+import { PRIORITIES, hexAlpha, priorityColor, tagColor } from '../theme.js';
 import TagChip from './TagChip.jsx';
 import TaskMenu, { postponeLabel } from './TaskMenu.jsx';
 import { StepsInline, StepsProgress } from './Steps.jsx';
@@ -45,6 +45,27 @@ export function CarriedBadge({ task, today, muted }) {
 }
 
 /**
+ * The task's tags as a slim rounded spine set just inside the card's left edge: one segment per
+ * tag (up to four), so it never runs into the card's outline.
+ */
+function TagSpine({ tags, active }) {
+  return (
+    <Box
+      aria-hidden
+      sx={{
+        position: 'absolute', left: 9, top: 16, bottom: 16, width: 4,
+        display: 'flex', flexDirection: 'column', gap: '3px', pointerEvents: 'none',
+        opacity: active ? 1 : 0.35, transition: 'opacity 150ms',
+      }}
+    >
+      {tags.slice(0, 4).map((tag) => (
+        <Box key={tag.id} sx={(t) => ({ flex: 1, minHeight: 6, borderRadius: 999, bgcolor: tagColor(t, tag.color).main })} />
+      ))}
+    </Box>
+  );
+}
+
+/**
  * One task card. Clicking it selects it (details pane); editing is only in the ⋮ menu.
  * `showOrigin` marks a task still sitting on an earlier day (a device whose clock was off).
  */
@@ -76,19 +97,17 @@ function TaskItem({ task, today, showOrigin, selected, onSelect, onEdit, onManag
         }
       }}
       sx={(t) => ({
-        display: 'flex', alignItems: 'flex-start', gap: 0.5, pl: 0.5, pr: 0.5, py: 0.5,
-        borderRadius: 3, cursor: 'pointer', transition: 'background-color 120ms, border-color 120ms', position: 'relative',
+        display: 'flex', alignItems: 'flex-start', gap: 0.5, pl: tags.length ? 1.75 : 0.5, pr: 0.5, py: 0.5,
+        borderRadius: '18px', cursor: 'pointer', transition: 'background-color 120ms, border-color 120ms', position: 'relative',
         border: '1px solid transparent', outline: 'none',
         ...(late && { borderColor: t.tokens.carriedBorder, bgcolor: t.tokens.carriedBg, my: 0.75 }),
         ...(selected && {
           bgcolor: late ? t.tokens.carriedBg : t.tokens.surfaceHigh,
           borderColor: late ? 'error.main' : t.palette.primary.main,
         }),
-        ...(tags.length && {
-          '&::before': {
-            content: '""', position: 'absolute', left: 0, top: 12, bottom: 12, width: 3, borderRadius: 2,
-            bgcolor: tagColor(t, tags[0].color).main, opacity: pending ? 1 : 0.4,
-          },
+        // A soft wash of the first tag's colour, fading in from the spine (open tasks only).
+        ...(tags.length && pending && {
+          backgroundImage: `linear-gradient(90deg, ${hexAlpha(tagColor(t, tags[0].color).main, t.palette.mode === 'dark' ? 0.09 : 0.07)}, transparent 42%)`,
         }),
         '&:hover': { bgcolor: late ? t.tokens.carriedBg : t.tokens.surfaceHigh },
         '&:focus-visible': { borderColor: t.palette.primary.main },
@@ -99,6 +118,7 @@ function TaskItem({ task, today, showOrigin, selected, onSelect, onEdit, onManag
         },
       })}
     >
+      {tags.length > 0 && <TagSpine tags={tags} active={pending} />}
       <Tooltip title={pending ? 'Mark complete' : done ? 'Mark not done' : 'Restore'}>
         <IconButton
           aria-label={pending ? `Complete "${task.title}"` : `Restore "${task.title}"`}

@@ -13,6 +13,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import com.skienlabs.tasks.ui.theme.AppTheme
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -197,13 +201,7 @@ fun AccountSheet(app: AppController, profile: Profile, theme: ThemePref, onDismi
 
             SummarySetting(app)
 
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Theme", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                    Text(themeLabel(theme), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                ThemeSwatches(theme) { t -> scope.launch { app.prefs.setTheme(t) } }
-            }
+            ThemeDropdown(theme) { t -> scope.launch { app.prefs.setTheme(t) } }
 
             HorizontalDivider()
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -362,6 +360,36 @@ fun ThemeSwatches(selected: ThemePref, onSelect: (ThemePref) -> Unit) {
                     modifier = Modifier.padding(top = 6.dp),
                 )
             }
+        }
+    }
+}
+
+/** "Theme · Abyss ⌄": folded away until tapped, then the five theme cards. */
+@Composable
+fun ThemeDropdown(selected: ThemePref, startOpen: Boolean = false, onSelect: (ThemePref) -> Unit) {
+    var open by rememberSaveable { mutableStateOf(startOpen) }
+    val rotation by androidx.compose.animation.core.animateFloatAsState(if (open) 180f else 0f, label = "theme-chevron")
+    val x = LocalExtra.current
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(x.surfaceHigh)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp)),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().clickable(onClickLabel = if (open) "Hide themes" else "Show themes") { open = !open }
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(androidx.compose.material.icons.Icons.Outlined.Palette, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Theme", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(start = 14.dp).weight(1f))
+            Text(themeLabel(selected), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(
+                androidx.compose.material.icons.Icons.Filled.ExpandMore, null,
+                Modifier.padding(start = 6.dp).size(22.dp).graphicsLayer { rotationZ = rotation },
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        androidx.compose.animation.AnimatedVisibility(open) {
+            Box(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 14.dp)) { ThemeSwatches(selected, onSelect) }
         }
     }
 }

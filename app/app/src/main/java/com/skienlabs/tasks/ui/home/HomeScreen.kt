@@ -98,6 +98,7 @@ private fun dateOf(page: Int) = Dates.addDays(Dates.MIN, page.toLong())
 /** Which sheet is open, if any. A task sheet holds the task (null task = new). */
 private sealed interface Sheet {
     data class TaskEdit(val task: Task?) : Sheet
+    data class TaskView(val id: String) : Sheet
     data object Month : Sheet
     data object Account : Sheet
 }
@@ -219,6 +220,7 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
             setTags = { t, ids -> store.updateTask(t.id, TaskPatch(tagIds = ids)) },
             manageTags = { manageTags() },
             toggleStep = { t, stepId -> store.toggleStep(t.id, stepId) },
+            view = { sheet = Sheet.TaskView(it.id) },
         )
     }
 
@@ -342,6 +344,11 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
             store = store, task = s.task?.let { state.tasks[it.id] ?: it }, defaultDate = date, defaultTagId = filter,
             today = today, tags = state.tags, onDismiss = { sheet = null }, onManageTags = { newTag = true },
         )
+        is Sheet.TaskView -> {
+            val t = state.tasks[s.id]
+            if (t == null) LaunchedEffect(s.id) { sheet = null } // deleted (maybe on another device)
+            else com.skienlabs.tasks.ui.day.TaskDetailsSheet(t, state.tags, today, actions) { sheet = null }
+        }
         Sheet.Month -> MonthSheet(
             month = visibleMonth, selected = date, today = today, summary = state.summary,
             onMonth = { m -> app.visibleMonth.value = m; app.refreshSummary() },

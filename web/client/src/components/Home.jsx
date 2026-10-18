@@ -580,15 +580,6 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
               )}
             </Box>
 
-            {/* Appearance */}
-            <Box sx={(t) => ({ bgcolor: t.tokens.surfaceHigh, borderRadius: '16px', mt: 1, p: 1.5 })}>
-              <Box sx={{ display: 'flex', alignItems: 'baseline', mb: 1.25, px: 0.25 }}>
-                <Typography sx={{ fontSize: 14, fontWeight: 500, flex: 1 }}>Theme</Typography>
-                <Typography variant="body2" color="text.secondary">{themeLabel}</Typography>
-              </Box>
-              <ThemePicker value={themePref} onChange={onThemeChange} />
-            </Box>
-
             {/* Leave */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, pt: 1.5, pb: 0.5 }}>
               <Button

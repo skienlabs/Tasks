@@ -30,6 +30,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -107,7 +110,7 @@ class ScreensTest {
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    private fun Home(s: StoreState, date: String, filter: String? = null) {
+    private fun Home(s: StoreState, date: String, filter: String? = null, actions: RowActions = this.actions) {
         val profile = Profile("u", "skienlabs@gmail.com", "Skien", onboarded = true)
         Scaffold(
             topBar = {
@@ -207,6 +210,33 @@ class ScreensTest {
             com.skienlabs.tasks.ui.day.StepsEditor(tree) {}
             com.skienlabs.tasks.ui.task.ImagesEditor(emptyList(), emptyList(), false, {}, {}, {}, {}, {})
         }
+    }
+
+    @Test fun task_details() = shot("task_details", true) {
+        val t = state.tasks.getValue("c").copy(notes = "Walk through the new onboarding, then the release notes.")
+        com.skienlabs.tasks.ui.day.TaskDetails(t, state.tags, today, actions) {}
+    }
+
+    @Test fun theme_dropdown() = shot("theme_dropdown", com.skienlabs.tasks.ui.theme.AppTheme.DIM) {
+        Column(Modifier.padding(20.dp)) {
+            com.skienlabs.tasks.ui.account.ThemeDropdown(com.skienlabs.tasks.data.ThemePref.DIM) {}
+            Box(Modifier.size(16.dp))
+            com.skienlabs.tasks.ui.account.ThemeDropdown(com.skienlabs.tasks.data.ThemePref.ABYSS, startOpen = true) {}
+        }
+    }
+
+    /** Like the web app: a tap shows the details; only ⋮ → Edit opens the form. */
+    @Test fun tapShowsDetailsNotEditor() {
+        val seen = mutableListOf<String>()
+        val a = RowActions({ seen += "edit:${it.id}" }, {}, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, view = { seen += "view:${it.id}" })
+        rule.setContent { TasksTheme(true) { Home(state, today, actions = a) } }
+        rule.onNodeWithText("Send invoice for September").performClick()
+        rule.waitForIdle()
+        org.junit.Assert.assertEquals(listOf("view:a"), seen)
+        rule.onNodeWithContentDescription("More actions for \"Send invoice for September\"").performClick()
+        rule.onNodeWithText("Edit").performClick()
+        rule.waitForIdle()
+        org.junit.Assert.assertEquals(listOf("view:a", "edit:a"), seen)
     }
 
     @Test fun intro_first() = shot("intro_first", true) { com.skienlabs.tasks.ui.intro.IntroScreen {} }
