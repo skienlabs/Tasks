@@ -300,6 +300,8 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
           status: STATUS, originalDate: DATE, postponed: COUNT, tagIds: TAG_IDS, subtasks: SUBTASKS,
           // Only used when undoing a delete, so the task keeps its place and history.
           createdAt: TIMESTAMP, completedAt: TIMESTAMP, carriedFrom: DATE,
+          // The device's today: new tasks can't go on an earlier day.
+          today: DATE,
         },
         additionalProperties: false,
       },
@@ -309,6 +311,16 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     assertDate(b.date, 'date');
     if (b.originalDate) assertDate(b.originalDate, 'originalDate');
     if (b.carriedFrom) assertDate(b.carriedFrom, 'carriedFrom');
+    if (b.today) assertDate(b.today, 'today');
+    // New tasks go on today or later. A re-create by "Undo" (it carries createdAt) may restore
+    // a task to its old day. Without a plausible device date, allow from yesterday in UTC,
+    // which is still "today" somewhere.
+    if (b.createdAt === undefined) {
+      const earliest = b.today && plausibleToday(b.today)
+        ? b.today
+        : addDays(new Date(clock()).toISOString().slice(0, 10), -1);
+      if (b.date < earliest) throw new HttpError(400, 'Tasks can only be added for today or a later day');
+    }
     const uid = req.user.uid;
 
     if (b.id) {

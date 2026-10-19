@@ -132,7 +132,7 @@ fun TaskDetails(task: Task, tags: List<Tag>, today: String, actions: RowActions,
                 textDecoration = if (task.isPending) null else TextDecoration.LineThrough,
                 modifier = Modifier.padding(top = 10.dp).semantics { heading() },
             )
-            if (task.isCarried) Box(Modifier.padding(top = 8.dp)) { CarriedBadge(task, today, muted = !task.isPending) }
+            if (task.isCarried) Box(Modifier.padding(top = 8.dp)) { CarriedBadge(task, today, muted = !task.isPending, tag = taskTags.firstOrNull()) }
 
             Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (task.isPending) {
@@ -155,7 +155,7 @@ fun TaskDetails(task: Task, tags: List<Tag>, today: String, actions: RowActions,
                 else FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { taskTags.forEach { TagChip(it, dense = true) } }
             }
             task.carriedFrom?.takeIf { task.isCarried }?.let { from ->
-                Fact(Icons.Outlined.History, "First due", if (task.isPending) x.overdue else null) {
+                Fact(Icons.Outlined.History, "First due") {
                     Text("${Dates.longDate(from)} · moved here by itself", style = MaterialTheme.typography.bodyMedium)
                 }
             }

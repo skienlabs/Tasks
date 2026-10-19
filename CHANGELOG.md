@@ -4,6 +4,13 @@ One version number for the web app and the Android app. Bug fixes bump the last 
 
 Where it lives: `web/client/package.json` (`version`) and `app/app/build.gradle.kts` (`versionName`, plus `versionCode` +1 for every Android release).
 
+## 1.5.0 · 19 Oct 2026
+
+- **Tasks from earlier days are outlined in their tag's colour**, not red: the Skien task in blue, the Softop task in orange. **High-priority** ones stay red, and tasks without a tag get a neutral outline. The "From yesterday" pill uses the same colour. Today's own tasks have no outline.
+- **No new tasks on past days**, on web, Android and the server. A past day shows "This day has passed" with a button to today, the date picker starts at today, and the server refuses earlier dates (Undo can still restore a task to its old day).
+- **Web: tags moved to the right of each task** as a bigger plate with the company's logo and name; more tags stack as logos beside it (logo only on narrow screens).
+- Web: fixed a faint line at the right edge of task cards.
+
 ## 1.4.0 · 18 Oct 2026
 
 - **Android: tapping a task shows its details** (status, date, priority, tags, notes, steps you can tick, images, history), like the web app. Editing is only under ⋮ → Edit (or a long press).

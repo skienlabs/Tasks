@@ -305,6 +305,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
       else if (e.key === 'n' || e.key === 'N') {
         e.preventDefault();
         if (view !== 'day') setView('day');
+        if (date < today) selectDate(today); // past days take no new tasks
         setTimeout(() => addInputRef.current?.focus(), 0);
       }
     };
@@ -350,7 +351,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
       {desktop && (
         <Box>
           <Button
-            onClick={() => setDialog({ date: view === 'day' ? date : today })}
+            onClick={() => setDialog({ date: view === 'day' && date >= today ? date : today })}
             startIcon={<Add sx={{ fontSize: '28px !important' }} />}
             sx={(t) => ({
               height: 56, px: 2.5, borderRadius: 4, fontSize: 15, color: 'text.primary',
@@ -688,7 +689,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
           <Fab
             color="primary"
             aria-label="New task"
-            onClick={() => setDialog({ date: view === 'day' ? date : today })}
+            onClick={() => setDialog({ date: view === 'day' && date >= today ? date : today })}
             sx={{ position: 'fixed', right: 16, bottom: 'calc(96px + env(safe-area-inset-bottom))', borderRadius: 4, width: 56, height: 56 }}
           >
             <Add />

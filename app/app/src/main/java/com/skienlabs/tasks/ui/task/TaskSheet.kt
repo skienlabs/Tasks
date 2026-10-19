@@ -86,7 +86,9 @@ fun TaskSheet(
     var title by rememberSaveable(key) { mutableStateOf(task?.title ?: "") }
     var notes by rememberSaveable(key) { mutableStateOf(task?.notes ?: "") }
     var priority by rememberSaveable(key) { mutableStateOf(task?.priority ?: 4) }
-    var date by rememberSaveable(key) { mutableStateOf(task?.date ?: defaultDate) }
+    // New tasks go on today or later; an existing task may keep the (past) day it's on.
+    var date by rememberSaveable(key) { mutableStateOf(task?.date ?: maxOf(defaultDate, today)) }
+    val earliest = if (task != null && task.date < today) task.date else today
     var tagIds by rememberSaveable(key) { mutableStateOf(task?.tagIds ?: listOfNotNull(defaultTagId)) }
     var tagsChanged by rememberSaveable(key) { mutableStateOf(false) }
     // Steps are kept as JSON so they survive rotation.
@@ -99,7 +101,8 @@ fun TaskSheet(
     var imagesBusy by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
-    val valid = title.isNotBlank() && Dates.isValid(date)
+    val dateOk = Dates.isValid(date) && (date >= today || (task != null && date == task.date))
+    val valid = title.isNotBlank() && dateOk
     val dark = LocalExtra.current.dark
 
     fun close() {
@@ -232,7 +235,13 @@ fun TaskSheet(
     }
 
     if (picking) {
-        val state = rememberDatePickerState(initialSelectedDateMillis = toMillis(date), yearRange = 1900..2999)
+        val state = rememberDatePickerState(
+            initialSelectedDateMillis = toMillis(date), yearRange = 1900..2999,
+            selectableDates = object : androidx.compose.material3.SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long) = fromMillis(utcTimeMillis) >= earliest
+                override fun isSelectableYear(year: Int) = year >= earliest.take(4).toInt()
+            },
+        )
         DatePickerDialog(
             onDismissRequest = { picking = false },
             confirmButton = {

@@ -9,7 +9,7 @@ import NotesRounded from '@mui/icons-material/NotesRounded';
 import HistoryRounded from '@mui/icons-material/HistoryRounded';
 import Check from '@mui/icons-material/Check';
 import { PRIORITIES, hexAlpha, priorityColor, tagColor } from '../theme.js';
-import TagChip from './TagChip.jsx';
+import { TagPlates } from './TagChip.jsx';
 import TaskMenu, { postponeLabel } from './TaskMenu.jsx';
 import { StepsInline, StepsProgress } from './Steps.jsx';
 import { ImageStrip, ImageViewer } from './Images.jsx';
@@ -25,18 +25,36 @@ function Meta({ icon, children, color = 'text.secondary' }) {
   );
 }
 
-/** Red pill on a task that moved here by itself from an earlier day. */
-export function CarriedBadge({ task, today, muted }) {
+/**
+ * The colour a task from an earlier day is outlined in: red when it's high priority (it's late
+ * and it matters), otherwise its (first) tag's colour, or a neutral one without tags.
+ */
+export function carriedColor(t, tag, high = false) {
+  if (high) {
+    return { main: t.palette.error.main, border: t.tokens.carriedBorder, bg: t.tokens.carriedBg };
+  }
+  if (tag) {
+    const c = tagColor(t, tag.color);
+    return { main: c.main, border: hexAlpha(c.main, t.palette.mode === 'dark' ? 0.6 : 0.55), bg: hexAlpha(c.main, t.palette.mode === 'dark' ? 0.08 : 0.06) };
+  }
+  return { main: t.palette.text.secondary, border: t.tokens.outline, bg: t.tokens.surfaceHigh };
+}
+
+/** Pill on a task that moved here by itself from an earlier day, in its tag's colour. */
+export function CarriedBadge({ task, today, muted, tag }) {
   return (
     <Box
       component="span"
-      sx={(t) => ({
-        display: 'inline-flex', alignItems: 'center', gap: 0.5, height: 22, px: 1, borderRadius: 999,
-        fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
-        color: muted ? 'text.secondary' : 'error.main',
-        bgcolor: muted ? t.tokens.surfaceHighest : t.tokens.carriedBg,
-        border: `1px solid ${muted ? 'transparent' : t.tokens.carriedBorder}`,
-      })}
+      sx={(t) => {
+        const c = carriedColor(t, tag, task.priority === 1);
+        return {
+          display: 'inline-flex', alignItems: 'center', gap: 0.5, height: 22, px: 1, borderRadius: 999,
+          fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+          color: muted ? 'text.secondary' : c.main,
+          bgcolor: muted ? t.tokens.surfaceHighest : hexAlpha(c.main, t.palette.mode === 'dark' ? 0.14 : 0.1),
+          border: `1px solid ${muted ? 'transparent' : c.border}`,
+        };
+      }}
     >
       <HistoryRounded sx={{ fontSize: 14 }} />
       {carriedLabel(task.carriedFrom, today)}
@@ -100,16 +118,19 @@ function TaskItem({ task, today, showOrigin, selected, onSelect, onEdit, onManag
         display: 'flex', alignItems: 'flex-start', gap: 0.5, pl: tags.length ? 1.75 : 0.5, pr: 0.5, py: 0.5,
         borderRadius: '18px', cursor: 'pointer', transition: 'background-color 120ms, border-color 120ms', position: 'relative',
         border: '1px solid transparent', outline: 'none',
-        ...(late && { borderColor: t.tokens.carriedBorder, bgcolor: t.tokens.carriedBg, my: 0.75 }),
+        // From an earlier day and still open: outlined in its tag's colour.
+        ...(late && { borderColor: carriedColor(t, tags[0], task.priority === 1).border, bgcolor: carriedColor(t, tags[0], task.priority === 1).bg, my: 0.75 }),
         ...(selected && {
-          bgcolor: late ? t.tokens.carriedBg : t.tokens.surfaceHigh,
-          borderColor: late ? 'error.main' : t.palette.primary.main,
+          bgcolor: late ? carriedColor(t, tags[0], task.priority === 1).bg : t.tokens.surfaceHigh,
+          borderColor: late ? carriedColor(t, tags[0], task.priority === 1).main : t.palette.primary.main,
         }),
         // A soft wash of the first tag's colour, fading in from the spine (open tasks only).
         ...(tags.length && pending && {
           backgroundImage: `linear-gradient(90deg, ${hexAlpha(tagColor(t, tags[0].color).main, t.palette.mode === 'dark' ? 0.09 : 0.07)}, transparent 42%)`,
+          // Paint once, under the border too: a repeating tile showed a sliver at the right edge.
+          backgroundRepeat: 'no-repeat', backgroundOrigin: 'border-box',
         }),
-        '&:hover': { bgcolor: late ? t.tokens.carriedBg : t.tokens.surfaceHigh },
+        '&:hover': { bgcolor: late ? carriedColor(t, tags[0], task.priority === 1).bg : t.tokens.surfaceHigh },
         '&:focus-visible': { borderColor: t.palette.primary.main },
         '@media (hover: hover)': {
           '& .task-actions': { opacity: selected ? 1 : 0 },
@@ -161,14 +182,9 @@ function TaskItem({ task, today, showOrigin, selected, onSelect, onEdit, onManag
         >
           {task.title}
         </Typography>
-        {(tags.length > 0 || carried) && (
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.5, mt: 0.6 }}>
-            {carried && <CarriedBadge task={task} today={today} muted={!pending} />}
-            {tags.map((tag) => (
-              <Box key={tag.id} component="span" sx={{ display: 'inline-flex', opacity: pending ? 1 : 0.6 }}>
-                <TagChip tag={tag} dense />
-              </Box>
-            ))}
+        {carried && (
+          <Box sx={{ display: 'flex', mt: 0.6 }}>
+            <CarriedBadge task={task} today={today} muted={!pending} tag={tags[0]} />
           </Box>
         )}
         {steps.length > 0 && (
@@ -207,7 +223,13 @@ function TaskItem({ task, today, showOrigin, selected, onSelect, onEdit, onManag
         )}
       </Box>
 
-      <Box className="task-actions" sx={{ display: 'flex', alignItems: 'center', transition: 'opacity 120ms', pt: 0.25 }}>
+      {tags.length > 0 && (
+        <Box sx={{ alignSelf: 'center', py: 1, pl: 1 }}>
+          <TagPlates tags={tags} muted={!pending} />
+        </Box>
+      )}
+      {/* Fixed width so tag plates line up whether one or two buttons show. */}
+      <Box className="task-actions" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', width: 80, flexShrink: 0, transition: 'opacity 120ms', pt: 0.25 }}>
         {pending && (
           <Tooltip title={label}>
             <IconButton

@@ -256,8 +256,10 @@ function mutate(id, nextLocal, request, errorLabel) {
 }
 
 /** Returns the new task and a promise resolving to true once the server saved it. */
-export function createTask({ title, notes = '', priority = 4, date, tagIds = [], subtasks = [] }) {
+export function createTask({ title, notes = '', priority = 4, date: wanted, tagIds = [], subtasks = [] }) {
   const now = Date.now();
+  // New tasks go on today or later (the server refuses earlier days).
+  const date = wanted < todayKey() ? todayKey() : wanted;
   const ids = cleanTagIds(tagIds);
   const status = statusAfterSteps('pending', subtasks);
   const task = {
@@ -266,7 +268,7 @@ export function createTask({ title, notes = '', priority = 4, date, tagIds = [],
     completedAt: status === 'done' ? now : null, tagIds: ids, subtasks, attachments: [], carriedFrom: null,
   };
   const saved = mutate(task.id, task, () => api('POST', '/api/tasks', {
-    id: task.id, title: task.title, notes: task.notes, priority, date, tagIds: ids,
+    id: task.id, title: task.title, notes: task.notes, priority, date, tagIds: ids, today: todayKey(),
     ...(subtasks.length ? { subtasks } : {}),
   }), "Couldn't add task");
   return { task, saved };

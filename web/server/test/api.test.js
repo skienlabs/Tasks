@@ -200,8 +200,9 @@ test('carry-over: only unfinished tasks, keeps the first missed day, ignores a w
   const { as } = await setup();
   const u = await as('alice');
   const mk = async (title, date, extra = {}) => (await u('POST', '/api/tasks', { title, date, ...extra })).json();
-  const a = await mk('Two days old', '2026-10-15');
-  const done = await mk('Done earlier', '2026-10-15', { status: 'done' });
+  // Past days only take tasks restored by Undo (they carry createdAt), so seed them that way.
+  const a = await mk('Two days old', '2026-10-15', { createdAt: 1 });
+  const done = await mk('Done earlier', '2026-10-15', { status: 'done', createdAt: 2 });
   const cancelled = await mk('Cancelled earlier', '2026-10-16', { status: 'cancelled' });
   const future = await mk('Next week', '2026-10-24');
 
@@ -229,6 +230,15 @@ test('carry-over: only unfinished tasks, keeps the first missed day, ignores a w
   assert.equal(r.json().carriedFrom, '2026-10-15');
   r = await u('PATCH', `/api/tasks/${a.id}`, { status: 'pending', date: '2026-10-20' });
   assert.equal(r.json().carriedFrom, null);
+
+  // No new tasks on past days (the device's today wins; Undo may restore to an old day)
+  r = await u('POST', '/api/tasks', { title: 'Late', date: '2026-10-16', today: '2026-10-17' });
+  assert.equal(r.statusCode, 400);
+  assert.match(r.json().error, /today or a later day/);
+  assert.equal((await u('POST', '/api/tasks', { title: 'Fine', date: '2026-10-17', today: '2026-10-17' })).statusCode, 201);
+  assert.equal((await u('POST', '/api/tasks', { title: 'Old app', date: '2026-10-15' })).statusCode, 400);
+  assert.equal((await u('POST', '/api/tasks', { title: 'Old app, west', date: '2026-10-16' })).statusCode, 201, 'still today in UTC-12');
+  assert.equal((await u('POST', '/api/tasks', { id: 'undo-old-day-1', title: 'Undo', date: '2026-10-10', createdAt: 5 })).statusCode, 201);
 
   // Undo of a move restores the mark (only if it is still earlier than the task's day)
   r = await u('PATCH', `/api/tasks/${a.id}`, { date: '2026-10-17', carriedFrom: '2026-10-15' });
@@ -344,7 +354,7 @@ test('tags: CRUD, ownership, task assignment, stats', async () => {
   assert.equal((await u1('PATCH', `/api/tags/${skien.id}`, { name: 'zupnex' })).statusCode, 409);
 
   // Stats
-  await u1('POST', '/api/tasks', { title: 'Old', date: '2026-10-10', tagIds: [skien.id] });
+  await u1('POST', '/api/tasks', { title: 'Old', date: '2026-10-10', tagIds: [skien.id], createdAt: 1 });
   await u1('POST', '/api/tasks', { title: 'Done', date: today, tagIds: [skien.id], status: 'done' });
   r = await u1('GET', `/api/stats?from=2026-10-01&to=2026-10-31&today=${today}`);
   assert.equal(r.statusCode, 200);
@@ -362,7 +372,7 @@ test('tags: CRUD, ownership, task assignment, stats', async () => {
   // Delete tag removes it from tasks
   assert.equal((await u1('DELETE', `/api/tags/${zup.id}`)).statusCode, 204);
   r = await u1('GET', '/api/tasks?date=2026-10-18&today=2026-10-18');
-  assert.deepEqual(r.json().tasks[0].tagIds, []);
+  assert.deepEqual(r.json().tasks.find((t) => t.title === 'Deploy app').tagIds, []);
 });
 
 test('sign-in providers and profile / onboarding', async () => {

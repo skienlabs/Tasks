@@ -24,7 +24,10 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
   const [title, setTitle] = useState(task?.title ?? '');
   const [notes, setNotes] = useState(task?.notes ?? '');
   const [priority, setPriority] = useState(task?.priority ?? 4);
-  const [date, setDate] = useState(task?.date ?? defaultDate);
+  // New tasks go on today or later; an existing task may keep the (past) day it's on.
+  const [date, setDate] = useState(task?.date ?? (defaultDate < today ? today : defaultDate));
+  const earliest = task && task.date < today ? task.date : today;
+  const dateOk = isValidKey(date) && (date >= today || (task && date === task.date));
   const [steps, setSteps] = useState(task?.subtasks ?? []);
   const [stepsChanged, setStepsChanged] = useState(false);
   // Images: saved ones (minus any removed here) plus new ones, uploaded on Save.
@@ -38,7 +41,7 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
     ...saved.map((a) => ({ key: a.id, attachment: a })),
     ...pending.map((p) => ({ key: p.id, pending: p })),
   ];
-  const valid = title.trim().length > 0 && isValidKey(date);
+  const valid = title.trim().length > 0 && dateOk;
 
   const addFiles = async (files) => {
     setImgError('');
@@ -221,10 +224,10 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
             value={date}
             onChange={(e) => setDate(e.target.value)}
             required
-            error={!isValidKey(date)}
-            helperText={isValidKey(date) ? undefined : 'Pick a date'}
+            error={!dateOk}
+            helperText={!isValidKey(date) ? 'Pick a date' : dateOk ? undefined : 'Pick today or a later day'}
             sx={{ minWidth: 200 }}
-            slotProps={{ inputLabel: { shrink: true }, htmlInput: { min: MIN_DATE, max: MAX_DATE } }}
+            slotProps={{ inputLabel: { shrink: true }, htmlInput: { min: earliest < MIN_DATE ? MIN_DATE : earliest, max: MAX_DATE } }}
           />
           <Box sx={{ display: 'flex', gap: 1, mt: 1.5, flexWrap: 'wrap' }}>
             {[

@@ -100,6 +100,8 @@ class Store(
     private val scope: CoroutineScope,
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val now: () -> Long = System::currentTimeMillis,
+    /** This device's today (tests pin it). */
+    private val todayFn: () -> String = Dates::today,
 ) {
     private val _state = MutableStateFlow(StoreState())
     val state: StateFlow<StoreState> = _state.asStateFlow()
@@ -381,12 +383,17 @@ class Store(
         val t = now()
         val steps = Steps.normalize(subtasks)
         val status = Steps.statusAfter(Status.PENDING, steps)
+        // New tasks go on today or later (the server refuses earlier days).
+        val today = todayFn()
+        val day = if (date < today) today else date
         val task = Task(
             id = UUID.randomUUID().toString(), title = normalizeTitle(title), notes = notes.trim(), priority = priority,
-            date = date, status = status, originalDate = date, postponed = 0, createdAt = t, updatedAt = t,
+            date = day, status = status, originalDate = day, postponed = 0, createdAt = t, updatedAt = t,
             completedAt = if (status == Status.DONE) t else null, tagIds = cleanTagIds(tagIds), subtasks = steps,
         )
-        return task to mutate(task.id, task, "Couldn't add task") { api.createTask(taskBody(task)) }
+        return task to mutate(task.id, task, "Couldn't add task") {
+            api.createTask(JsonObject(taskBody(task) + ("today" to JsonPrimitive(today))))
+        }
     }
 
     /** Applies a partial change; returns the task as it was before (null if unknown). */

@@ -109,7 +109,7 @@ export default function TaskDetails({ task, today, onClose, onEdit, onManageTags
       </Typography>
       {carried && (
         <Box sx={{ mt: 1 }}>
-          <CarriedBadge task={task} today={today} muted={!pending} />
+          <CarriedBadge task={task} today={today} muted={!pending} tag={tags[0]} />
         </Box>
       )}
 
@@ -147,7 +147,7 @@ export default function TaskDetails({ task, today, onClose, onEdit, onManageTags
           ) : <Typography variant="body2" color="text.secondary">None</Typography>}
         </Row>
         {carried && (
-          <Row icon={<HistoryRounded sx={{ fontSize: 18, color: pending ? 'error.main' : undefined }} />} label="First due">
+          <Row icon={<HistoryRounded sx={{ fontSize: 18 }} />} label="First due">
             {formatDate(task.carriedFrom, { weekday: 'short', day: 'numeric', month: 'short' })}
             <Typography component="span" variant="body2" color="text.secondary"> · moved to {shortLabel(task.date, today).toLowerCase()} by itself</Typography>
           </Row>

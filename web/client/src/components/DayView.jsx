@@ -297,7 +297,20 @@ export default function DayView({
         )}
       </Box>
 
-      <AddTask date={date} inputRef={addInputRef} defaultTagId={tagFilter} onManageTags={onManageTags} />
+      {isPast ? (
+        <Box
+          sx={(t) => ({
+            display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap', minHeight: 56, px: 2, py: 1,
+            borderRadius: '28px', border: `1px dashed ${t.tokens.outline}`, color: 'text.secondary',
+          })}
+        >
+          <EventOutlined sx={{ fontSize: 20 }} />
+          <Typography sx={{ flex: 1, minWidth: 180, fontSize: 14.5 }}>This day has passed. New tasks go on today or later.</Typography>
+          <Button size="small" onClick={() => onSelectDate(today)}>Go to today</Button>
+        </Box>
+      ) : (
+        <AddTask date={date} inputRef={addInputRef} defaultTagId={tagFilter} onManageTags={onManageTags} />
+      )}
 
       <Box role="list" sx={{ mt: 1.5 }}>
         {loading && pending.length === 0 && done.length === 0 && [0, 1, 2].map((i) => (
@@ -330,7 +343,7 @@ export default function DayView({
           <Typography sx={{ fontSize: 17, color: 'text.primary' }}>
             {tagFilter ? 'No tasks with this tag' : isPast ? 'Nothing was planned for this day' : 'No tasks yet'}
           </Typography>
-          <Typography variant="body2">Add a task above to plan your day.</Typography>
+          {!isPast && <Typography variant="body2">Add a task above to plan your day.</Typography>}
         </Box>
       )}
 

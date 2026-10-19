@@ -327,6 +327,7 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
                             onMoveAllToToday = { list -> store.moveTasks(list.map { it.id }, today) },
                             quickAddFocus = quickAddFocus,
                             bottomPadding = 0.dp,
+                            onGoToday = { go(today) },
                         )
                     }
                 }
@@ -341,7 +342,7 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
 
     when (val s = sheet) {
         is Sheet.TaskEdit -> TaskSheet(
-            store = store, task = s.task?.let { state.tasks[it.id] ?: it }, defaultDate = date, defaultTagId = filter,
+            store = store, task = s.task?.let { state.tasks[it.id] ?: it }, defaultDate = maxOf(date, today), defaultTagId = filter,
             today = today, tags = state.tags, onDismiss = { sheet = null }, onManageTags = { newTag = true },
         )
         is Sheet.TaskView -> {

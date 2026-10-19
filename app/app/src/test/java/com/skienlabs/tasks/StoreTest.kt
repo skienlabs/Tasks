@@ -143,7 +143,7 @@ class StoreTest {
     private fun TestScope.newStore(api: FakeApi): Pair<Store, MutableList<Toast>> {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val scope = CoroutineScope(dispatcher)
-        val store = Store(api, NoCache, scope, io = dispatcher)
+        val store = Store(api, NoCache, scope, io = dispatcher, todayFn = { today })
         val toasts = mutableListOf<Toast>()
         // Unconfined: messages are recorded the moment they are sent (advanceUntilIdle skips background work).
         backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) { store.toasts.collect { toasts += it } }
@@ -235,6 +235,18 @@ class StoreTest {
         assertEquals("Keep me", api.tasks[task.id]!!.title)
         assertEquals(created, api.tasks[task.id]!!.createdAt)
         assertEquals(1, store.state.value.summary[today]!!.pending)
+    }
+
+    @Test
+    fun newTasksNeverLandOnAPastDay() = runTest {
+        val api = FakeApi()
+        val (store, _) = newStore(api)
+        store.start("u", today)
+        val (t, saved) = store.createTask("Late idea", "2026-10-15")
+        advanceUntilIdle()
+        assertTrue(saved.await())
+        assertEquals(today, t.date)
+        assertEquals(today, api.tasks.getValue(t.id).date)
     }
 
     @Test

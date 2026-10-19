@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.EventBusy
 import androidx.compose.material.icons.outlined.WbSunny
 import androidx.compose.material.icons.outlined.TaskAlt
 import androidx.compose.material.icons.outlined.EventAvailable
@@ -94,6 +95,7 @@ fun DayPage(
     onMoveAllToToday: (List<Task>) -> Unit,
     quickAddFocus: FocusRequester,
     bottomPadding: androidx.compose.ui.unit.Dp,
+    onGoToday: () -> Unit = {},
 ) {
     val l = remember(state.tasks, date, today, filter) { lists(state, date, today, filter) }
     val tags = state.tags
@@ -112,7 +114,9 @@ fun DayPage(
         item(key = "header", contentType = "header") { DayHeader(date, today, l) }
         item(key = "add", contentType = "add") {
             Box(Modifier.padding(top = 4.dp, bottom = 8.dp)) {
-                QuickAdd(tags, filter, onAdd, actions.manageTags, quickAddFocus)
+                // Past days take no new tasks: they go on today or later.
+                if (date < today) PastDayNote(onGoToday)
+                else QuickAdd(tags, filter, onAdd, actions.manageTags, quickAddFocus)
             }
         }
 
@@ -224,5 +228,23 @@ private fun Skeleton(i: Int) {
             Box(Modifier.height(14.dp).fillMaxWidth(listOf(0.7f, 0.5f, 0.6f)[i % 3]).clip(RoundedCornerShape(7.dp)).background(x.surfaceHighest))
             Box(Modifier.padding(top = 8.dp).height(10.dp).fillMaxWidth(0.3f).clip(RoundedCornerShape(5.dp)).background(x.surfaceHigh))
         }
+    }
+}
+
+@Composable
+private fun PastDayNote(onGoToday: () -> Unit) {
+    val shape = RoundedCornerShape(28.dp)
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(shape)
+            .border(1.dp, LocalExtra.current.outline, shape).padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.EventBusy, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "This day has passed. New tasks go on today or later.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f).padding(start = 12.dp),
+        )
+        androidx.compose.material3.TextButton(onClick = onGoToday) { Text("Today") }
     }
 }

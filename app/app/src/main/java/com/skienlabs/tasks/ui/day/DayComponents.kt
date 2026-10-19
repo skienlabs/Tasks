@@ -373,11 +373,12 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
         // Moved here by itself from an earlier day and still open: red outline, like the web app.
         val late = task.isPending && (task.isCarried || showOrigin)
         val lateShape = RoundedCornerShape(16.dp)
+        val lateColors = carriedColors(task, rowTags.firstOrNull())
         Row(
             Modifier.fillMaxWidth()
                 .then(
                     if (late) Modifier.padding(horizontal = 12.dp, vertical = 3.dp).clip(lateShape)
-                        .border(1.dp, x.overdueBorder, lateShape).background(x.overdueBg)
+                        .border(1.dp, lateColors.border, lateShape).background(lateColors.bg)
                     else Modifier.background(containerColor),
                 )
                 .combinedClickable(onClick = { actions.view(task) }, onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menu = true })
@@ -414,7 +415,7 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
                 )
                 if (rowTags.isNotEmpty() || task.isCarried) {
                     FlowRow(Modifier.padding(top = 5.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (task.isCarried) CarriedBadge(task, today, muted = !task.isPending)
+                        if (task.isCarried) CarriedBadge(task, today, muted = !task.isPending, tag = rowTags.firstOrNull())
                         rowTags.forEach { TagChip(it, dense = true) }
                     }
                 }
@@ -532,18 +533,37 @@ fun SectionHeader(title: String, count: Int, open: Boolean, onToggle: () -> Unit
 
 /** Red pill on a task that moved here by itself from an earlier day. */
 @Composable
-fun CarriedBadge(task: Task, today: String, muted: Boolean = false) {
+fun CarriedBadge(task: Task, today: String, muted: Boolean = false, tag: Tag? = null) {
     val x = LocalExtra.current
     val from = task.carriedFrom ?: return
-    val color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else x.overdue
+    val c = carriedColors(task, tag)
+    val color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else c.main
     Row(
         Modifier.height(22.dp).clip(RoundedCornerShape(50))
-            .background(if (muted) x.surfaceHighest else x.overdueBg)
-            .border(1.dp, if (muted) Color.Transparent else x.overdueBorder, RoundedCornerShape(50))
+            .background(if (muted) x.surfaceHighest else c.main.copy(alpha = if (x.dark) 0.14f else 0.1f))
+            .border(1.dp, if (muted) Color.Transparent else c.border, RoundedCornerShape(50))
             .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Icons.Outlined.History, null, Modifier.size(13.dp), tint = color)
         Text(" " + Dates.carriedLabel(from, today), color = color, style = MaterialTheme.typography.labelMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, maxLines = 1)
     }
+}
+
+/** Outline colours for a task from an earlier day. */
+class CarriedColors(val main: Color, val border: Color, val bg: Color)
+
+/**
+ * Red when it's high priority (late and it matters); otherwise the colour of its (first) tag,
+ * or a neutral one without tags.
+ */
+@Composable
+fun carriedColors(task: Task, tag: Tag?): CarriedColors {
+    val x = LocalExtra.current
+    if (task.priority == 1) return CarriedColors(x.overdue, x.overdueBorder, x.overdueBg)
+    if (tag != null) {
+        val c = tagColor(tag.color)
+        return CarriedColors(c, c.copy(alpha = 0.6f), c.copy(alpha = if (x.dark) 0.08f else 0.06f))
+    }
+    return CarriedColors(MaterialTheme.colorScheme.onSurfaceVariant, x.outline, x.surfaceHigh)
 }
