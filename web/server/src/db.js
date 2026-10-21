@@ -177,8 +177,9 @@ export function toTag(row) {
 
 const TAG_COLUMNS = 'id, name, color, logo, position, created_at, updated_at';
 
+// Close to the apps' order (they also group by company and compare numbers by value).
 const ORDER = `ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'done' THEN 1 ELSE 2 END,
-  priority ASC, created_at ASC`;
+  priority ASC, title COLLATE NOCASE ASC, created_at ASC`;
 
 export function createRepo(db) {
   const stmts = {

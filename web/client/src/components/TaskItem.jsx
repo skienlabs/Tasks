@@ -14,7 +14,7 @@ import TaskMenu, { postponeLabel } from './TaskMenu.jsx';
 import { StepsInline, StepsProgress } from './Steps.jsx';
 import { ImageStrip, ImageViewer } from './Images.jsx';
 import { carriedLabel, isCarried, shortLabel } from '../lib/dates.js';
-import { completeTask, postponeTask, restoreTask, selectTag, useStoreVersion } from '../lib/store.js';
+import { completeTask, postponeTask, restoreTask, selectTaskTags, useStoreVersion } from '../lib/store.js';
 
 function Meta({ icon, children, color = 'text.secondary' }) {
   return (
@@ -93,7 +93,7 @@ function TaskItem({ task, today, showOrigin, selected, onSelect, onEdit, onManag
   const [viewer, setViewer] = useState(null);
   const steps = task.subtasks ?? [];
   const images = task.attachments ?? [];
-  const tags = (task.tagIds ?? []).map(selectTag).filter(Boolean);
+  const tags = selectTaskTags(task); // user's tag order: the first is the company
   const pending = task.status === 'pending';
   const done = task.status === 'done';
   const cancelled = task.status === 'cancelled';

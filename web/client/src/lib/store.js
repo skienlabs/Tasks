@@ -12,6 +12,7 @@
 import { useSyncExternalStore } from 'react';
 import { api, newId } from './api.js';
 import { addDays, shortLabel, todayKey } from './dates.js';
+import { tagsOf, taskComparator } from './order.js';
 import { clearImages, seedImage } from './images.js';
 import { progress, setAll, statusAfterSteps, toggle } from './subtasks.js';
 
@@ -68,22 +69,22 @@ export function closeToast() {
 
 // ---- Selectors ---------------------------------------------------------------
 
-const STATUS_ORDER = { pending: 0, done: 1, cancelled: 2 };
-
-function byPriority(a, b) {
-  return a.priority - b.priority || a.createdAt - b.createdAt;
-}
-
+/** Day lists use one order everywhere: see lib/order.js. */
 export function selectDay(date) {
   const list = [];
   for (const t of byId.values()) if (t.date === date) list.push(t);
-  return list.sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || byPriority(a, b));
+  return list.sort(taskComparator(selectTags()));
 }
 
 export function selectOverdue(today) {
   const list = [];
   for (const t of byId.values()) if (t.status === 'pending' && t.date < today) list.push(t);
-  return list.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : byPriority(a, b)));
+  return list.sort(taskComparator(selectTags()));
+}
+
+/** A task's tags in the user's own order (the first is its company). */
+export function selectTaskTags(task) {
+  return tagsOf(task, selectTags());
 }
 
 export function selectSummary(date) {

@@ -105,8 +105,7 @@ object WidgetRepo {
     fun summarize(today: String, tasks: List<Task>, tags: List<Tag>): WidgetData {
         val day = tasks.filter { it.date == today && !it.isCancelled }
         val overdue = tasks.filter { it.isPending && it.date < today }
-        val open = (day.filter { it.isPending } + overdue)
-            .sortedWith(compareBy<Task>({ it.priority }, { it.date }, { it.createdAt }))
+        val open = (day.filter { it.isPending } + overdue).sortedWith(com.skienlabs.tasks.data.TaskOrder.comparator(tags))
         return WidgetData(true, today, open, day.count { it.isDone }, day.size + overdue.size, tags.associateBy { it.id })
     }
 }
@@ -288,7 +287,7 @@ internal fun WidgetContent(context: Context, d: WidgetData, ringImg: ImageProvid
     private fun TaskRow(context: Context, d: WidgetData, t: Task, checks: Map<Int, ImageProvider>) {
         val steps = Steps.progress(t.subtasks)
         val hasOpenSteps = steps.total > 0 && !steps.complete
-        val tag = t.tagIds.firstNotNullOfOrNull { d.tags[it] }
+        val tag = d.tags.values.firstOrNull { it.id in t.tagIds } // the company: first in the user's tag order
         Row(GlanceModifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
             // Tick: completes right here (tasks with open steps open the app instead).
             Box(

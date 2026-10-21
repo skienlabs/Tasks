@@ -95,7 +95,7 @@ fun TaskDetails(task: Task, tags: List<Tag>, today: String, actions: RowActions,
     var tagMenu by remember { mutableStateOf(false) }
     var viewer by remember { mutableStateOf<Int?>(null) }
     viewer?.let { start -> ImageViewer(task.attachments, start) { viewer = null } }
-    val taskTags = remember(task.tagIds, tags) { task.tagIds.mapNotNull { id -> tags.firstOrNull { it.id == id } } }
+    val taskTags = remember(task.tagIds, tags) { tags.filter { it.id in task.tagIds } }
     val postponeLabel = Dates.shortLabel(Dates.postponeTarget(task.date, today), today).let { if (it == "Tomorrow") "Postpone to tomorrow" else "Postpone to $it" }
     val progress = Steps.progress(task.subtasks)
     val (statusLabel, statusIcon, statusColor) = when {

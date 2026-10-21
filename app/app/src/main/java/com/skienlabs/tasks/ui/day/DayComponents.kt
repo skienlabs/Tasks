@@ -326,7 +326,8 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
     var stepsOpen by rememberSaveable(task.id) { mutableStateOf(false) }
     var viewer by remember { mutableStateOf<Int?>(null) }
     viewer?.let { start -> ImageViewer(task.attachments, start) { viewer = null } }
-    val rowTags = remember(task.tagIds, tags) { task.tagIds.mapNotNull { id -> tags.firstOrNull { it.id == id } } }
+    // In the user's own tag order, so the first one is the task's company (see TaskOrder).
+    val rowTags = remember(task.tagIds, tags) { tags.filter { it.id in task.tagIds } }
     val target = Dates.postponeTarget(task.date, today)
     val postponeLabel = Dates.shortLabel(target, today).let { if (it == "Tomorrow") "Postpone to tomorrow" else "Postpone to $it" }
 

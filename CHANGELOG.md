@@ -4,6 +4,14 @@ One version number for the web app and the Android app. Bug fixes bump the last 
 
 Where it lives: `web/client/package.json` (`version`) and `app/app/build.gradle.kts` (`versionName`, plus `versionCode` +1 for every Android release).
 
+## 1.6.0 · 21 Oct 2026
+
+- **End-of-day notification redesigned** (Android): a progress ring (done of total), a colour bar of done and open tasks by priority with a legend, then the open tasks with a priority dot and how long each has waited ("since Mon"), and "+ 13 more". Taller when expanded, one clean line each.
+- **One properly sorted list** everywhere (web, Android, widgets, notification): open first, then **priority** (High → None), then **company** (tasks of the same tag together, tags A–Z, untagged last), then **title A–Z** with numbers read as numbers ("Server 9" before "Server 10"). A task's company is its first tag in your own tag order.
+- **New theme: Light Gray**: medium light grey after VS Code's light theme (grey chrome, lighter raised panels, VS Code blue).
+- **Abyss improved**: deeper layered navy with more contrast, a soft background glow with a frosted top bar (web), and Abyss's own blue → purple → gold accent on "Today".
+- Web: the "Today" heading now shows its whole colour gradient. Theme picker shows six themes in a 3×2 grid (web and Android).
+
 ## 1.5.0 · 19 Oct 2026
 
 - **Tasks from earlier days are outlined in their tag's colour**, not red: the Skien task in blue, the Softop task in orange. **High-priority** ones stay red, and tasks without a tag get a neutral outline. The "From yesterday" pill uses the same colour. Today's own tasks have no outline.

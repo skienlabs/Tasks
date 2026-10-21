@@ -300,6 +300,7 @@ private fun timeLabel(context: android.content.Context, minutes: Int): String {
 private fun themeLabel(t: ThemePref) = when (t) {
     ThemePref.SYSTEM -> "System"
     ThemePref.LIGHT -> AppTheme.LIGHT.label
+    ThemePref.GRAY -> AppTheme.GRAY.label
     ThemePref.DIM -> AppTheme.DIM.label
     ThemePref.DARK -> AppTheme.MIDNIGHT.label
     ThemePref.ABYSS -> AppTheme.ABYSS.label
@@ -311,12 +312,16 @@ fun ThemeSwatches(selected: ThemePref, onSelect: (ThemePref) -> Unit) {
     val options = listOf(
         ThemePref.SYSTEM to null,
         ThemePref.LIGHT to AppTheme.LIGHT,
+        ThemePref.GRAY to AppTheme.GRAY,
         ThemePref.DIM to AppTheme.DIM,
         ThemePref.DARK to AppTheme.MIDNIGHT,
         ThemePref.ABYSS to AppTheme.ABYSS,
     )
-    Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        options.forEach { (pref, look) ->
+    // Three per row: six themes don't fit one row on a phone.
+    Column(Modifier.fillMaxWidth().selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+      options.chunked(3).forEach { rowItems ->
+      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        rowItems.forEach { (pref, look) ->
             val on = pref == selected
             Column(
                 Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
@@ -324,7 +329,7 @@ fun ThemeSwatches(selected: ThemePref, onSelect: (ThemePref) -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Box(
-                    Modifier.fillMaxWidth().aspectRatio(0.8f)
+                    Modifier.fillMaxWidth().aspectRatio(1.35f)
                         .border(if (on) 2.dp else 1.dp, if (on) MaterialTheme.colorScheme.primary else LocalExtra.current.outline, RoundedCornerShape(12.dp))
                         .padding(if (on) 3.dp else 1.dp).clip(RoundedCornerShape(10.dp)),
                 ) {
@@ -356,15 +361,17 @@ fun ThemeSwatches(selected: ThemePref, onSelect: (ThemePref) -> Unit) {
                     style = MaterialTheme.typography.labelSmall,
                     color = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
-                    textAlign = TextAlign.Center, maxLines = 2, minLines = 2,
-                    modifier = Modifier.padding(top = 6.dp),
+                    textAlign = TextAlign.Center, maxLines = 1,
+                    modifier = Modifier.padding(top = 6.dp, bottom = 4.dp),
                 )
             }
         }
+      }
+      }
     }
 }
 
-/** "Theme · Abyss ⌄": folded away until tapped, then the five theme cards. */
+/** "Theme · Abyss ⌄": folded away until tapped, then the theme cards. */
 @Composable
 fun ThemeDropdown(selected: ThemePref, startOpen: Boolean = false, onSelect: (ThemePref) -> Unit) {
     var open by rememberSaveable { mutableStateOf(startOpen) }

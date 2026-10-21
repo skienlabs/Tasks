@@ -33,6 +33,26 @@ const TOKENS = {
     carriedBg: '#fdf3f2',
     carriedBorder: '#f1b4ae',
   },
+  // Medium light grey, after VS Code's light theme: grey chrome, lighter raised panels, its blue.
+  gray: {
+    primary: '#005fb8',
+    onPrimary: '#ffffff',
+    primaryContainer: '#d2e3f6',
+    onPrimaryContainer: '#002f5c',
+    bg: '#e8e8ea',
+    surface: '#efeff1',
+    surfaceHigh: '#f7f7f8',
+    surfaceHighest: '#ffffff',
+    text: '#252526',
+    textMuted: '#5b5b60',
+    outline: '#bcbcc2',
+    divider: '#d5d5da',
+    error: '#c4314b',
+    success: '#2e7d32',
+    warning: '#9a6700',
+    carriedBg: '#f5e6e6',
+    carriedBorder: '#e2a6a6',
+  },
   // Soft dark grey, like Google's own dark mode.
   dim: {
     ...DARK_ACCENTS,
@@ -61,25 +81,28 @@ const TOKENS = {
     carriedBg: '#140807',
     carriedBorder: '#6e2e2a',
   },
-  // Deep navy, after VS Code's Abyss.
+  // Deep navy, after VS Code's Abyss: layered blues, a soft glow, and its blue/purple/gold accents.
   abyss: {
-    primary: '#82aaff',
+    primary: '#7fa6ff',
     onPrimary: '#00204f',
-    primaryContainer: '#16336b',
-    onPrimaryContainer: '#d8e2ff',
+    primaryContainer: '#1b3f7e',
+    onPrimaryContainer: '#dce6ff',
     bg: '#000c18',
-    surface: '#000c18',
-    surfaceHigh: '#060621',
-    surfaceHighest: '#0e1b3a',
-    text: '#d4dcf2',
-    textMuted: '#8695bb',
-    outline: '#22325a',
-    divider: '#0f1d36',
+    surface: '#020f1f',
+    surfaceHigh: '#0a1a33',
+    surfaceHighest: '#132648',
+    text: '#e0e7fa',
+    textMuted: '#93a3c9',
+    outline: '#2a3f6b',
+    divider: '#11203d',
     error: '#ff9e9e',
     success: '#7fdba0',
-    warning: '#ffd580',
-    carriedBg: '#1d0b1c',
-    carriedBorder: '#7a3049',
+    warning: '#f0c674',
+    carriedBg: '#230c1f',
+    carriedBorder: '#8a3556',
+    gradient: ['#6688cc', '#9966b8', '#ddbb88'],
+    glow: 'radial-gradient(1100px 600px at 88% -10%, rgba(102,136,204,.24), transparent 62%), '
+      + 'radial-gradient(900px 560px at -10% 110%, rgba(153,102,184,.18), transparent 60%)',
   },
 };
 
@@ -87,6 +110,7 @@ const TOKENS = {
 export const THEMES = [
   { v: null, label: 'System', hint: 'Light or Midnight Black, following your device' },
   { v: 'light', label: 'Light', hint: 'Bright and clean' },
+  { v: 'gray', label: 'Light Gray', hint: 'Medium light grey, like VS Code\'s light theme' },
   { v: 'dim', label: 'Dark', hint: 'Soft dark grey' },
   { v: 'dark', label: 'Midnight Black', hint: 'True black, easy on OLED screens' },
   { v: 'abyss', label: 'Abyss', hint: 'Deep navy, like the VS Code theme' },
@@ -109,7 +133,7 @@ export function priorityColor(theme, value) {
 
 export function makeTheme(name) {
   const t = themeTokens(name);
-  const mode = name === 'light' || !TOKENS[name] ? 'light' : 'dark';
+  const mode = name === 'light' || name === 'gray' || !TOKENS[name] ? 'light' : 'dark';
   return createTheme({
     palette: {
       mode,
@@ -134,7 +158,10 @@ export function makeTheme(name) {
     components: {
       MuiCssBaseline: {
         styleOverrides: {
-          body: { backgroundColor: t.bg, WebkitTapHighlightColor: 'transparent' },
+          body: {
+            backgroundColor: t.bg, WebkitTapHighlightColor: 'transparent',
+            ...(t.glow && { backgroundImage: t.glow, backgroundAttachment: 'fixed', backgroundRepeat: 'no-repeat' }),
+          },
           '*::-webkit-scrollbar': { width: 10, height: 10 },
           '*::-webkit-scrollbar-thumb': {
             backgroundColor: t.outline, borderRadius: 8, border: `3px solid ${t.bg}`,
@@ -217,4 +244,10 @@ export function statusColors(theme) {
     postponed: dark ? '#78d9ec' : '#12838f',
     rate: dark ? '#d7aefb' : '#9334e6',
   };
+}
+
+/** The colours of the "Today" heading: the theme's own, or the Google blue → purple → pink. */
+export function titleGradient(theme) {
+  const g = theme.tokens.gradient ?? (theme.palette.mode === 'dark' ? ['#8ab4f8', '#d7aefb', '#ff8bcb'] : ['#1a73e8', '#9334e6', '#d01884']);
+  return `linear-gradient(90deg,${g[0]},${g[1]} 60%,${g[2]})`;
 }

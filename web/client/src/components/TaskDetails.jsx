@@ -23,7 +23,7 @@ import { CarriedBadge } from './TaskItem.jsx';
 import { StepsInline } from './Steps.jsx';
 import { ImageViewer, Thumb } from './Images.jsx';
 import { formatDate, isCarried, relativeLabel, shortLabel } from '../lib/dates.js';
-import { completeTask, postponeTask, restoreTask, selectTag } from '../lib/store.js';
+import { completeTask, postponeTask, restoreTask, selectTaskTags } from '../lib/store.js';
 import { progress } from '../lib/subtasks.js';
 
 const STATUS = {
@@ -60,7 +60,7 @@ export default function TaskDetails({ task, today, onClose, onEdit, onManageTags
   const pending = task.status === 'pending';
   const done = task.status === 'done';
   const status = STATUS[task.status] ?? STATUS.pending;
-  const tags = (task.tagIds ?? []).map(selectTag).filter(Boolean);
+  const tags = selectTaskTags(task); // user's tag order: the first is the company
   const steps = task.subtasks ?? [];
   const p = progress(steps);
   const images = task.attachments ?? [];

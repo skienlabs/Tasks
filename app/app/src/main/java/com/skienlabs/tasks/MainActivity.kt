@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
             val theme = when (pref) {
                 ThemePref.SYSTEM -> if (systemDark) AppTheme.MIDNIGHT else AppTheme.LIGHT
                 ThemePref.LIGHT -> AppTheme.LIGHT
+                ThemePref.GRAY -> AppTheme.GRAY
                 ThemePref.DIM -> AppTheme.DIM
                 ThemePref.DARK -> AppTheme.MIDNIGHT
                 ThemePref.ABYSS -> AppTheme.ABYSS

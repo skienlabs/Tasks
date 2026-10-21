@@ -33,7 +33,7 @@ function Swatch({ v }) {
 }
 
 /** Grid of theme cards. `value` is the saved choice (null = follow the system). */
-export default function ThemePicker({ value, onChange, columns = 5 }) {
+export default function ThemePicker({ value, onChange, columns = 3 }) {
   return (
     <Box role="radiogroup" aria-label="Theme" sx={{ display: 'grid', gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: 1 }}>
       {THEMES.map((o) => {

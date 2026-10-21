@@ -39,17 +39,13 @@ data class StoreState(
     private val tagById by lazy { tags.associateBy { it.id } }
     fun tag(id: String): Tag? = tagById[id]
 
-    fun day(date: String): List<Task> = tasks.values.filter { it.date == date }.sortedWith(DAY_ORDER)
-    fun overdue(today: String): List<Task> =
-        tasks.values.filter { it.isPending && it.date < today }.sortedWith(compareBy<Task> { it.date }.then(PRIORITY_ORDER))
-    fun hasDay(date: String) = date in loadedDays || date in cachedDays
+    /** See [TaskOrder]: open first, then priority, company (tag) A–Z, title A–Z. */
+    private val order by lazy { TaskOrder.comparator(tags) }
 
-    companion object {
-        private val PRIORITY_ORDER = compareBy<Task>({ it.priority }, { it.createdAt })
-        private val DAY_ORDER = compareBy<Task> {
-            when (it.status) { Status.PENDING -> 0; Status.DONE -> 1; else -> 2 }
-        }.then(PRIORITY_ORDER)
-    }
+    fun day(date: String): List<Task> = tasks.values.filter { it.date == date }.sortedWith(order)
+    fun overdue(today: String): List<Task> =
+        tasks.values.filter { it.isPending && it.date < today }.sortedWith(order)
+    fun hasDay(date: String) = date in loadedDays || date in cachedDays
 }
 
 data class Toast(val id: Long, val message: String, val actionLabel: String? = null, val action: (() -> Unit)? = null)

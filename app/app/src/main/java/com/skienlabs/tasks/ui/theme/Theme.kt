@@ -83,14 +83,27 @@ private val DimExtra = DarkExtra.copy(
     overdueBorder = Color(0xFF8C3B35),
 )
 
-// Deep navy, after VS Code's Abyss theme.
+// Deep navy, after VS Code's Abyss theme: layered blues and its blue / purple / gold accents.
 private val AbyssExtra = DarkExtra.copy(
-    surfaceHigh = Color(0xFF060621),
-    surfaceHighest = Color(0xFF0E1B3A),
-    outline = Color(0xFF22325A),
-    pending = Color(0xFF82AAFF),
-    overdueBg = Color(0xFF1D0B1C),
-    overdueBorder = Color(0xFF7A3049),
+    surfaceHigh = Color(0xFF0A1A33),
+    surfaceHighest = Color(0xFF132648),
+    outline = Color(0xFF2A3F6B),
+    pending = Color(0xFF7FA6FF),
+    rate = Color(0xFFDDBB88),
+    gradient = listOf(Color(0xFF6688CC), Color(0xFF9966B8), Color(0xFFDDBB88)),
+    overdueBg = Color(0xFF230C1F),
+    overdueBorder = Color(0xFF8A3556),
+)
+
+// Medium light grey, after VS Code's light theme: grey chrome, lighter raised panels, its blue.
+private val GrayExtra = LightExtra.copy(
+    surfaceHigh = Color(0xFFF7F7F8),
+    surfaceHighest = Color(0xFFFFFFFF),
+    outline = Color(0xFFBCBCC2),
+    pending = Color(0xFF005FB8),
+    gradient = listOf(Color(0xFF005FB8), Color(0xFF6B4FBB), Color(0xFFB3266E)),
+    overdueBg = Color(0xFFF5E6E6),
+    overdueBorder = Color(0xFFE2A6A6),
 )
 
 val LocalExtra = staticCompositionLocalOf { LightExtra }
@@ -163,34 +176,60 @@ private val DimColors = DarkColors.copy(
 )
 
 private val AbyssColors = DarkColors.copy(
-    primary = Color(0xFF82AAFF),
+    primary = Color(0xFF7FA6FF),
     onPrimary = Color(0xFF00204F),
-    primaryContainer = Color(0xFF16336B),
-    onPrimaryContainer = Color(0xFFD8E2FF),
-    secondaryContainer = Color(0xFF16336B),
-    onSecondaryContainer = Color(0xFFD8E2FF),
+    primaryContainer = Color(0xFF1B3F7E),
+    onPrimaryContainer = Color(0xFFDCE6FF),
+    secondaryContainer = Color(0xFF1B3F7E),
+    onSecondaryContainer = Color(0xFFDCE6FF),
     background = Color(0xFF000C18),
-    onBackground = Color(0xFFD4DCF2),
+    onBackground = Color(0xFFE0E7FA),
     surface = Color(0xFF000C18),
-    onSurface = Color(0xFFD4DCF2),
-    surfaceVariant = Color(0xFF0E1B3A),
-    onSurfaceVariant = Color(0xFF8695BB),
+    onSurface = Color(0xFFE0E7FA),
+    surfaceVariant = Color(0xFF132648),
+    onSurfaceVariant = Color(0xFF93A3C9),
     surfaceContainerLowest = Color(0xFF000812),
-    surfaceContainerLow = Color(0xFF030F22),
-    surfaceContainer = Color(0xFF060621),
-    surfaceContainerHigh = Color(0xFF0A1630),
-    surfaceContainerHighest = Color(0xFF0E1B3A),
-    outline = Color(0xFF22325A),
-    outlineVariant = Color(0xFF0F1D36),
+    surfaceContainerLow = Color(0xFF020F1F),
+    surfaceContainer = Color(0xFF0A1A33),
+    surfaceContainerHigh = Color(0xFF0F2040),
+    surfaceContainerHighest = Color(0xFF132648),
+    outline = Color(0xFF2A3F6B),
+    outlineVariant = Color(0xFF11203D),
     error = Color(0xFFFF9E9E),
-    inverseSurface = Color(0xFFD4DCF2),
+    tertiary = Color(0xFFDDBB88),
+    inverseSurface = Color(0xFFE0E7FA),
     inverseOnSurface = Color(0xFF000C18),
     inversePrimary = Color(0xFF2B5BB8),
+)
+
+private val GrayColors = LightColors.copy(
+    primary = Color(0xFF005FB8),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFD2E3F6),
+    onPrimaryContainer = Color(0xFF002F5C),
+    secondaryContainer = Color(0xFFD2E3F6),
+    onSecondaryContainer = Color(0xFF002F5C),
+    background = Color(0xFFE8E8EA),
+    onBackground = Color(0xFF252526),
+    surface = Color(0xFFE8E8EA),
+    onSurface = Color(0xFF252526),
+    surfaceVariant = Color(0xFFF7F7F8),
+    onSurfaceVariant = Color(0xFF5B5B60),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFF3F3F4),
+    surfaceContainer = Color(0xFFF7F7F8),
+    surfaceContainerHigh = Color(0xFFFBFBFC),
+    surfaceContainerHighest = Color(0xFFFFFFFF),
+    outline = Color(0xFFBCBCC2),
+    outlineVariant = Color(0xFFD5D5DA),
+    error = Color(0xFFC4314B),
+    inversePrimary = Color(0xFF9CC3F0),
 )
 
 /** The looks people can pick (Account → Theme). Same set as the web app. */
 enum class AppTheme(val dark: Boolean, val label: String, val background: Color, val card: Color, val accent: Color) {
     LIGHT(false, "Light", Color.White, Color(0xFFF0F4F9), Color(0xFF0B57D0)),
+    GRAY(false, "Light Gray", Color(0xFFE8E8EA), Color(0xFFFFFFFF), Color(0xFF005FB8)),
     DIM(true, "Dark", Color(0xFF131314), Color(0xFF1E1F20), Color(0xFFA8C7FA)),
     MIDNIGHT(true, "Midnight Black", Color.Black, Color(0xFF0F1012), Color(0xFFA8C7FA)),
     ABYSS(true, "Abyss", Color(0xFF000C18), Color(0xFF060621), Color(0xFF82AAFF)),
@@ -222,12 +261,14 @@ fun TasksTheme(dark: Boolean, content: @Composable () -> Unit) =
 fun TasksTheme(theme: AppTheme, content: @Composable () -> Unit) {
     val extra = when (theme) {
         AppTheme.LIGHT -> LightExtra
+        AppTheme.GRAY -> GrayExtra
         AppTheme.DIM -> DimExtra
         AppTheme.MIDNIGHT -> DarkExtra
         AppTheme.ABYSS -> AbyssExtra
     }
     val colors = when (theme) {
         AppTheme.LIGHT -> LightColors
+        AppTheme.GRAY -> GrayColors
         AppTheme.DIM -> DimColors
         AppTheme.MIDNIGHT -> DarkColors
         AppTheme.ABYSS -> AbyssColors

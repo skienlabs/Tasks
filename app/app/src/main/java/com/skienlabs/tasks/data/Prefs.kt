@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore by preferencesDataStore(name = "prefs")
 
 /** Saved theme choice. DARK is Midnight Black (true black); the name is kept so saved choices still work. */
-enum class ThemePref { SYSTEM, LIGHT, DIM, DARK, ABYSS }
+enum class ThemePref { SYSTEM, LIGHT, GRAY, DIM, DARK, ABYSS }
 
 /** Small per-device settings. */
 class Prefs(private val context: Context) {

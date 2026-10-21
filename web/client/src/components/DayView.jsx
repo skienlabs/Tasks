@@ -12,7 +12,7 @@ import TagChip from './TagChip.jsx';
 import { StackBar } from './SummaryView.jsx';
 import { addDays, formatDate, fromKey, isCarried, relativeLabel, startOfWeek, toKey, weekdayNames } from '../lib/dates.js';
 import { getTask, selectDay, selectOverdue, selectSummary, selectTags, useStoreVersion } from '../lib/store.js';
-import { hexAlpha, statusColors } from '../theme.js';
+import { hexAlpha, statusColors, titleGradient } from '../theme.js';
 
 const NAMES = weekdayNames();
 
@@ -251,9 +251,9 @@ export default function DayView({
             sx={(t) => ({
               fontSize: { xs: 28, sm: 34 }, fontWeight: 400, lineHeight: 1.15,
               ...(isToday && {
-                background: t.palette.mode === 'dark'
-                  ? 'linear-gradient(90deg,#8ab4f8,#d7aefb 60%,#ff8bcb)'
-                  : 'linear-gradient(90deg,#1a73e8,#9334e6 60%,#d01884)',
+                // Sized to the word, so the whole gradient shows (not just its first colour).
+                display: 'inline-block', pb: '0.06em',
+                background: titleGradient(t),
                 WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent',
               }),
             })}

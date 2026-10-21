@@ -37,8 +37,11 @@ class DailySummaryTest {
             t("b", "Send invoice", p = 1), // duplicates (today + overdue lists) count once
         ))!!
         assertEquals("3 tasks still open", c.title)
-        assertEquals("You completed 1 of 3 today. 1 from earlier days. High priority: Old report, Send invoice", c.text)
-        assertEquals(listOf("High · Old report (Thu, 15 Oct)", "High · Send invoice", "Low · Call bank"), c.lines)
+        assertEquals("1 of 4 done · 1 from earlier days", c.text)
+        assertEquals(listOf("High · Old report (since Thu)", "High · Send invoice", "Low · Call bank"), c.lines)
+        assertEquals(listOf(2, 0, 1, 0), c.open)
+        assertEquals(1, c.done)
+        assertEquals(4, c.total)
     }
 
     @Test
@@ -49,8 +52,9 @@ class DailySummaryTest {
             t("c", "Call bank", p = 3),
         ))!!
         assertEquals("2 tasks still open", c.title)
-        assertEquals("You completed 1 of 3 today. 1 from earlier days. High priority: Old report", c.text)
-        assertEquals(listOf("High · Old report (from yesterday)", "Low · Call bank"), c.lines)
+        assertEquals("1 of 3 done · 1 from earlier days", c.text)
+        assertEquals(listOf("High · Old report (since yesterday)", "Low · Call bank"), c.lines)
+        assertEquals("since yesterday", c.rows.first().note)
     }
 
     @Test
@@ -58,7 +62,31 @@ class DailySummaryTest {
         val c = DailySummary.summarize(today, (1..9).map { t("t$it", "Task $it") })!!
         assertEquals(7, c.lines.size)
         assertEquals("and 3 more", c.lines.last())
-        assertTrue(c.text.startsWith("You completed 0 of 9"))
+        assertTrue(c.text.startsWith("0 of 9 done"))
+        assertEquals(DailySummary.ROWS, c.rows.size)
+        assertEquals(4, c.more)
+        assertEquals(listOf("Task 1", "Task 2", "Task 3", "Task 4", "Task 5"), c.rows.map { it.title })
+    }
+
+    @Test
+    fun oneListSortedByPriorityThenCompanyThenTitle() {
+        val tags = listOf(com.skienlabs.tasks.data.Tag("s", "Softop", "orange"), com.skienlabs.tasks.data.Tag("k", "Skien", "blue"))
+        fun tt(id: String, title: String, p: Int, tag: String? = null) = t(id, title, p).copy(tagIds = listOfNotNull(tag))
+        val c = DailySummary.summarize(today, listOf(
+            tt("1", "Server 10 cleanup", 2, "s"), tt("2", "Server 9 cleanup", 2, "s"),
+            tt("3", "zebra", 2, "k"), tt("4", "Alpha", 2), tt("5", "Pay rent", 1), tt("6", "apple", 2, "k"),
+        ), tags)!!
+        // High first; then Medium by company (Skien, Softop, untagged last), titles A–Z, numbers by value.
+        assertEquals(listOf("Pay rent", "apple", "zebra", "Server 9 cleanup", "Server 10 cleanup"), c.rows.map { it.title })
+        assertEquals(1, c.more)
+        assertEquals("Skien", c.rows[1].note)
+    }
+
+    @Test
+    fun sinceLabels() {
+        assertEquals("since yesterday", DailySummary.since("2026-10-16", today))
+        assertEquals("since Thu", DailySummary.since("2026-10-15", today))
+        assertEquals("since 1 Oct", DailySummary.since("2026-10-01", today))
     }
 
     @Test

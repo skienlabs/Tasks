@@ -38,7 +38,7 @@ import { api } from '../lib/api.js';
 import { signOut } from '../lib/auth.js';
 import { isStandalone, useInstallPrompt } from '../lib/install.js';
 import { readPref, writePref } from '../lib/prefs.js';
-import { THEMES, tagColor } from '../theme.js';
+import { THEMES, hexAlpha, tagColor } from '../theme.js';
 import { APP_VERSION } from '../lib/version.js';
 
 const DRAWER = 280;
@@ -449,7 +449,11 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
         position="fixed"
         elevation={0}
         color="inherit"
-        sx={(t) => ({ bgcolor: 'background.default', borderBottom: `1px solid ${t.palette.divider}` })}
+        sx={(t) => ({
+          bgcolor: 'background.default', borderBottom: `1px solid ${t.palette.divider}`,
+          // Themes with a background glow get a frosted bar, so the glow shows through softly.
+          ...(t.tokens.glow && { bgcolor: hexAlpha(t.tokens.bg, 0.78), backdropFilter: 'saturate(140%) blur(14px)' }),
+        })}
       >
         <Toolbar sx={{ minHeight: `${APPBAR}px !important`, gap: { xs: 0.5, sm: 1 }, px: { xs: 1, sm: 2 } }}>
           {!desktop && (

@@ -12,7 +12,8 @@ A fast, lightweight daily task planner with Google sign-in. One Docker container
 - **Summary**: per-day counts (tasks / done / left) on every day, a side panel with week and month progress on large screens, and a monthly summary page with a daily chart, per-company and per-priority breakdowns, and a day-by-day list.
 - **Installable app** (PWA): in Chrome or Edge use *Install app* (sidebar, account menu or the address bar icon), then pin it to the Windows taskbar. Works on Android too.
 - **Built for PC and phone**: sidebar + side panel on desktop, bottom navigation and a floating add button on mobile.
-- **Five themes**: System, Light, Dark (soft grey), Midnight Black (true black) and Abyss (deep navy, like the VS Code theme). Google Sans, Material Design.
+- **Six themes**: System, Light, Light Gray (VS Code-style medium light grey), Dark (soft grey), Midnight Black (true black) and Abyss (deep navy with a soft glow, like the VS Code theme). Google Sans, Material Design.
+- **One sorted list**: priority first, then company (tag) A–Z, then title A–Z (numbers by value).
 - Keyboard: `←` `→` change day, `T` today, `N` new task, `S` summary.
 - Every action updates the screen instantly and syncs in the background.
 

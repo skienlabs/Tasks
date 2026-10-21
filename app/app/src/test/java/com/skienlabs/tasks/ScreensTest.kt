@@ -155,6 +155,7 @@ class ScreensTest {
     @Test fun today_light() = shot("today_light", false) { Home(state, today) }
     @Test fun today_dim() = shot("today_dim", com.skienlabs.tasks.ui.theme.AppTheme.DIM) { Home(state, today) }
     @Test fun today_abyss() = shot("today_abyss", com.skienlabs.tasks.ui.theme.AppTheme.ABYSS) { Home(state, today) }
+    @Test fun today_gray() = shot("today_gray", com.skienlabs.tasks.ui.theme.AppTheme.GRAY) { Home(state, today) }
     @Test fun theme_swatches() = shot("theme_swatches", com.skienlabs.tasks.ui.theme.AppTheme.ABYSS) {
         Column(Modifier.padding(20.dp)) {
             com.skienlabs.tasks.ui.account.ThemeSwatches(com.skienlabs.tasks.data.ThemePref.ABYSS) {}
