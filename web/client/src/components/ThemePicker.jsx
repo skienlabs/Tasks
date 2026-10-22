@@ -6,12 +6,27 @@ import { THEMES, themeTokens } from '../theme.js';
 function Preview({ name }) {
   const t = themeTokens(name);
   return (
-    <Box sx={{ position: 'absolute', inset: 0, bgcolor: t.bg, p: '7px', display: 'grid', alignContent: 'start', gap: '5px' }}>
+    <Box
+      sx={{
+        position: 'absolute', inset: 0, bgcolor: t.bg, p: '7px', display: 'grid', alignContent: 'start', gap: '5px',
+        // Glass: the aurora behind, drifting slowly even in the little preview.
+        ...(t.glass && {
+          backgroundImage: `radial-gradient(60% 70% at 15% 20%, ${t.glass.blobs[0]}, transparent 70%), radial-gradient(60% 70% at 90% 35%, ${t.glass.blobs[1]}, transparent 70%), radial-gradient(60% 70% at 45% 100%, ${t.glass.blobs[2]}, transparent 70%)`,
+          backgroundSize: '160% 160%', animation: 'previewDrift 9s ease-in-out infinite alternate',
+          '@keyframes previewDrift': { from: { backgroundPosition: '0% 0%' }, to: { backgroundPosition: '100% 100%' } },
+        }),
+      }}
+    >
       <Box sx={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
         <Box sx={{ width: 9, height: 9, borderRadius: '50%', bgcolor: t.primary }} />
         <Box sx={{ height: 4, width: '45%', borderRadius: 2, bgcolor: t.textMuted, opacity: 0.6 }} />
       </Box>
-      <Box sx={{ bgcolor: t.surfaceHigh, border: `1px solid ${t.divider}`, borderRadius: '6px', p: '5px', display: 'grid', gap: '4px' }}>
+      <Box
+        sx={{
+          bgcolor: t.surfaceHigh, border: `1px solid ${t.divider}`, borderRadius: '6px', p: '5px', display: 'grid', gap: '4px',
+          ...(t.glass && { bgcolor: t.glass.panel, border: `1px solid ${t.glass.edge}`, backdropFilter: 'blur(6px) saturate(180%)', boxShadow: `inset 0 1px 0 ${t.glass.shine}` }),
+        }}
+      >
         <Box sx={{ height: 4, width: '80%', borderRadius: 2, bgcolor: t.text, opacity: 0.85 }} />
         <Box sx={{ height: 4, width: '55%', borderRadius: 2, bgcolor: t.textMuted, opacity: 0.6 }} />
       </Box>
@@ -33,7 +48,7 @@ function Swatch({ v }) {
 }
 
 /** Grid of theme cards. `value` is the saved choice (null = follow the system). */
-export default function ThemePicker({ value, onChange, columns = 3 }) {
+export default function ThemePicker({ value, onChange, columns = 4 }) {
   return (
     <Box role="radiogroup" aria-label="Theme" sx={{ display: 'grid', gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: 1 }}>
       {THEMES.map((o) => {

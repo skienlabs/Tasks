@@ -89,10 +89,16 @@ data class Profile(
 
 @Immutable
 @Serializable
-data class Counts(val pending: Int = 0, val done: Int = 0, val cancelled: Int = 0) {
+/**
+ * Tasks on one day by status. [missed] counts tasks that were on the day, weren't finished and
+ * moved on to the next day by themselves; they're shown (in red) but aren't counted again.
+ */
+data class Counts(val pending: Int = 0, val done: Int = 0, val cancelled: Int = 0, val missed: Int = 0) {
     val active get() = pending + done
     val total get() = pending + done + cancelled
-    fun plus(o: Counts) = Counts(pending + o.pending, done + o.done, cancelled + o.cancelled)
+    /** Everything that was on the day, including tasks that moved on unfinished. */
+    val planned get() = pending + done + missed
+    fun plus(o: Counts) = Counts(pending + o.pending, done + o.done, cancelled + o.cancelled, missed + o.missed)
 
     fun bump(status: String, sign: Int) = when (status) {
         Status.PENDING -> copy(pending = (pending + sign).coerceAtLeast(0))
@@ -102,8 +108,8 @@ data class Counts(val pending: Int = 0, val done: Int = 0, val cancelled: Int = 
 }
 
 @Serializable
-data class DayCounts(val date: String, val pending: Int = 0, val done: Int = 0, val cancelled: Int = 0) {
-    fun counts() = Counts(pending, done, cancelled)
+data class DayCounts(val date: String, val pending: Int = 0, val done: Int = 0, val cancelled: Int = 0, val missed: Int = 0) {
+    fun counts() = Counts(pending, done, cancelled, missed)
 }
 
 @Serializable data class DayResponse(val tasks: List<Task> = emptyList(), val overdue: List<Task> = emptyList())
@@ -133,6 +139,31 @@ data class Stats(
 )
 
 @Serializable data class ErrorBody(val error: String? = null)
+
+/** Why a search result matched when it wasn't the title: a step, or a bit of the notes. */
+@Immutable @Serializable data class SearchMatch(val field: String, val text: String)
+
+/** A word, tag or filter that completes what's being typed in search. */
+@Immutable @Serializable
+data class SearchSuggestion(val kind: String, val insert: String, val label: String? = null, val tagId: String? = null)
+
+@Immutable data class SearchHit(val task: Task, val match: SearchMatch? = null)
+
+/** /api/search: ranked tasks (each with an optional `match`), plus suggestions. */
+@Immutable @Serializable
+data class SearchResponse(
+    val results: List<kotlinx.serialization.json.JsonObject> = emptyList(),
+    val total: Int = 0,
+    val fuzzy: Boolean = false,
+    val terms: List<String> = emptyList(),
+    val suggestions: List<SearchSuggestion> = emptyList(),
+) {
+    fun hits(): List<SearchHit> = results.mapNotNull { o ->
+        val task = runCatching { AppJson.decodeFromJsonElement(Task.serializer(), o) }.getOrNull() ?: return@mapNotNull null
+        val match = o["match"]?.let { runCatching { AppJson.decodeFromJsonElement(SearchMatch.serializer(), it) }.getOrNull() }
+        SearchHit(task, match)
+    }.distinctBy { it.task.id } // one row per task, whatever the source
+}
 
 /** A live-sync notice from /api/events. */
 @Serializable

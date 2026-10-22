@@ -56,6 +56,9 @@ interface TasksApi {
     suspend fun deleteAttachment(id: String): Task?
     /** Image file bytes; [size] is "thumb" or "full". */
     suspend fun image(id: String, size: String): ByteArray
+    /** Searches every task; the app falls back to what it has saved when this fails. */
+    suspend fun search(q: String, today: String, limit: Int = 40): SearchResponse =
+        throw ApiException(0, "Search needs a connection")
 }
 
 /** Supplies the Firebase ID token; `force` asks Firebase for a fresh one. */
@@ -158,6 +161,10 @@ class HttpTasksApi(
     }, Profile.serializer())
     override suspend fun day(date: String, today: String) = req("GET", "/api/tasks?date=$date&today=$today", null, DayResponse.serializer())
     override suspend fun summary(from: String, to: String) = req("GET", "/api/summary?from=$from&to=$to", null, SummaryResponse.serializer())
+    override suspend fun search(q: String, today: String, limit: Int) = req(
+        "GET", "/api/search?q=${java.net.URLEncoder.encode(q, "UTF-8").replace("+", "%20")}&today=$today&limit=${limit.coerceIn(1, 100)}",
+        null, SearchResponse.serializer(),
+    )
     override suspend fun stats(from: String, to: String, today: String) = req("GET", "/api/stats?from=$from&to=$to&today=$today", null, Stats.serializer())
     override suspend fun createTask(body: JsonObject) = req("POST", "/api/tasks", body, Task.serializer())
     override suspend fun updateTask(id: String, patch: JsonObject) = req("PATCH", "/api/tasks/$id", patch, Task.serializer())

@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore by preferencesDataStore(name = "prefs")
 
 /** Saved theme choice. DARK is Midnight Black (true black); the name is kept so saved choices still work. */
-enum class ThemePref { SYSTEM, LIGHT, GRAY, DIM, DARK, ABYSS }
+enum class ThemePref { SYSTEM, LIGHT, GRAY, DIM, DARK, ABYSS, GLASS, GLASS_LIGHT }
 
 /** Small per-device settings. */
 class Prefs(private val context: Context) {
@@ -26,6 +26,20 @@ class Prefs(private val context: Context) {
     private val summaryTimeKey = stringPreferencesKey("dailySummaryMinutes")
     private val notifAskedKey = stringPreferencesKey("notifAsked")
     private val introSeenKey = stringPreferencesKey("introSeen")
+    private fun recentSearchKey(uid: String) = stringPreferencesKey("recentSearches.$uid")
+
+    /** The last few searches, newest first (one per line). */
+    fun recentSearches(uid: String): Flow<List<String>> =
+        data.map { p -> p[recentSearchKey(uid)]?.split('\n')?.filter { it.isNotBlank() } ?: emptyList() }
+    suspend fun addRecentSearch(uid: String, q: String) = runCatching {
+        val v = q.trim().replace('\n', ' ')
+        if (v.isEmpty()) return@runCatching
+        context.dataStore.edit { p ->
+            val old = p[recentSearchKey(uid)]?.split('\n')?.filter { it.isNotBlank() } ?: emptyList()
+            p[recentSearchKey(uid)] = (listOf(v) + old.filter { it != v }).take(8).joinToString("\n")
+        }
+    }
+    suspend fun clearRecentSearches(uid: String) = runCatching { context.dataStore.edit { it.remove(recentSearchKey(uid)) } }
 
     /** The feature tour before sign-in is shown once per install. */
     val introSeen: Flow<Boolean> = data.map { it[introSeenKey] == "1" }

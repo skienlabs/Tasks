@@ -58,6 +58,9 @@ import com.skienlabs.tasks.ui.home.MonthSheet
 import com.skienlabs.tasks.ui.summary.SummaryScreen
 import com.skienlabs.tasks.ui.theme.LocalExtra
 import com.skienlabs.tasks.ui.theme.TasksTheme
+import com.skienlabs.tasks.ui.theme.glassPanel
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.ui.test.performTextInput
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.Rule
 import org.junit.Test
@@ -115,13 +118,25 @@ class ScreensTest {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { androidx.compose.foundation.layout.Row { Text(Dates.monthYear(date), style = MaterialTheme.typography.titleLarge); Icon(Icons.Filled.ArrowDropDown, null) } },
-                    actions = { Box(Modifier.padding(end = 12.dp)) { Avatar(profile, 32.dp) } },
+                    title = {
+                        androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            com.skienlabs.tasks.ui.home.DateTitle(date, date == today, Modifier.weight(1f, fill = false))
+                            Icon(Icons.Filled.ArrowDropDown, null)
+                        }
+                    },
+                    actions = {
+                        Icon(Icons.Outlined.Search, null, Modifier.padding(horizontal = 12.dp))
+                        Box(Modifier.padding(end = 12.dp)) { Avatar(profile, 32.dp) }
+                    },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 )
             },
             bottomBar = {
-                NavigationBar(containerColor = LocalExtra.current.surfaceHigh) {
+                val glass = LocalExtra.current.glass
+                NavigationBar(
+                    containerColor = if (glass != null) androidx.compose.ui.graphics.Color.Transparent else LocalExtra.current.surfaceHigh,
+                    modifier = if (glass != null) Modifier.glassPanel(androidx.compose.foundation.shape.RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp), glass.panelStrong) else Modifier,
+                ) {
                     NavigationBarItem(true, {}, { Icon(Icons.Filled.CheckCircle, null) }, label = { Text("Tasks") })
                     NavigationBarItem(false, {}, { Icon(Icons.Outlined.Insights, null) }, label = { Text("Summary") })
                     NavigationBarItem(false, {}, { Icon(Icons.Outlined.Sell, null) }, label = { Text("Tags") })
@@ -129,6 +144,7 @@ class ScreensTest {
             },
             floatingActionButton = { FloatingActionButton({}) { Icon(Icons.Filled.Add, null) } },
             containerColor = MaterialTheme.colorScheme.background,
+            contentColor = MaterialTheme.colorScheme.onBackground,
         ) { inner ->
             Column(Modifier.fillMaxSize().padding(inner)) {
                 WeekStrip(date, today, { s.summary[it] }, {})
@@ -146,7 +162,13 @@ class ScreensTest {
         shot(name, if (dark) com.skienlabs.tasks.ui.theme.AppTheme.MIDNIGHT else com.skienlabs.tasks.ui.theme.AppTheme.LIGHT, content)
 
     private fun shot(name: String, theme: com.skienlabs.tasks.ui.theme.AppTheme, content: @Composable () -> Unit) {
-        rule.setContent { TasksTheme(theme) { androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { content() } } }
+        rule.setContent {
+            TasksTheme(theme) {
+                androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onBackground) {
+                    androidx.compose.runtime.CompositionLocalProvider(com.skienlabs.tasks.ui.day.LocalGreetingName provides "Sufail") { content() }
+                }
+            }
+        }
         rule.waitForIdle()
         rule.onRoot().captureRoboImage("build/screens/$name.png")
     }
@@ -156,6 +178,71 @@ class ScreensTest {
     @Test fun today_dim() = shot("today_dim", com.skienlabs.tasks.ui.theme.AppTheme.DIM) { Home(state, today) }
     @Test fun today_abyss() = shot("today_abyss", com.skienlabs.tasks.ui.theme.AppTheme.ABYSS) { Home(state, today) }
     @Test fun today_gray() = shot("today_gray", com.skienlabs.tasks.ui.theme.AppTheme.GRAY) { Home(state, today) }
+    @Test fun today_glass() = shot("today_glass", com.skienlabs.tasks.ui.theme.AppTheme.GLASS) { Home(state, today) }
+    @Test fun today_glass_light() = shot("today_glass_light", com.skienlabs.tasks.ui.theme.AppTheme.GLASS_LIGHT) { Home(state, today) }
+    @Test fun summary_glass() = shot("summary_glass", com.skienlabs.tasks.ui.theme.AppTheme.GLASS) {
+        SummaryScreen({ _, _, _ -> stats }, {}, today, state.tags, 0, 0.dp) {}
+    }
+
+    /** A past day whose unfinished tasks moved on: it says so, and its bar shows them in red. */
+    private val yesterday = Dates.addDays(today, -1)
+    private val pastState = state.copy(
+        tasks = state.tasks + listOf(
+            task("y1", "Weekly invoice run", yesterday, 2, Status.DONE, listOf("t1")),
+            task("y2", "Pay electricity bill", yesterday, 3, Status.DONE),
+        ).associateBy { it.id },
+        summary = state.summary + (yesterday to Counts(0, 2, 0, missed = 3)),
+        loadedDays = state.loadedDays + yesterday,
+    )
+    @Test fun past_day_moved_on() = shot("past_day_moved_on", true) { Home(pastState, yesterday) }
+
+    private val searchTasks = pastState.tasks.values
+    private fun searchShot(name: String, theme: com.skienlabs.tasks.ui.theme.AppTheme) = shot(name, theme) {
+        com.skienlabs.tasks.ui.search.SearchScreen(
+            today = today, tags = state.tags, savedTasks = { searchTasks },
+            recent = listOf("invoice #skienlabs", "p:high"),
+            search = { query ->
+                com.skienlabs.tasks.data.LocalSearch.search(query, searchTasks, state.tags, today)!!.copy(
+                    suggestions = if (query == "inv") listOf(com.skienlabs.tasks.data.SearchSuggestion("word", "invoice")) else emptyList(),
+                )
+            },
+            onRemember = {}, onClearRecent = {}, onOpen = {}, onClose = {},
+        )
+    }
+    @Test fun search_empty() = searchShot("search_empty", com.skienlabs.tasks.ui.theme.AppTheme.MIDNIGHT)
+    @Test fun search_results() {
+        searchShot("search_results_tmp", com.skienlabs.tasks.ui.theme.AppTheme.MIDNIGHT)
+        rule.onNode(androidx.compose.ui.test.hasSetTextAction()).performTextInput("inv")
+        rule.mainClock.advanceTimeBy(400)
+        rule.waitForIdle()
+        rule.onRoot().captureRoboImage("build/screens/search_results.png")
+    }
+    @Test fun search_glass() {
+        searchShot("search_glass_tmp", com.skienlabs.tasks.ui.theme.AppTheme.GLASS)
+        rule.onNode(androidx.compose.ui.test.hasSetTextAction()).performTextInput("is:open")
+        rule.mainClock.advanceTimeBy(400)
+        rule.waitForIdle()
+        rule.onRoot().captureRoboImage("build/screens/search_glass.png")
+    }
+
+    private fun accountShot(name: String, theme: com.skienlabs.tasks.ui.theme.AppTheme) = shot(name, theme) {
+        val profile = Profile("u", "skienlabs@gmail.com", "Sufail Ahmed", provider = "google.com", createdAt = 1_760_000_000_000, onboarded = true)
+        Column(
+            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(16.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(18.dp),
+        ) {
+            com.skienlabs.tasks.ui.account.ProfileHero(profile, Counts(pending = 7, done = 12))
+            com.skienlabs.tasks.ui.account.Section("Profile") {
+                com.skienlabs.tasks.ui.account.SettingRow(Icons.Outlined.Sell, "Change password", "We'll email you a reset link") {}
+            }
+            com.skienlabs.tasks.ui.account.Section("Appearance", card = false) {
+                com.skienlabs.tasks.ui.account.ThemeDropdown(com.skienlabs.tasks.data.ThemePref.GLASS, startOpen = true) {}
+            }
+        }
+    }
+    @Test fun account_dark() = accountShot("account_dark", com.skienlabs.tasks.ui.theme.AppTheme.MIDNIGHT)
+    @Test fun account_light() = accountShot("account_light", com.skienlabs.tasks.ui.theme.AppTheme.LIGHT)
+    @Test fun account_glass() = accountShot("account_glass", com.skienlabs.tasks.ui.theme.AppTheme.GLASS)
     @Test fun theme_swatches() = shot("theme_swatches", com.skienlabs.tasks.ui.theme.AppTheme.ABYSS) {
         Column(Modifier.padding(20.dp)) {
             com.skienlabs.tasks.ui.account.ThemeSwatches(com.skienlabs.tasks.data.ThemePref.ABYSS) {}

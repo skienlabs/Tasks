@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { addDays } from './dates.js';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -82,6 +83,26 @@ const MIGRATIONS = [
   `
   ALTER TABLE tasks ADD COLUMN carried_from TEXT;
   CREATE INDEX idx_tasks_pending ON tasks (uid, date) WHERE status = 'pending';
+  `,
+  // v6: every day a task was left unfinished and carried on (so past days keep showing it in
+  // the activity chart). Backfilled from carried_from: each day from then until the day before
+  // its current day, at most 92 days back.
+  `
+  CREATE TABLE task_misses (
+    task_id TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
+    uid     TEXT NOT NULL,
+    date    TEXT NOT NULL,
+    PRIMARY KEY (task_id, date)
+  );
+  CREATE INDEX idx_task_misses_uid_date ON task_misses (uid, date);
+  WITH RECURSIVE d(task_id, uid, day, last, n) AS (
+    -- The most recent 92 days at most (the ones the summary shows).
+    SELECT id, uid, max(carried_from, date(date, '-92 day')), date(date, '-1 day'), 0 FROM tasks
+      WHERE carried_from IS NOT NULL AND carried_from < date
+    UNION ALL
+    SELECT task_id, uid, date(day, '+1 day'), last, n + 1 FROM d WHERE day < last AND n < 92
+  )
+  INSERT OR IGNORE INTO task_misses (task_id, uid, date) SELECT task_id, uid, day FROM d;
   `,
 ];
 
@@ -194,6 +215,7 @@ export function createRepo(db) {
       WHERE uid = ? AND status = 'pending' AND date < ?
       ORDER BY date ASC, priority ASC, created_at ASC`),
     get: db.prepare(`SELECT ${COLUMNS} FROM tasks WHERE uid = ? AND id = ?`),
+    all: db.prepare(`SELECT ${COLUMNS} FROM tasks WHERE uid = ?`),
     exists: db.prepare('SELECT uid FROM tasks WHERE id = ?'),
     insert: db.prepare(`INSERT INTO tasks
       (id, uid, title, notes, priority, date, status, original_date, postponed,
@@ -203,7 +225,10 @@ export function createRepo(db) {
       title = ?, notes = ?, priority = ?, date = ?, status = ?, postponed = ?,
       updated_at = ?, completed_at = ?, subtasks = ?, carried_from = ?
       WHERE uid = ? AND id = ?`),
-    carryDates: db.prepare(`SELECT DISTINCT date FROM tasks WHERE uid = ? AND status = 'pending' AND date < ?`),
+    carryRows: db.prepare(`SELECT id, date FROM tasks WHERE uid = ? AND status = 'pending' AND date < ?`),
+    addMiss: db.prepare('INSERT OR IGNORE INTO task_misses (task_id, uid, date) VALUES (?, ?, ?)'),
+    misses: db.prepare(`SELECT date, COUNT(*) AS n FROM task_misses WHERE uid = ? AND date BETWEEN ? AND ?
+      GROUP BY date`),
     carry: db.prepare(`UPDATE tasks SET carried_from = COALESCE(carried_from, date), date = ?, updated_at = ?
       WHERE uid = ? AND status = 'pending' AND date < ?`),
     remove: db.prepare('DELETE FROM tasks WHERE uid = ? AND id = ?'),
@@ -323,10 +348,21 @@ export function createRepo(db) {
      */
     carryOver(uid, today, now = Date.now()) {
       return tx(() => {
-        const dates = stmts.carryDates.all(uid, today).map((r) => r.date);
-        if (dates.length) stmts.carry.run(today, now, uid, today);
-        return dates;
+        const rows = stmts.carryRows.all(uid, today);
+        if (!rows.length) return [];
+        // Remember each day it was left unfinished (for the activity chart): the last 92 at most.
+        const earliest = addDays(today, -92);
+        for (const r of rows) {
+          for (let day = r.date < earliest ? earliest : r.date; day < today; day = addDays(day, 1)) stmts.addMiss.run(r.id, uid, day);
+        }
+        stmts.carry.run(today, now, uid, today);
+        return [...new Set(rows.map((r) => r.date))];
       });
+    },
+
+    /** Every task of the user (for search). */
+    allTasks(uid) {
+      return stmts.all.all(uid).map(toTask);
     },
 
     get(uid, id) {
@@ -456,13 +492,22 @@ export function createRepo(db) {
       stmts.removeAttachmentById.run(id);
     },
 
+    /**
+     * Per day: tasks on that day by status, plus `missed`, the tasks that were left
+     * unfinished on that day and carried on to a later one.
+     */
     summary(uid, from, to) {
-      return stmts.summary.all(uid, from, to).map((r) => ({
-        date: r.date,
-        pending: Number(r.pending),
-        done: Number(r.done),
-        cancelled: Number(r.cancelled),
-      }));
+      const days = new Map();
+      const blank = (date) => ({ date, pending: 0, done: 0, cancelled: 0, missed: 0 });
+      for (const r of stmts.summary.all(uid, from, to)) {
+        days.set(r.date, { ...blank(r.date), pending: Number(r.pending), done: Number(r.done), cancelled: Number(r.cancelled) });
+      }
+      for (const r of stmts.misses.all(uid, from, to)) {
+        const d = days.get(r.date) ?? blank(r.date);
+        d.missed = Number(r.n);
+        days.set(r.date, d);
+      }
+      return [...days.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
     },
   };
 }

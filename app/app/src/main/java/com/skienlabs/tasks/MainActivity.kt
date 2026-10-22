@@ -57,6 +57,8 @@ class MainActivity : ComponentActivity() {
                 ThemePref.DIM -> AppTheme.DIM
                 ThemePref.DARK -> AppTheme.MIDNIGHT
                 ThemePref.ABYSS -> AppTheme.ABYSS
+                ThemePref.GLASS -> AppTheme.GLASS
+                ThemePref.GLASS_LIGHT -> AppTheme.GLASS_LIGHT
             }
             val dark = theme.dark
             DisposableEffect(dark) {

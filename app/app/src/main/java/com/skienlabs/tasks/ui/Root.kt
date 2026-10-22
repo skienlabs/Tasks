@@ -40,7 +40,7 @@ fun Root(app: AppController, theme: ThemePref) {
     }
     // Surface also sets the default text color for the theme (Box alone would leave it black).
     CompositionLocalProvider(LocalImages provides app.images) {
-        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onBackground) {
             Crossfade(screen, animationSpec = tween(180), label = "screen") { key ->
                 when (val s = session) {
                     Session.Starting, is Session.Loading -> LoadingScreen()

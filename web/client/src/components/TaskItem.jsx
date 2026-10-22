@@ -8,7 +8,7 @@ import TodayOutlined from '@mui/icons-material/TodayOutlined';
 import NotesRounded from '@mui/icons-material/NotesRounded';
 import HistoryRounded from '@mui/icons-material/HistoryRounded';
 import Check from '@mui/icons-material/Check';
-import { PRIORITIES, hexAlpha, priorityColor, tagColor } from '../theme.js';
+import { PRIORITIES, glass, hexAlpha, priorityColor, tagColor } from '../theme.js';
 import { TagPlates } from './TagChip.jsx';
 import TaskMenu, { postponeLabel } from './TaskMenu.jsx';
 import { StepsInline, StepsProgress } from './Steps.jsx';
@@ -132,6 +132,27 @@ function TaskItem({ task, today, showOrigin, selected, onSelect, onEdit, onManag
         }),
         '&:hover': { bgcolor: late ? carriedColor(t, tags[0], task.priority === 1).bg : t.tokens.surfaceHigh },
         '&:focus-visible': { borderColor: t.palette.primary.main },
+        // Glass themes: every task is its own floating pane that lifts and catches the light.
+        ...(t.tokens.glass && {
+          ...glass(t, late ? carriedColor(t, tags[0], task.priority === 1).bg : selected ? t.tokens.surfaceHighest : undefined),
+          ...(late && { borderColor: carriedColor(t, tags[0], task.priority === 1).border }),
+          ...(selected && { borderColor: late ? carriedColor(t, tags[0], task.priority === 1).main : t.palette.primary.main }),
+          my: 0.75, overflow: 'hidden', isolation: 'isolate',
+          animation: 'glassIn .5s cubic-bezier(.2,.9,.3,1.15) both',
+          transition: 'transform .35s cubic-bezier(.2,1.3,.4,1), box-shadow .3s, background-color .2s, border-color .2s',
+          '&::after': {
+            content: '""', position: 'absolute', top: 0, bottom: 0, left: 0, width: '35%', zIndex: -1, pointerEvents: 'none',
+            background: `linear-gradient(90deg, transparent, ${t.tokens.glass.shine}, transparent)`, opacity: 0.35,
+            transform: 'translateX(-120%) skewX(-18deg)',
+          },
+          '&:hover': {
+            transform: 'translateY(-2px) scale(1.004)',
+            bgcolor: late ? carriedColor(t, tags[0], task.priority === 1).bg : t.tokens.surfaceHigh,
+            boxShadow: `inset 0 1px 0 ${t.tokens.glass.shine}, ${t.tokens.glass.shadow}, 0 0 0 1px ${t.tokens.glass.edge}`,
+          },
+          '&:hover::after': { animation: 'glassSheen .9s ease-out' },
+          '&:active': { transform: 'scale(.99)', transitionDuration: '.12s' },
+        }),
         '@media (hover: hover)': {
           '& .task-actions': { opacity: selected ? 1 : 0 },
           '& .task-actions:has(.menu-open)': { opacity: 1 },

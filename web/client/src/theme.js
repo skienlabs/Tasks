@@ -104,7 +104,71 @@ const TOKENS = {
     glow: 'radial-gradient(1100px 600px at 88% -10%, rgba(102,136,204,.24), transparent 62%), '
       + 'radial-gradient(900px 560px at -10% 110%, rgba(153,102,184,.18), transparent 60%)',
   },
+  // Liquid glass on black: frosted, see-through panels floating over a slowly moving aurora.
+  glass: {
+    primary: '#9ec5ff',
+    onPrimary: '#04224f',
+    primaryContainer: 'rgba(120,170,255,.24)',
+    onPrimaryContainer: '#e3edff',
+    bg: '#05060b',
+    surface: 'rgba(255,255,255,.035)',
+    surfaceHigh: 'rgba(255,255,255,.07)',
+    surfaceHighest: 'rgba(255,255,255,.12)',
+    text: '#f4f6fb',
+    textMuted: 'rgba(235,240,255,.66)',
+    outline: 'rgba(255,255,255,.2)',
+    divider: 'rgba(255,255,255,.1)',
+    error: '#ff8a8a',
+    success: '#74e3a0',
+    warning: '#ffd479',
+    carriedBg: 'rgba(255,90,90,.1)',
+    carriedBorder: 'rgba(255,120,120,.55)',
+    gradient: ['#8fb8ff', '#c49bff', '#ff9ad5'],
+    glass: {
+      blur: 'blur(28px) saturate(185%)',
+      panel: 'rgba(22,24,34,.42)',
+      menu: 'rgba(24,26,38,.8)',
+      edge: 'rgba(255,255,255,.14)',
+      shine: 'rgba(255,255,255,.28)',
+      shadow: '0 10px 40px rgba(0,0,0,.45)',
+      blobs: ['#3b5bff', '#9b3bff', '#00c2c7', '#ff3d9a', '#2a7bff'],
+      blobOpacity: 0.55,
+    },
+  },
+  // Liquid glass on white: milky panels over soft pastel light.
+  glassLight: {
+    primary: '#0a63e0',
+    onPrimary: '#ffffff',
+    primaryContainer: 'rgba(10,99,224,.14)',
+    onPrimaryContainer: '#06306e',
+    bg: '#eef1f8',
+    surface: 'rgba(255,255,255,.4)',
+    surfaceHigh: 'rgba(255,255,255,.58)',
+    surfaceHighest: 'rgba(255,255,255,.78)',
+    text: '#141821',
+    textMuted: 'rgba(28,34,52,.68)',
+    outline: 'rgba(30,40,70,.2)',
+    divider: 'rgba(30,40,70,.1)',
+    error: '#c62828',
+    success: '#167a3c',
+    warning: '#a35c00',
+    carriedBg: 'rgba(217,48,37,.07)',
+    carriedBorder: 'rgba(217,48,37,.45)',
+    gradient: ['#2f6bff', '#8b3cf0', '#e0388f'],
+    glass: {
+      blur: 'blur(26px) saturate(170%)',
+      panel: 'rgba(255,255,255,.5)',
+      menu: 'rgba(255,255,255,.84)',
+      edge: 'rgba(255,255,255,.75)',
+      shine: 'rgba(255,255,255,.95)',
+      shadow: '0 10px 36px rgba(40,60,120,.14)',
+      blobs: ['#8fb3ff', '#ffb3d9', '#9ff0d8', '#ffd59e', '#c7b3ff'],
+      blobOpacity: 0.75,
+    },
+  },
 };
+
+const LIGHT_THEMES = new Set(['light', 'gray', 'glassLight']);
 
 /** The themes people can pick. `v` is what's saved; null follows the system (Light or Midnight Black). */
 export const THEMES = [
@@ -114,6 +178,8 @@ export const THEMES = [
   { v: 'dim', label: 'Dark', hint: 'Soft dark grey' },
   { v: 'dark', label: 'Midnight Black', hint: 'True black, easy on OLED screens' },
   { v: 'abyss', label: 'Abyss', hint: 'Deep navy, like the VS Code theme' },
+  { v: 'glass', label: 'Glass Black', hint: 'Liquid glass over a moving aurora, on black' },
+  { v: 'glassLight', label: 'Glass White', hint: 'Liquid glass over soft pastel light' },
 ];
 
 export const themeTokens = (name) => TOKENS[name] ?? TOKENS.light;
@@ -133,7 +199,8 @@ export function priorityColor(theme, value) {
 
 export function makeTheme(name) {
   const t = themeTokens(name);
-  const mode = name === 'light' || name === 'gray' || !TOKENS[name] ? 'light' : 'dark';
+  const mode = LIGHT_THEMES.has(name) || !TOKENS[name] ? 'light' : 'dark';
+  const g = t.glass;
   return createTheme({
     palette: {
       mode,
@@ -159,12 +226,15 @@ export function makeTheme(name) {
       MuiCssBaseline: {
         styleOverrides: {
           body: {
-            backgroundColor: t.bg, WebkitTapHighlightColor: 'transparent',
+            // Glass: the page colour sits on <html>, so the moving light behind (z-index -1) shows through.
+            backgroundColor: g ? 'transparent' : t.bg, WebkitTapHighlightColor: 'transparent',
+            transition: 'background-color .5s ease',
             ...(t.glow && { backgroundImage: t.glow, backgroundAttachment: 'fixed', backgroundRepeat: 'no-repeat' }),
           },
+          ...(g && GLASS_KEYFRAMES),
           '*::-webkit-scrollbar': { width: 10, height: 10 },
           '*::-webkit-scrollbar-thumb': {
-            backgroundColor: t.outline, borderRadius: 8, border: `3px solid ${t.bg}`,
+            backgroundColor: t.outline, borderRadius: 8, border: `3px solid ${g ? 'transparent' : t.bg}`, backgroundClip: g ? 'padding-box' : undefined,
           },
         },
       },
@@ -176,15 +246,26 @@ export function makeTheme(name) {
       MuiIconButton: { styleOverrides: { root: { borderRadius: 999 } } },
       MuiPaper: { styleOverrides: { root: { backgroundImage: 'none' } } },
       MuiDialog: {
-        styleOverrides: { paper: { borderRadius: 28, backgroundColor: t.surfaceHigh } },
+        styleOverrides: {
+          paper: {
+            borderRadius: 28, backgroundColor: t.surfaceHigh,
+            ...(g && { ...glassSurface(t, g.menu), animation: 'glassPop .42s cubic-bezier(.2,1.25,.35,1) both' }),
+          },
+          ...(g && { root: { '& .MuiBackdrop-root': { backgroundColor: mode === 'dark' ? 'rgba(0,0,0,.35)' : 'rgba(80,90,120,.18)', backdropFilter: 'blur(6px)' } } }),
+        },
       },
       MuiMenu: {
         styleOverrides: {
           paper: {
             borderRadius: 12, backgroundColor: t.surfaceHighest, border: `1px solid ${t.divider}`,
+            ...(g && { ...glassSurface(t, g.menu), borderRadius: 18 }),
           },
         },
       },
+      ...(g && {
+        MuiPopover: { styleOverrides: { paper: { ...glassSurface(t, g.menu), borderRadius: 18 } } },
+        MuiDrawer: { styleOverrides: { paper: { ...glassSurface(t, g.menu) } } },
+      }),
       MuiTooltip: {
         defaultProps: { enterDelay: 500, disableInteractive: true },
         styleOverrides: { tooltip: { fontSize: 12, borderRadius: 6 } },
@@ -220,6 +301,58 @@ export const TAG_COLORS = {
   brown: { label: 'Brown', light: '#795548', dark: '#bcaaa4' },
   grey: { label: 'Grey', light: '#5f6368', dark: '#bdc1c6' },
 };
+
+const GLASS_KEYFRAMES = {
+  '@keyframes glassPop': {
+    from: { opacity: 0, transform: 'translateY(10px) scale(.96)', filter: 'blur(6px)' },
+    to: { opacity: 1, transform: 'none', filter: 'none' },
+  },
+  '@keyframes glassIn': {
+    from: { opacity: 0, transform: 'translateY(8px) scale(.985)' },
+    to: { opacity: 1, transform: 'none' },
+  },
+  '@keyframes glassSheen': {
+    from: { transform: 'translateX(-120%) skewX(-18deg)' },
+    to: { transform: 'translateX(260%) skewX(-18deg)' },
+  },
+  '@keyframes blobDrift1': {
+    '0%,100%': { transform: 'translate(0,0) scale(1)' },
+    '33%': { transform: 'translate(18vw,12vh) scale(1.18)' },
+    '66%': { transform: 'translate(-8vw,22vh) scale(.9)' },
+  },
+  '@keyframes blobDrift2': {
+    '0%,100%': { transform: 'translate(0,0) scale(1)' },
+    '40%': { transform: 'translate(-22vw,-10vh) scale(1.25)' },
+    '75%': { transform: 'translate(-6vw,14vh) scale(.92)' },
+  },
+  '@keyframes blobDrift3': {
+    '0%,100%': { transform: 'translate(0,0) rotate(0deg) scale(1)' },
+    '50%': { transform: 'translate(14vw,-18vh) rotate(40deg) scale(1.15)' },
+  },
+  '@media (prefers-reduced-motion: reduce)': {
+    '*, *::before, *::after': { animationDuration: '0.001ms !important', animationIterationCount: '1 !important' },
+  },
+};
+
+/**
+ * A liquid-glass panel: blurred and brightened see-through fill, a bright rim that catches
+ * the light along the top edge, and a soft shadow underneath. Empty for non-glass themes.
+ */
+export function glassSurface(tokens, fill) {
+  const g = tokens.glass;
+  if (!g) return {};
+  return {
+    backgroundColor: fill ?? g.panel,
+    backdropFilter: g.blur,
+    WebkitBackdropFilter: g.blur,
+    border: `1px solid ${g.edge}`,
+    boxShadow: `inset 0 1px 0 ${g.shine}, inset 0 -1px 0 rgba(255,255,255,.04), ${g.shadow}`,
+  };
+}
+
+/** glassSurface for a component's sx: `sx={(t) => ({ ..., ...glass(t) })}`. */
+export const glass = (theme, fill) => glassSurface(theme.tokens, fill);
+export const isGlass = (theme) => Boolean(theme.tokens.glass);
 
 export function hexAlpha(hex, alpha) {
   const a = Math.round(alpha * 255).toString(16).padStart(2, '0');

@@ -13,7 +13,7 @@ import SellOutlined from '@mui/icons-material/SellOutlined';
 import { api } from '../lib/api.js';
 import { addDays, formatDate, shortLabel, toKey } from '../lib/dates.js';
 import { selectTag, useStoreVersion } from '../lib/store.js';
-import { PRIORITIES, hexAlpha, priorityColor, statusColors } from '../theme.js';
+import { PRIORITIES, glass, hexAlpha, priorityColor, statusColors } from '../theme.js';
 import { TagAvatar } from './TagChip.jsx';
 
 function monthRange(y, m) {
@@ -27,7 +27,8 @@ function Card({ title, icon, children, sx }) {
     <Box
       sx={(t) => ({
         borderRadius: '24px', p: { xs: 2, sm: 2.5 }, bgcolor: t.tokens.surfaceHigh,
-        border: `1px solid ${t.palette.divider}`, minWidth: 0, ...sx,
+        border: `1px solid ${t.palette.divider}`, minWidth: 0, ...glass(t),
+        ...(t.tokens.glass && { animation: 'glassIn .6s cubic-bezier(.2,.9,.3,1.1) both' }), ...sx,
       })}
     >
       {title && (
@@ -62,15 +63,16 @@ function Kpi({ label, value, sub, color, icon }) {
   );
 }
 
-/** Horizontal bar split into done / pending / cancelled. */
-export function StackBar({ done, pending, cancelled, height = 8, overdue = false }) {
-  const total = done + pending + cancelled;
+/** Horizontal bar split into done / pending / missed (left unfinished, carried on) / cancelled. */
+export function StackBar({ done, pending, cancelled, missed = 0, height = 8, overdue = false }) {
+  const total = done + pending + cancelled + missed;
   return (
     <Box sx={(t) => ({ display: 'flex', height, borderRadius: height, overflow: 'hidden', bgcolor: t.tokens.surfaceHighest, width: '100%' })}>
       {total > 0 && (
         <>
           <Box sx={(t) => ({ width: `${(done / total) * 100}%`, bgcolor: statusColors(t).done })} />
           <Box sx={(t) => ({ width: `${(pending / total) * 100}%`, bgcolor: overdue ? statusColors(t).overdue : statusColors(t).pending })} />
+          <Box sx={(t) => ({ width: `${(missed / total) * 100}%`, bgcolor: statusColors(t).overdue })} />
           <Box sx={(t) => ({ width: `${(cancelled / total) * 100}%`, bgcolor: statusColors(t).cancelled, opacity: 0.6 })} />
         </>
       )}
@@ -79,7 +81,7 @@ export function StackBar({ done, pending, cancelled, height = 8, overdue = false
 }
 
 function Legend() {
-  const items = [['done', 'Completed'], ['pending', 'Left'], ['overdue', 'Overdue'], ['cancelled', 'Cancelled']];
+  const items = [['done', 'Completed'], ['pending', 'Left'], ['overdue', 'Not finished'], ['cancelled', 'Cancelled']];
   return (
     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mt: 1.5 }}>
       {items.map(([k, label]) => (
@@ -95,20 +97,21 @@ function Legend() {
 function DailyChart({ days, from, to, today, onOpenDay }) {
   const byDate = new Map(days.map((d) => [d.date, d]));
   const all = [];
-  for (let d = from; d <= to; d = addDays(d, 1)) all.push(byDate.get(d) ?? { date: d, pending: 0, done: 0, cancelled: 0 });
-  const max = Math.max(1, ...all.map((d) => d.pending + d.done + d.cancelled));
+  for (let d = from; d <= to; d = addDays(d, 1)) all.push({ pending: 0, done: 0, cancelled: 0, missed: 0, ...byDate.get(d), date: d });
+  // A task left unfinished counts on each day it was missed (it carried on to the next day).
+  const max = Math.max(1, ...all.map((d) => d.pending + d.done + d.cancelled + d.missed));
   const H = 140;
   return (
     <>
       <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: { xs: '2px', sm: '4px' }, height: H + 22, overflowX: 'auto', pb: 0.5 }}>
         {all.map((d) => {
-          const total = d.pending + d.done + d.cancelled;
+          const total = d.pending + d.done + d.cancelled + d.missed;
           const past = d.date < today;
           const day = Number(d.date.slice(8));
           return (
             <Tooltip
               key={d.date}
-              title={`${formatDate(d.date, { weekday: 'short', day: 'numeric', month: 'short' })}: ${total} tasks, ${d.done} done, ${d.pending} left`}
+              title={`${formatDate(d.date, { weekday: 'short', day: 'numeric', month: 'short' })}: ${total} tasks, ${d.done} done, ${d.pending} left${d.missed ? `, ${d.missed} not finished (moved on)` : ''}`}
             >
               <ButtonBase
                 onClick={() => onOpenDay(d.date)}
@@ -122,6 +125,7 @@ function DailyChart({ days, from, to, today, onOpenDay }) {
                     <>
                       <Box sx={(t) => ({ height: (d.done / max) * H, bgcolor: statusColors(t).done })} />
                       <Box sx={(t) => ({ height: (d.pending / max) * H, bgcolor: past ? statusColors(t).overdue : statusColors(t).pending })} />
+                      <Box sx={(t) => ({ height: (d.missed / max) * H, bgcolor: statusColors(t).overdue })} />
                       <Box sx={(t) => ({ height: (d.cancelled / max) * H, bgcolor: statusColors(t).cancelled, opacity: 0.6 })} />
                     </>
                   )}
@@ -215,7 +219,7 @@ export default function SummaryView({ today, onOpenDay }) {
   const ready = data && data.key === from;
   const active = totals.pending + totals.done; // cancelled tasks don't count toward progress
   const rate = active ? Math.round((totals.done / active) * 100) : 0;
-  const activeDays = (data?.days ?? []).filter((d) => d.pending + d.done + d.cancelled > 0);
+  const activeDays = (data?.days ?? []).filter((d) => d.pending + d.done + d.cancelled + (d.missed ?? 0) > 0);
 
   return (
     <Box sx={{ maxWidth: 1080, mx: 'auto', px: { xs: 1.5, sm: 3 }, pt: { xs: 2, sm: 3 }, pb: { xs: 'calc(176px + env(safe-area-inset-bottom))', md: 14 } }}>
@@ -341,7 +345,8 @@ export default function SummaryView({ today, onOpenDay }) {
             {activeDays.length === 0 && <Typography color="text.secondary" variant="body2">No tasks this month.</Typography>}
             <Box sx={{ display: 'grid' }}>
               {[...activeDays].reverse().map((d) => {
-                const total = d.pending + d.done;
+                const missed = d.missed ?? 0;
+                const total = d.pending + d.done + missed;
                 const overdue = d.pending > 0 && d.date < today;
                 return (
                   <ButtonBase
@@ -357,12 +362,14 @@ export default function SummaryView({ today, onOpenDay }) {
                       {shortLabel(d.date, today)}
                     </Typography>
                     <Box sx={{ gridColumn: { xs: '1 / -1', sm: 'auto' }, gridRow: { xs: 2, sm: 'auto' } }}>
-                      <StackBar {...d} overdue={overdue} />
+                      <StackBar {...d} missed={missed} overdue={overdue} />
                     </Box>
                     <Box sx={{ display: 'flex', gap: 1.5, fontSize: 13, whiteSpace: 'nowrap' }}>
                       <Box component="span" sx={{ color: 'text.secondary' }}>{total} {total === 1 ? 'task' : 'tasks'}</Box>
                       <Box component="span" sx={(t) => ({ color: statusColors(t).done, fontWeight: 500 })}>{d.done} done</Box>
-                      <Box component="span" sx={(t) => ({ color: overdue ? statusColors(t).overdue : statusColors(t).pending, fontWeight: 500 })}>{d.pending} left</Box>
+                      {missed > 0
+                        ? <Box component="span" sx={(t) => ({ color: statusColors(t).overdue, fontWeight: 500 })}>{missed} not finished</Box>
+                        : <Box component="span" sx={(t) => ({ color: overdue ? statusColors(t).overdue : statusColors(t).pending, fontWeight: 500 })}>{d.pending} left</Box>}
                     </Box>
                   </ButtonBase>
                 );

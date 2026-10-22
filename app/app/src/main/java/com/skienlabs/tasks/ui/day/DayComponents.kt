@@ -104,6 +104,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import com.skienlabs.tasks.ui.common.TagChip
 import com.skienlabs.tasks.ui.common.tagColor
 import com.skienlabs.tasks.ui.theme.LocalExtra
+import com.skienlabs.tasks.ui.theme.glassPanel
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import com.skienlabs.tasks.ui.theme.Palette
 
 // ---- Week strip ------------------------------------------------------------------
@@ -139,14 +142,15 @@ fun WeekStrip(date: String, today: String, summary: (String) -> Counts?, onSelec
                         color = if (isToday) MaterialTheme.colorScheme.onPrimary else if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                     )
                 }
-                // Progress line: green = done, blue = left, red = left on a past day.
+                // Progress line: green = done, blue = left, red = not finished on a past day
+                // (left there, or moved on to the next day by itself).
                 Box(Modifier.padding(top = 4.dp).width(22.dp).height(4.dp)) {
-                    if (c != null && c.active > 0) {
-                        val left = c.pending.toFloat() / c.active
+                    if (c != null && c.planned > 0) {
+                        val done = c.done.toFloat() / c.planned
                         val leftColor = if (d < today) x.overdue else x.pending
                         Box(Modifier.fillMaxSize().clip(RoundedCornerShape(50)).drawBehind {
-                            drawRect(x.done, size = Size(size.width * (1 - left), size.height))
-                            drawRect(leftColor, topLeft = Offset(size.width * (1 - left), 0f), size = Size(size.width * left, size.height))
+                            drawRect(x.done, size = Size(size.width * done, size.height))
+                            drawRect(leftColor, topLeft = Offset(size.width * done, 0f), size = Size(size.width * (1 - done), size.height))
                         })
                     }
                 }
@@ -248,10 +252,11 @@ fun QuickAdd(
         keyboardActions = KeyboardActions(onDone = { submit() }), // keeps the keyboard open for the next task
         shape = RoundedCornerShape(28.dp),
         colors = TextFieldDefaults.colors(
-            focusedContainerColor = x.surfaceHigh, unfocusedContainerColor = x.surfaceHigh,
+            focusedContainerColor = if (x.glass != null) Color.Transparent else x.surfaceHigh,
+            unfocusedContainerColor = if (x.glass != null) Color.Transparent else x.surfaceHigh,
             focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
         ),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).focusRequester(focusRequester),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).glassPanel(RoundedCornerShape(28.dp)).focusRequester(focusRequester),
     )
 }
 
@@ -375,14 +380,23 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
         val late = task.isPending && (task.isCarried || showOrigin)
         val lateShape = RoundedCornerShape(16.dp)
         val lateColors = carriedColors(task, rowTags.firstOrNull())
+        val glass = x.glass
+        // Glass themes: every task floats as its own pane, pressing it sinks it a little.
+        val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+        val pressed by press.collectIsPressedAsState()
+        val pressScale by animateFloatAsState(if (pressed && glass != null) 0.975f else 1f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 500f), label = "press")
         Row(
             Modifier.fillMaxWidth()
                 .then(
-                    if (late) Modifier.padding(horizontal = 12.dp, vertical = 3.dp).clip(lateShape)
+                    if (glass != null) Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
+                        .glassPanel(RoundedCornerShape(20.dp), if (late) lateColors.bg else null)
+                        .then(if (late) Modifier.border(1.dp, lateColors.border, RoundedCornerShape(20.dp)) else Modifier)
+                    else if (late) Modifier.padding(horizontal = 12.dp, vertical = 3.dp).clip(lateShape)
                         .border(1.dp, lateColors.border, lateShape).background(lateColors.bg)
                     else Modifier.background(containerColor),
                 )
-                .combinedClickable(onClick = { actions.view(task) }, onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menu = true })
+                .combinedClickable(interactionSource = press, indication = androidx.compose.material3.ripple(), onClick = { actions.view(task) }, onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menu = true })
                 .drawBehind {
                     // A soft wash of the first tag's colour, fading in from the left (open tasks only).
                     if (wash != null && task.isPending) {

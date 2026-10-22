@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.EventBusy
 import androidx.compose.material.icons.outlined.WbSunny
 import androidx.compose.material.icons.outlined.TaskAlt
 import androidx.compose.material.icons.outlined.EventAvailable
+import androidx.compose.material.icons.outlined.EventRepeat
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -49,15 +50,16 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.skienlabs.tasks.data.Dates
 import com.skienlabs.tasks.data.StoreState
 import com.skienlabs.tasks.data.Tag
 import com.skienlabs.tasks.data.Task
 import com.skienlabs.tasks.ui.common.Pill
-import com.skienlabs.tasks.ui.common.StackBar
-import com.skienlabs.tasks.ui.common.gradientBrush
 import com.skienlabs.tasks.ui.theme.LocalExtra
+import com.skienlabs.tasks.ui.theme.glassAppear
 
 /** Lists for one day, computed once per state change (not per frame). */
 private class DayLists(
@@ -111,7 +113,7 @@ fun DayPage(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = bottomPadding + 88.dp),
     ) {
-        item(key = "header", contentType = "header") { DayHeader(date, today, l) }
+        item(key = "header", contentType = "header") { DayHeader(date, today, l, state.summary[date]?.missed ?: 0) }
         item(key = "add", contentType = "add") {
             Box(Modifier.padding(top = 4.dp, bottom = 8.dp)) {
                 // Past days take no new tasks: they go on today or later.
@@ -123,7 +125,7 @@ fun DayPage(
         // Unfinished tasks move to today on their own (the server does it). `overdue` only has
         // entries when this phone's clock disagrees with the server's; they're listed with the day.
         items(l.overdue, key = { "o-" + it.id }, contentType = { "task" }) { t ->
-            Box(Modifier.animateItem()) { TaskRow(t, tags, today, showOrigin = true, actions = actions) }
+            Box(Modifier.animateItem().glassAppear()) { TaskRow(t, tags, today, showOrigin = true, actions = actions) }
         }
 
         if (!known && !failed) {
@@ -132,21 +134,21 @@ fun DayPage(
             item(key = "failed", contentType = "failed") { FailedDay(onRetry) }
         } else {
             items(l.pending, key = { it.id }, contentType = { "task" }) { t ->
-                Box(Modifier.animateItem()) { TaskRow(t, tags, today, showOrigin = false, actions = actions) }
+                Box(Modifier.animateItem().glassAppear()) { TaskRow(t, tags, today, showOrigin = false, actions = actions) }
             }
             if (l.pending.isEmpty()) {
-                item(key = "empty", contentType = "empty") { EmptyDay(date, today, l, filterTag) }
+                item(key = "empty", contentType = "empty") { EmptyDay(date, today, l, filterTag, state.summary[date]?.missed ?: 0) }
             }
             if (l.done.isNotEmpty()) {
                 item(key = "done-header", contentType = "section") { SectionHeader("Completed", l.done.size, showDone) { showDone = !showDone } }
                 if (showDone) items(l.done, key = { it.id }, contentType = { "task" }) { t ->
-                    Box(Modifier.animateItem()) { TaskRow(t, tags, today, showOrigin = false, actions = actions) }
+                    Box(Modifier.animateItem().glassAppear()) { TaskRow(t, tags, today, showOrigin = false, actions = actions) }
                 }
             }
             if (l.cancelled.isNotEmpty()) {
                 item(key = "cancelled-header", contentType = "section") { SectionHeader("Cancelled", l.cancelled.size, showCancelled) { showCancelled = !showCancelled } }
                 if (showCancelled) items(l.cancelled, key = { it.id }, contentType = { "task" }) { t ->
-                    Box(Modifier.animateItem()) { TaskRow(t, tags, today, showOrigin = false, actions = actions) }
+                    Box(Modifier.animateItem().glassAppear()) { TaskRow(t, tags, today, showOrigin = false, actions = actions) }
                 }
             }
             if (failed) item(key = "stale", contentType = "stale") {
@@ -159,40 +161,91 @@ fun DayPage(
     }
 }
 
+/**
+ * A compact line above the list: a greeting (today) or how far the day is, the counts as pills,
+ * and a small progress ring. The full date is in the top bar, so nothing here repeats it.
+ */
 @Composable
-private fun DayHeader(date: String, today: String, l: DayLists) {
+private fun DayHeader(date: String, today: String, l: DayLists, missed: Int) {
     val x = LocalExtra.current
     val isToday = date == today
+    val past = date < today
     val pending = l.pending.size
     val done = l.done.size
-    Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 10.dp)) {
-        if (isToday) {
-            Text(Dates.greeting(), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        val label = Dates.relativeLabel(date, today)
-        Text(
-            label,
-            style = if (isToday) MaterialTheme.typography.displaySmall.copy(brush = gradientBrush(x.gradient)) else MaterialTheme.typography.displaySmall,
-        )
-        Text(if (label in setOf("Today", "Tomorrow", "Yesterday")) Dates.fullLabel(date) else Dates.longDate(date), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        val active = pending + done
-        val earlier = l.pending.count { it.isCarried } + l.overdue.size
-        if (active > 0 || l.overdue.isNotEmpty()) {
-            Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (pending > 0) Pill("$pending left", if (date < today) x.overdue else x.pending)
-                if (done > 0) Pill("$done done", x.done)
-                if (earlier > 0) Pill("$earlier from earlier", x.overdue)
+    val active = pending + done
+    val earlier = l.pending.count { it.isCarried } + l.overdue.size
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                if (isToday) "${Dates.greeting()}${greetingName()}" else Dates.distanceLabel(date, today),
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+            if (active > 0 || missed > 0 || earlier > 0) {
+                androidx.compose.foundation.layout.FlowRow(
+                    Modifier.padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (active > 0) Pill("$active task${if (active == 1) "" else "s"}", x.pending)
+                    if (done > 0) Pill("$done done", x.done)
+                    if (pending > 0) Pill("$pending left", if (past) x.overdue else x.pending)
+                    if (earlier > 0) Pill("$earlier from earlier", x.overdue)
+                    if (past && missed > 0) Pill("$missed moved on", x.overdue)
+                }
             }
-            if (active > 0) {
-                StackBar(com.skienlabs.tasks.data.Counts(pending, done, 0), Modifier.padding(top = 10.dp), height = 6.dp, overdue = date < today)
-            }
         }
+        // Past days count what moved on unfinished too, so a day is only full when it was finished.
+        val planned = active + if (past) missed else 0
+        if (planned > 0) ProgressRing(done, planned, Modifier.padding(start = 12.dp))
+    }
+}
+
+/** ", Sufail" when the signed-in name is known (set by the home screen). */
+@Composable
+private fun greetingName(): String = LocalGreetingName.current?.let { ", $it" } ?: ""
+
+/** The first name for the greeting; provided by the home screen. */
+val LocalGreetingName = androidx.compose.runtime.staticCompositionLocalOf<String?> { null }
+
+@Composable
+private fun ProgressRing(done: Int, total: Int, modifier: Modifier = Modifier) {
+    val x = LocalExtra.current
+    val target = if (total > 0) done.toFloat() / total else 0f
+    val sweep by androidx.compose.animation.core.animateFloatAsState(
+        target, androidx.compose.animation.core.spring(dampingRatio = 0.7f, stiffness = 120f), label = "ring",
+    )
+    val track = x.surfaceHighest
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.foundation.Canvas(
+            Modifier.size(30.dp).semantics { contentDescription = "$done of $total done" },
+        ) {
+            val w = 3.5.dp.toPx()
+            val inset = w / 2
+            val sz = androidx.compose.ui.geometry.Size(size.width - w, size.height - w)
+            val o = androidx.compose.ui.geometry.Offset(inset, inset)
+            drawArc(track, 0f, 360f, false, o, sz, style = androidx.compose.ui.graphics.drawscope.Stroke(w))
+            if (sweep > 0f) drawArc(
+                androidx.compose.ui.graphics.Brush.sweepGradient(listOf(x.done, x.pending, x.done)),
+                -90f, 360f * sweep, false, o, sz,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+            )
+        }
+        Text(" $done/$total", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
-private fun EmptyDay(date: String, today: String, l: DayLists, filterTag: Tag?) {
+private fun EmptyDay(date: String, today: String, l: DayLists, filterTag: Tag?, missed: Int) {
     val (icon, title, sub) = when {
+        date < today && missed > 0 && l.done.isEmpty() && filterTag == null ->
+            Triple(Icons.Outlined.EventRepeat, "$missed not finished", "${if (missed == 1) "It" else "They"} moved on to the next day by ${if (missed == 1) "itself" else "themselves"}.")
+        l.done.isNotEmpty() && date < today && missed > 0 && filterTag == null ->
+            Triple(Icons.Outlined.TaskAlt, "${l.done.size} done, $missed moved on", "Unfinished tasks moved on to the next day.")
         l.done.isNotEmpty() -> Triple(Icons.Outlined.TaskAlt, "All done!", if (date == today) "Nothing left for today. Nice work." else "Everything on this day is finished.")
         filterTag != null && l.any -> Triple(Icons.Outlined.EventAvailable, "Nothing for ${filterTag.name}", "Other tasks are hidden by the tag filter.")
         date < today -> Triple(Icons.Outlined.EventAvailable, "Nothing was planned", "Add a task to keep a record of this day.")

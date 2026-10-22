@@ -196,7 +196,8 @@ class Store(
     private fun Draft.recount(date: String) {
         var c = Counts()
         for (t in tasks.values) if (t.date == date) c = c.bump(t.status, +1)
-        summary[date] = c
+        // Missed tasks have left this day, so only the server knows them: keep its number.
+        summary[date] = c.copy(missed = summary[date]?.missed ?: 0)
         dirtySummary += date
     }
 

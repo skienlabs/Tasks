@@ -59,6 +59,25 @@ object Dates {
     }
 
     fun fullLabel(key: String): String = full.format(parse(key))
+
+    private val weekdayFmt = DateTimeFormatter.ofPattern("EEEE", Locale.getDefault())
+    private val weekdayShortFmt = DateTimeFormatter.ofPattern("EEE", Locale.getDefault())
+    private val dayMonthYearFmt = DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.getDefault())
+    private val dayMonthShortFmt = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.getDefault())
+    /** "Thursday" */
+    fun weekday(key: String): String = weekdayFmt.format(parse(key))
+    fun weekdayShort(key: String): String = weekdayShortFmt.format(parse(key))
+    /** "22 October 2026" */
+    fun dayMonthYear(key: String): String = dayMonthYearFmt.format(parse(key))
+    fun dayMonthYearShort(key: String): String = dayMonthShortFmt.format(parse(key))
+
+    /** How far a day is from today: "Today", "Tomorrow", "In 3 days", "Yesterday", "5 days ago". */
+    fun distanceLabel(key: String, today: String): String = when (val n = between(today, key)) {
+        0L -> "Today"
+        1L -> "Tomorrow"
+        -1L -> "Yesterday"
+        else -> if (n > 0) "In $n days" else "${-n} days ago"
+    }
     private val longNoWeekday = DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG).withLocale(Locale.getDefault())
     fun longDate(key: String): String = longNoWeekday.format(parse(key))
     fun monthYear(key: String): String = monthYear.format(parse(key))

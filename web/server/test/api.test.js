@@ -180,9 +180,11 @@ test('task lifecycle, carry-over, postpone, isolation', async () => {
   // Summary
   r = await u1('GET', '/api/summary?from=2026-10-01&to=2026-10-31');
   assert.deepEqual(r.json().days, [
-    { date: today, pending: 1, done: 0, cancelled: 0 },
-    { date: '2026-10-19', pending: 1, done: 0, cancelled: 0 },
-    { date: '2026-10-20', pending: 0, done: 0, cancelled: 1 },
+    // Yesterday keeps the task it left unfinished (carried to today) as "missed".
+    { date: yesterday, pending: 0, done: 0, cancelled: 0, missed: 1 },
+    { date: today, pending: 1, done: 0, cancelled: 0, missed: 0 },
+    { date: '2026-10-19', pending: 1, done: 0, cancelled: 0, missed: 0 },
+    { date: '2026-10-20', pending: 0, done: 0, cancelled: 1, missed: 0 },
   ]);
   assert.equal((await u1('GET', '/api/summary?from=2026-01-01&to=2026-12-31')).statusCode, 400);
 
@@ -252,6 +254,95 @@ test('carry-over: only unfinished tasks, keeps the first missed day, ignores a w
   assert.equal(r.json().carriedFrom, '2026-10-14');
   r = await u('POST', '/api/tasks', { id: 'undo-carried-2', title: 'Odd', date: '2026-10-17', carriedFrom: '2026-10-19' });
   assert.equal(r.json().carriedFrom, null, 'a "from" day after its own day is ignored');
+});
+
+test('migration v6 backfills missed days from carried_from', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tasks-mig6-')), 'tasks.db');
+  let db = openDb(file);
+  db.exec(`DROP TABLE task_misses; PRAGMA user_version = 5;`);
+  db.prepare(`INSERT INTO tasks (id, uid, title, date, original_date, created_at, updated_at, carried_from)
+    VALUES ('carried-task-1', 'u', 'Late', '2026-10-17', '2026-10-14', 1, 1, '2026-10-14')`).run();
+  db.close();
+  db = openDb(file);
+  const days = db.prepare("SELECT date FROM task_misses WHERE task_id = 'carried-task-1' ORDER BY date").all().map((r) => r.date);
+  assert.deepEqual(days, ['2026-10-14', '2026-10-15', '2026-10-16']);
+  // A task carried for a long time keeps its most recent 92 days (the ones the summary shows).
+  db.exec(`DROP TABLE task_misses; PRAGMA user_version = 5;`);
+  db.prepare(`INSERT INTO tasks (id, uid, title, date, original_date, created_at, updated_at, carried_from)
+    VALUES ('carried-task-2', 'u', 'Very late', '2026-10-17', '2026-01-01', 1, 1, '2026-01-01')`).run();
+  db.close();
+  db = openDb(file);
+  const long = db.prepare("SELECT date FROM task_misses WHERE task_id = 'carried-task-2' ORDER BY date").all().map((r) => r.date);
+  assert.equal(long.length, 92);
+  assert.equal(long[0], '2026-07-17');
+  assert.equal(long.at(-1), '2026-10-16');
+  db.close();
+});
+
+test('search: ranking, filters, phrases, typos, suggestions, isolation', async () => {
+  const { as } = await setup();
+  const u = await as('alice');
+  const other = await as('bob');
+  const today = '2026-10-17';
+  const skien = (await u('POST', '/api/tags', { name: 'Skien Labs', color: 'blue' })).json();
+  const softop = (await u('POST', '/api/tags', { name: 'Softop', color: 'orange' })).json();
+  const mk = async (title, extra = {}) => (await u('POST', '/api/tasks', { title, date: today, today, ...extra })).json();
+  const a = await mk('Mail server setup', { tagIds: [skien.id], priority: 1, subtasks: [{ id: 'st-aaaaaaaa1', parentId: null, title: 'Open ports 25 and 587', done: false }] });
+  const b = await mk('Review the mail templates', { tagIds: [softop.id], notes: 'Check the invoice footer' });
+  const c = await mk('Invoice for September', { tagIds: [softop.id], status: 'done' });
+  await mk('Gym');
+  await other('POST', '/api/tasks', { title: 'Mail from bob', date: today, today });
+
+  const q = async (query) => (await u('GET', `/api/search?q=${encodeURIComponent(query)}&today=${today}`)).json();
+  let r = await q('mail');
+  assert.deepEqual(r.results.map((x) => x.id), [a.id, b.id], 'title start ranks first; other users never show');
+  r = await q('ports');
+  assert.deepEqual(r.results.map((x) => x.id), [a.id]);
+  assert.deepEqual(r.results[0].match, { field: 'step', text: 'Open ports 25 and 587' });
+  r = await q('invoice');
+  assert.deepEqual(r.results.map((x) => x.id), [c.id, b.id], 'title beats notes');
+  assert.equal(r.results[1].match.field, 'notes');
+  assert.equal((await q('invoice is:open')).results.map((x) => x.id).join(), b.id);
+  assert.equal((await q('#softop is:done')).results.map((x) => x.id).join(), c.id);
+  // Impossible dates are ignored (no error), real ones filter.
+  for (const bad of ['before:2026-13-40', 'after:2026-02-30', 'date:2026-02-31']) {
+    assert.equal((await u('GET', `/api/search?q=${encodeURIComponent(`mail ${bad}`)}&today=${today}`)).statusCode, 200, bad);
+  }
+  assert.equal((await q('mail after:2026-10-17')).results.length, 0);
+  assert.equal((await q('mail before:2026-10-18')).results.length, 2);
+  assert.equal((await q('tag:skienlabs')).results.map((x) => x.id).join(), a.id, 'multi-word tag names, no spaces');
+  assert.equal((await q('p:high')).results.map((x) => x.id).join(), a.id);
+  assert.equal((await q('has:notes')).results.map((x) => x.id).join(), b.id);
+  assert.equal((await q('"templates mail"')).results.length, 0, 'phrase must match as written');
+  assert.equal((await q('templates mail')).results.map((x) => x.id).join(), b.id, 'words match in any order');
+  assert.equal((await q('"the mail"')).results.map((x) => x.id).join(), b.id);
+  r = await q('sevrer');
+  assert.equal(r.fuzzy, true, 'typo-tolerant when nothing matches exactly');
+  assert.equal(r.results[0].id, a.id);
+  assert.equal((await q('date:yesterday')).results.length, 0);
+  assert.equal((await q('date:today Gym')).results.length, 1);
+
+  // Suggestions for the word being typed
+  r = await q('#so');
+  assert.deepEqual(r.suggestions.map((s) => s.insert), ['#softop']);
+  assert.equal(r.suggestions[0].label, 'Softop');
+  r = await q('is:');
+  assert.deepEqual(r.suggestions.map((s) => s.insert), ['is:open', 'is:done', 'is:cancelled', 'is:late']);
+  r = await q('ma');
+  assert.ok(r.suggestions.some((s) => s.insert === 'mail'));
+  r = await q('');
+  assert.deepEqual(r, { results: [], total: 0, fuzzy: false, terms: [], suggestions: [] });
+  assert.equal((await u('GET', `/api/search?q=${'x'.repeat(201)}`)).statusCode, 400);
+  // The apps ask for a page size; it arrives as text.
+  const limited = await (await u('GET', `/api/search?q=is:open&today=${today}&limit=1`)).json();
+  assert.equal(limited.results.length, 1);
+  assert.ok(limited.total > 1);
+  assert.equal((await u('GET', `/api/search?q=a&limit=40`)).statusCode, 200);
+  assert.equal((await u('GET', `/api/search?q=a&limit=0`)).statusCode, 400);
+  assert.equal((await u('GET', `/api/search?q=a&limit=101`)).statusCode, 400);
 });
 
 test('unknown api path is 404 json, bad json is 400', async () => {
@@ -366,7 +457,10 @@ test('tags: CRUD, ownership, task assignment, stats', async () => {
   assert.deepEqual(tag(zup.id), { tagId: zup.id, pending: 1, done: 0, cancelled: 0 });
   assert.deepEqual(tag(null), { tagId: null, pending: 1, done: 0, cancelled: 0 });
   assert.equal(s.byPriority[0].priority, 4);
-  assert.deepEqual(s.days.map((d) => d.date), [today, '2026-10-18'], 'nothing left behind on the 10th');
+  assert.deepEqual(s.days.filter((d) => d.pending + d.done + d.cancelled).map((d) => d.date), [today, '2026-10-18'], 'the task left the 10th');
+  // ... but each day it stayed unfinished still shows it as missed.
+  assert.deepEqual(s.days.filter((d) => d.missed).map((d) => d.date),
+    ['2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16']);
   assert.equal((await u1('GET', '/api/stats?from=2026-10-01&to=2026-10-31')).statusCode, 400);
 
   // Delete tag removes it from tasks
@@ -421,14 +515,14 @@ test('migration from v2 to the latest keeps users and tasks', async () => {
   let db = openDb(file);
   db.prepare("INSERT INTO users (uid, email, name, photo, created_at, last_seen) VALUES ('u', 'u@x.com', 'U', null, 1, 1)").run();
   // Back to the v2 schema, with a v2-era task.
-  db.exec(`DROP INDEX idx_tasks_pending; ALTER TABLE tasks DROP COLUMN carried_from;
+  db.exec(`DROP TABLE task_misses; DROP INDEX idx_tasks_pending; ALTER TABLE tasks DROP COLUMN carried_from;
     DROP TABLE attachments; ALTER TABLE tasks DROP COLUMN subtasks;
     ALTER TABLE users DROP COLUMN display_name; ALTER TABLE users DROP COLUMN onboarded_at; PRAGMA user_version = 2;`);
   db.prepare(`INSERT INTO tasks (id, uid, title, date, original_date, created_at, updated_at)
     VALUES ('old-task-1', 'u', 'Old', '2026-01-01', '2026-01-01', 1, 1)`).run();
   db.close();
   db = openDb(file);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
   const { createRepo } = await import('../src/db.js');
   const repo = createRepo(db);
   assert.deepEqual(repo.getProfile('u'), { uid: 'u', email: 'u@x.com', name: 'U', photo: null, createdAt: 1, onboarded: false });

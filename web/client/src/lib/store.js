@@ -106,7 +106,7 @@ export function getTask(id) {
 // ---- Local bookkeeping -------------------------------------------------------
 
 function bump(task, sign) {
-  const s = { pending: 0, done: 0, cancelled: 0, ...summary.get(task.date) };
+  const s = { pending: 0, done: 0, cancelled: 0, missed: 0, ...summary.get(task.date) };
   s[task.status] = Math.max(0, s[task.status] + sign);
   summary.set(task.date, s);
 }
@@ -126,7 +126,8 @@ function drop(id) {
 }
 
 function recount(date) {
-  const s = { pending: 0, done: 0, cancelled: 0 };
+  // `missed` (tasks left unfinished that day and carried on) only comes from the server.
+  const s = { pending: 0, done: 0, cancelled: 0, missed: summary.get(date)?.missed ?? 0 };
   for (const t of byId.values()) if (t.date === date) s[t.status]++;
   summary.set(date, s);
 }
@@ -187,7 +188,9 @@ export async function loadSummary(from, to) {
     // Skip days with local changes the server may not have seen yet.
     if ((dateTouched.get(d) ?? 0) > startSeq || inflightDates.get(d)) continue;
     const s = got.get(d);
-    summary.set(d, s ? { pending: s.pending, done: s.done, cancelled: s.cancelled } : { pending: 0, done: 0, cancelled: 0 });
+    summary.set(d, s
+      ? { pending: s.pending, done: s.done, cancelled: s.cancelled, missed: s.missed ?? 0 }
+      : { pending: 0, done: 0, cancelled: 0, missed: 0 });
   }
   emit();
 }

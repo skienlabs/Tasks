@@ -146,15 +146,16 @@ fun AppLogo(size: Dp = 32.dp) {
     }
 }
 
-/** Horizontal bar split into done / left / cancelled. */
+/** Horizontal bar split into done / left / not finished (moved on) / cancelled. */
 @Composable
 fun StackBar(c: Counts, modifier: Modifier = Modifier, height: Dp = 8.dp, overdue: Boolean = false) {
     val x = LocalExtra.current
-    val total = c.total
+    val total = c.total + c.missed
     Row(modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(50)).background(x.surfaceHighest)) {
         if (total > 0) {
             if (c.done > 0) Box(Modifier.weight(c.done.toFloat()).height(height).background(x.done))
             if (c.pending > 0) Box(Modifier.weight(c.pending.toFloat()).height(height).background(if (overdue) x.overdue else x.pending))
+            if (c.missed > 0) Box(Modifier.weight(c.missed.toFloat()).height(height).background(x.overdue))
             if (c.cancelled > 0) Box(Modifier.weight(c.cancelled.toFloat()).height(height).background(x.cancelled.copy(alpha = 0.6f)))
         }
     }

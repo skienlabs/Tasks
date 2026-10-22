@@ -12,9 +12,11 @@ A fast, lightweight daily task planner with Google sign-in. One Docker container
 - **Summary**: per-day counts (tasks / done / left) on every day, a side panel with week and month progress on large screens, and a monthly summary page with a daily chart, per-company and per-priority breakdowns, and a day-by-day list.
 - **Installable app** (PWA): in Chrome or Edge use *Install app* (sidebar, account menu or the address bar icon), then pin it to the Windows taskbar. Works on Android too.
 - **Built for PC and phone**: sidebar + side panel on desktop, bottom navigation and a floating add button on mobile.
-- **Six themes**: System, Light, Light Gray (VS Code-style medium light grey), Dark (soft grey), Midnight Black (true black) and Abyss (deep navy with a soft glow, like the VS Code theme). Google Sans, Material Design.
+- **Eight themes**: System, Light, Light Gray (VS Code-style medium light grey), Dark (soft grey), Midnight Black (true black), Abyss (deep navy with a soft glow, like the VS Code theme), and **Glass Black** / **Glass White** (Apple Liquid Glass style: frosted see-through panels over slowly moving light, with animations). Google Sans, Material Design.
+- **Search** every task from the top bar (`/` or `Ctrl K`): ranked results as you type, suggestions, highlights, and filters like `#tag`, `is:done`, `p:high`, `date:week`, "phrases".
+- **Unfinished days stay unfinished** in the summary: tasks that moved on to the next day count as "not finished" (red) on the day they left.
 - **One sorted list**: priority first, then company (tag) A–Z, then title A–Z (numbers by value).
-- Keyboard: `←` `→` change day, `T` today, `N` new task, `S` summary.
+- Keyboard: `/` or `Ctrl K` search, `←` `→` change day, `T` today, `N` new task, `S` summary.
 - Every action updates the screen instantly and syncs in the background.
 
 ## Stack
@@ -125,7 +127,8 @@ All endpoints except `/api/health` and `/api/config` need `Authorization: Bearer
 | GET | `/api/me` | Profile (creates it on first call): `name, email, provider, emailVerified, onboarded` |
 | PATCH | `/api/me` | `{ name?, onboarded?: true }` |
 | GET | `/api/tasks?date=YYYY-MM-DD&today=YYYY-MM-DD` | Tasks for a day. With `today` (within a day of the server's date), unfinished tasks from earlier days first move to `today`, keeping `carriedFrom` (the day they were first due). `overdue` stays for older apps and is normally empty |
-| GET | `/api/summary?from=&to=` | Per-day counts for the calendar (max 92 days) |
+| GET | `/api/summary?from=&to=` | Per-day counts for the calendar (max 92 days): `pending, done, cancelled`, and `missed` (tasks that were on the day unfinished and moved on) |
+| GET | `/api/search?q=&today=&limit=` | Ranked search over all tasks (`limit` 1–100, default 30). Words, "phrases", `#tag`/`tag:`, `is:open\|done\|cancelled\|late`, `p:high\|medium\|low\|none`, `date:today\|tomorrow\|yesterday\|week\|month\|YYYY-MM-DD`, `before:`, `after:`, `has:steps\|images\|notes`. Returns `{ results (tasks, each with an optional match {field, text}), total, fuzzy, terms, suggestions }` |
 | POST | `/api/tasks` | `{ title, date, priority?, notes?, id? }` (client `id` makes retries safe) |
 | PATCH | `/api/tasks/:id` | Any of `title, notes, priority, date, status, postponed, tagIds, subtasks` |
 | POST | `/api/tasks/:id/postpone` | `{ today }` moves to the day after today (or after its own date, if later) |
@@ -137,7 +140,7 @@ All endpoints except `/api/health` and `/api/config` need `Authorization: Bearer
 | POST | `/api/tags` | `{ name, color?, logo? }` (logo: PNG/JPEG/WebP data URL, ~96px, resized in the browser) |
 | PATCH | `/api/tags/:id` | Any of `name, color, logo, position` |
 | DELETE | `/api/tags/:id` | Also removes it from tasks |
-| GET | `/api/stats?from=&to=&today=` | Month summary: per day, per tag, per priority, overdue, postponed |
+| GET | `/api/stats?from=&to=&today=` | Month summary: per day (with `missed`), per tag, per priority, overdue, postponed |
 | GET | `/api/events` | Live sync (Server-Sent Events): `ready`, then `change` `{type: tasks\|tags\|profile, dates, source}` whenever another device changes something. Send `X-Client-Id` on writes so a device can skip its own changes. |
 
 Tasks carry `tagIds: []`; send `tagIds` on create/update to set them (max 10, must be your own tags).

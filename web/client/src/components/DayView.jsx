@@ -10,9 +10,9 @@ import TaskItem from './TaskItem.jsx';
 import TaskDetails from './TaskDetails.jsx';
 import TagChip from './TagChip.jsx';
 import { StackBar } from './SummaryView.jsx';
-import { addDays, formatDate, fromKey, isCarried, relativeLabel, startOfWeek, toKey, weekdayNames } from '../lib/dates.js';
+import { addDays, formatDate, fromKey, isCarried, startOfWeek, toKey, weekdayNames } from '../lib/dates.js';
 import { getTask, selectDay, selectOverdue, selectSummary, selectTags, useStoreVersion } from '../lib/store.js';
-import { hexAlpha, statusColors, titleGradient } from '../theme.js';
+import { glass, hexAlpha, statusColors } from '../theme.js';
 
 const NAMES = weekdayNames();
 
@@ -26,7 +26,8 @@ function WeekStrip({ date, today, onSelect }) {
         const isToday = d === today;
         const s = selectSummary(d);
         const pending = s?.pending ?? 0;
-        const total = pending + (s?.done ?? 0);
+        const missed = s?.missed ?? 0; // left unfinished that day, carried on
+        const total = pending + (s?.done ?? 0) + missed;
         return (
           <ButtonBase
             key={d}
@@ -56,8 +57,9 @@ function WeekStrip({ date, today, onSelect }) {
             <Box sx={{ height: 6, width: '56%', display: 'flex', alignItems: 'center' }}>
               {total > 0 && (
                 <Box sx={(t) => ({ display: 'flex', width: '100%', height: 4, borderRadius: 2, overflow: 'hidden', bgcolor: t.tokens.surfaceHighest })}>
-                  <Box sx={(t) => ({ width: `${((total - pending) / total) * 100}%`, bgcolor: statusColors(t).done })} />
+                  <Box sx={(t) => ({ width: `${((total - pending - missed) / total) * 100}%`, bgcolor: statusColors(t).done })} />
                   <Box sx={(t) => ({ width: `${(pending / total) * 100}%`, bgcolor: d < today ? statusColors(t).overdue : statusColors(t).pending })} />
+                  <Box sx={(t) => ({ width: `${(missed / total) * 100}%`, bgcolor: statusColors(t).overdue })} />
                 </Box>
               )}
             </Box>
@@ -66,6 +68,14 @@ function WeekStrip({ date, today, onSelect }) {
       })}
     </Box>
   );
+}
+
+/** "Tomorrow", "In 3 days", "Yesterday", "3 days ago": how far a day is from today. */
+function distanceLabel(date, today) {
+  const n = Math.round((fromKey(date) - fromKey(today)) / 86400000);
+  if (n === 1) return 'Tomorrow';
+  if (n === -1) return 'Yesterday';
+  return n > 0 ? `In ${n} days` : `${-n} days ago`;
 }
 
 function greeting() {
@@ -90,7 +100,7 @@ function PanelCard({ title, c, onClick, extra }) {
   const active = c.pending + c.done;
   const rate = active ? Math.round((c.done / active) * 100) : 0;
   return (
-    <Box sx={(t) => ({ borderRadius: '24px', p: 2, bgcolor: t.tokens.surfaceHigh, border: `1px solid ${t.palette.divider}` })}>
+    <Box sx={(t) => ({ borderRadius: '24px', p: 2, bgcolor: t.tokens.surfaceHigh, border: `1px solid ${t.palette.divider}`, ...glass(t), ...(t.tokens.glass && { animation: 'glassIn .6s cubic-bezier(.2,.9,.3,1.1) both' }) })}>
       <Box sx={{ display: 'flex', alignItems: 'baseline', mb: 1.5 }}>
         <Typography sx={{ fontWeight: 500, flex: 1 }}>{title}</Typography>
         <Typography sx={(t) => ({ fontWeight: 600, color: statusColors(t).rate })}>{rate}%</Typography>
@@ -196,6 +206,7 @@ export default function DayView({
   const nothing = !loading && !failed && pending.length + done.length + cancelled.length + overdue.length === 0;
 
   const firstName = (userName || '').split(' ')[0];
+  const missed = selectSummary(date)?.missed ?? 0; // left unfinished here and moved on to a later day
   const isToday = date === today;
 
   const main = (
@@ -241,35 +252,21 @@ export default function DayView({
         </Box>
       )}
 
-      <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 2, mt: 3, mb: 2, px: 0.5 }}>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          {isToday && firstName && (
-            <Typography sx={{ fontSize: 14, color: 'text.secondary', mb: 0.25 }}>{greeting()}, {firstName}</Typography>
-          )}
-          <Typography
-            component="h1"
-            sx={(t) => ({
-              fontSize: { xs: 28, sm: 34 }, fontWeight: 400, lineHeight: 1.15,
-              ...(isToday && {
-                // Sized to the word, so the whole gradient shows (not just its first colour).
-                display: 'inline-block', pb: '0.06em',
-                background: titleGradient(t),
-                WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent',
-              }),
-            })}
-          >
-            {relativeLabel(date, today)}
+      {/* One compact line under the week: who/when, the day's numbers, and the progress ring.
+          The full date lives in the top bar. */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 2.5, mb: 2, px: 0.5, minHeight: 40 }}>
+        <Box sx={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 1.25, rowGap: 0.75 }}>
+          <Typography component="h1" sx={{ fontSize: 15, fontWeight: 500, color: 'text.primary', whiteSpace: 'nowrap' }}>
+            {isToday ? (firstName ? `${greeting()}, ${firstName}` : greeting()) : distanceLabel(date, today)}
           </Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-            {formatDate(date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-          </Typography>
-          {total + overdue.length > 0 && (
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1.25 }}>
+          {(total + overdue.length > 0 || missed > 0) && (
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
               {[
-                ['pending', `${total} task${total === 1 ? '' : 's'}`, true],
-                ['done', `${done.length} done`, true],
-                [isPast ? 'overdue' : 'pending', `${pending.length} left`, true],
+                ['pending', `${total} task${total === 1 ? '' : 's'}`, total > 0],
+                ['done', `${done.length} done`, total > 0],
+                [isPast ? 'overdue' : 'pending', `${pending.length} left`, total > 0],
                 ['overdue', `${carriedCount} from earlier`, carriedCount > 0],
+                ['overdue', `${missed} moved on`, isPast && missed > 0],
               ].filter((x) => x[2]).map(([k, label]) => (
                 <Box
                   key={label}
@@ -285,12 +282,12 @@ export default function DayView({
           )}
         </Box>
         {total > 0 && (
-          <Box sx={{ display: { xs: 'none', sm: 'flex' }, alignItems: 'center', gap: 1.25, pb: 0.5 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Box sx={{ position: 'relative', display: 'inline-flex' }}>
-              <CircularProgress variant="determinate" value={100} size={36} thickness={4} sx={(t) => ({ color: t.tokens.surfaceHighest, position: 'absolute' })} />
-              <CircularProgress variant="determinate" value={(done.length / total) * 100} size={36} thickness={4} color={done.length === total ? 'success' : 'primary'} />
+              <CircularProgress variant="determinate" value={100} size={34} thickness={4} sx={(t) => ({ color: t.tokens.surfaceHighest, position: 'absolute' })} />
+              <CircularProgress variant="determinate" value={(done.length / total) * 100} size={34} thickness={4} color={done.length === total ? 'success' : 'primary'} />
             </Box>
-            <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+            <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap', display: { xs: 'none', sm: 'block' } }}>
               {done.length}/{total} done
             </Typography>
           </Box>
@@ -305,7 +302,9 @@ export default function DayView({
           })}
         >
           <EventOutlined sx={{ fontSize: 20 }} />
-          <Typography sx={{ flex: 1, minWidth: 180, fontSize: 14.5 }}>This day has passed. New tasks go on today or later.</Typography>
+          <Typography sx={{ flex: 1, minWidth: 180, fontSize: 14.5 }}>
+            This day has passed.{missed > 0 ? ` ${missed} unfinished task${missed === 1 ? '' : 's'} moved on to the next day.` : ''} New tasks go on today or later.
+          </Typography>
           <Button size="small" onClick={() => onSelectDate(today)}>Go to today</Button>
         </Box>
       ) : (
@@ -341,7 +340,9 @@ export default function DayView({
         <Box sx={{ display: 'grid', justifyItems: 'center', textAlign: 'center', gap: 1, py: 8, color: 'text.secondary' }}>
           <EventOutlined sx={{ fontSize: 56, opacity: 0.5 }} />
           <Typography sx={{ fontSize: 17, color: 'text.primary' }}>
-            {tagFilter ? 'No tasks with this tag' : isPast ? 'Nothing was planned for this day' : 'No tasks yet'}
+            {tagFilter ? 'No tasks with this tag'
+              : isPast && missed > 0 ? `${missed} unfinished task${missed === 1 ? '' : 's'} moved on from this day`
+                : isPast ? 'Nothing was planned for this day' : 'No tasks yet'}
           </Typography>
           {!isPast && <Typography variant="body2">Add a task above to plan your day.</Typography>}
         </Box>

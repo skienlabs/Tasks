@@ -26,12 +26,17 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.LockReset
 import androidx.compose.material.icons.outlined.MarkEmailUnread
@@ -129,98 +134,222 @@ fun AccountSheet(app: AppController, profile: Profile, theme: ThemePref, onDismi
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet) {
         Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Avatar(profile, 56.dp)
-                Column(Modifier.padding(start = 16.dp).weight(1f)) {
-                    Text(profile.name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(profile.email ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        AssistChip(onClick = {}, label = { Text(if (isPassword) "Email & password" else "Google account") })
-                        if (isPassword) {
-                            if (profile.emailVerified) AssistChip(onClick = {}, label = { Text("Verified") }, leadingIcon = { Icon(Icons.Outlined.Verified, null, Modifier.size(18.dp), tint = x.done) })
-                            else AssistChip(onClick = {}, label = { Text("Not verified") }, leadingIcon = { Icon(Icons.Outlined.MarkEmailUnread, null, Modifier.size(18.dp), tint = x.overdue) })
-                        }
-                    }
-                }
+            val state by app.store.state.collectAsStateWithLifecycle()
+            val today by app.today.collectAsStateWithLifecycle()
+            val week = remember(state.summary, today) {
+                val start = com.skienlabs.tasks.data.Dates.startOfWeek(today)
+                (0L until 7L).map { com.skienlabs.tasks.data.Dates.addDays(start, it) }
+                    .fold(com.skienlabs.tasks.data.Counts()) { acc, d -> acc.plus(state.summary[d] ?: com.skienlabs.tasks.data.Counts()) }
             }
+            ProfileHero(profile, week)
 
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = name, onValueChange = { name = it.take(60) }, label = { Text("Your name") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words), modifier = Modifier.weight(1f),
-                )
-                Button(
-                    onClick = {
-                        run("name") {
-                            app.setProfile(app.api.updateMe(name = name.trim()))
-                            "Name saved"
-                        }
-                    },
-                    enabled = name.isNotBlank() && name.trim() != profile.name && busy.isEmpty(),
-                ) {
-                    if (busy == "name") CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary) else Text("Save")
-                }
-            }
-
-            if (isPassword && !profile.emailVerified) {
-                Column(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(x.overdueBg).padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text("Check your inbox for a verification link, so you can recover your account if you forget the password.")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = {
-                            run("resend") { app.auth.resendVerification(); "Verification email sent to ${profile.email}" }
-                        }, enabled = busy.isEmpty()) { Text("Resend email") }
-                        TextButton(onClick = {
-                            run("check") {
-                                app.auth.refreshUser()
-                                val p = app.api.me()
-                                app.setProfile(p)
-                                if (p.emailVerified) "Email verified" else "Not verified yet. Open the link in the email first."
+            Section("Profile") {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = name, onValueChange = { name = it.take(60) }, label = { Text("Your name") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words), modifier = Modifier.weight(1f),
+                    )
+                    Button(
+                        onClick = {
+                            run("name") {
+                                app.setProfile(app.api.updateMe(name = name.trim()))
+                                "Name saved"
                             }
-                        }, enabled = busy.isEmpty()) { Text("I've verified") }
+                        },
+                        enabled = name.isNotBlank() && name.trim() != profile.name && busy.isEmpty(),
+                    ) {
+                        if (busy == "name") CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary) else Text("Save")
                     }
+                }
+                if (isPassword && !profile.emailVerified) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 12.dp).clip(RoundedCornerShape(14.dp)).background(x.overdueBg).padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("Check your inbox for a verification link, so you can recover your account if you forget the password.")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = {
+                                run("resend") { app.auth.resendVerification(); "Verification email sent to ${profile.email}" }
+                            }, enabled = busy.isEmpty()) { Text("Resend email") }
+                            TextButton(onClick = {
+                                run("check") {
+                                    app.auth.refreshUser()
+                                    val p = app.api.me()
+                                    app.setProfile(p)
+                                    if (p.emailVerified) "Email verified" else "Not verified yet. Open the link in the email first."
+                                }
+                            }, enabled = busy.isEmpty()) { Text("I've verified") }
+                        }
+                    }
+                }
+                if (isPassword && profile.email != null) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SettingRow(Icons.Outlined.LockReset, "Change password", "We'll email you a reset link", enabled = busy.isEmpty()) {
+                        run("reset") { app.auth.resetPassword(profile.email); "Password reset link sent to ${profile.email}" }
+                    }
+                }
+                msg?.let { (isError, text) ->
+                    Text(
+                        text, Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp),
+                        color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
             }
 
-            if (isPassword && profile.email != null) {
-                OutlinedButton(onClick = {
-                    run("reset") { app.auth.resetPassword(profile.email); "Password reset link sent to ${profile.email}" }
-                }, enabled = busy.isEmpty()) {
-                    Icon(Icons.Outlined.LockReset, null, Modifier.size(18.dp)); Text("  Change password")
-                }
+            Section("Notifications") {
+                Box(Modifier.padding(16.dp)) { SummarySetting(app) }
             }
 
-            msg?.let { (isError, text) ->
-                Text(text, color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+            Section("Appearance", card = false) {
+                ThemeDropdown(theme) { t -> scope.launch { app.prefs.setTheme(t) } }
             }
 
-            SummarySetting(app)
+            OutlinedButton(
+                onClick = { onDismiss(); app.signOut() },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+                colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            ) {
+                Icon(Icons.AutoMirrored.Outlined.Logout, null, Modifier.size(18.dp)); Text("  Sign out")
+            }
 
-            ThemeDropdown(theme) { t -> scope.launch { app.prefs.setTheme(t) } }
-
-            HorizontalDivider()
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    if (profile.createdAt > 0) {
-                        val since = DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()).format(Instant.ofEpochMilli(profile.createdAt).atZone(ZoneId.systemDefault()))
-                        Text("Member since $since", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Text("Tasks ${BuildConfig.VERSION_NAME} · © 2026 Skien Software Lab", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp)) {
-                        com.skienlabs.tasks.ui.common.PrivacyLink()
-                        com.skienlabs.tasks.ui.common.PrivacyLink(delete = true)
-                    }
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    com.skienlabs.tasks.ui.common.PrivacyLink()
+                    com.skienlabs.tasks.ui.common.PrivacyLink(delete = true)
                 }
-                TextButton(onClick = { onDismiss(); app.signOut() }) {
-                    Icon(Icons.AutoMirrored.Outlined.Logout, null, Modifier.size(18.dp)); Text("  Sign out")
-                }
+                Text(
+                    "Tasks ${BuildConfig.VERSION_NAME} · © 2026 Skien Software Lab",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
+    }
+}
+
+/**
+ * The card at the top: a soft wash of the theme's gradient with light orbs, the avatar in a
+ * glowing ring, name, email, how they sign in, and this week at a glance.
+ */
+@Composable
+internal fun ProfileHero(profile: Profile, week: com.skienlabs.tasks.data.Counts) {
+    val x = LocalExtra.current
+    val isPassword = profile.provider == "password"
+    val since = if (profile.createdAt > 0) {
+        DateTimeFormatter.ofPattern("MMM yyyy", Locale.getDefault()).format(Instant.ofEpochMilli(profile.createdAt).atZone(ZoneId.systemDefault()))
+    } else null
+    val shape = RoundedCornerShape(28.dp)
+    val ring = androidx.compose.animation.core.rememberInfiniteTransition(label = "ring").animateFloat(
+        0f, 360f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(12_000, easing = androidx.compose.animation.core.LinearEasing)), label = "spin",
+    )
+    Box(
+        Modifier.fillMaxWidth().clip(shape)
+            .background(androidx.compose.ui.graphics.Brush.linearGradient(x.gradient.map { it.copy(alpha = if (x.dark) 0.22f else 0.16f) }))
+            .border(1.dp, androidx.compose.ui.graphics.Brush.linearGradient(listOf(x.gradient.first().copy(alpha = 0.5f), Color.Transparent, x.gradient.last().copy(alpha = 0.4f))), shape)
+            .drawBehind {
+                // Two soft orbs of light, for depth.
+                drawCircle(androidx.compose.ui.graphics.Brush.radialGradient(listOf(x.gradient[1].copy(alpha = 0.35f), Color.Transparent), androidx.compose.ui.geometry.Offset(size.width * 0.92f, 0f), size.width * 0.45f), size.width * 0.45f, androidx.compose.ui.geometry.Offset(size.width * 0.92f, 0f))
+                drawCircle(androidx.compose.ui.graphics.Brush.radialGradient(listOf(x.gradient[0].copy(alpha = 0.3f), Color.Transparent), androidx.compose.ui.geometry.Offset(0f, size.height), size.width * 0.5f), size.width * 0.5f, androidx.compose.ui.geometry.Offset(0f, size.height))
+            }
+            .padding(vertical = 22.dp, horizontal = 16.dp),
+    ) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                Modifier.size(96.dp).drawBehind {
+                    rotate(ring.value) {
+                        drawCircle(androidx.compose.ui.graphics.Brush.sweepGradient(x.gradient + x.gradient.first()), style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx()))
+                    }
+                },
+                contentAlignment = Alignment.Center,
+            ) { Avatar(profile, 82.dp) }
+            Text(
+                profile.name, Modifier.padding(top = 12.dp),
+                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
+            )
+            Text(profile.email ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            FlowRow(
+                Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                HeroChip(if (isPassword) "Email & password" else "Google account", null)
+                if (isPassword) {
+                    if (profile.emailVerified) HeroChip("Verified", x.done, Icons.Outlined.Verified)
+                    else HeroChip("Not verified", x.overdue, Icons.Outlined.MarkEmailUnread)
+                }
+                if (since != null) HeroChip("Since $since", null)
+            }
+            Row(
+                Modifier.padding(top = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                    .background(if (x.dark) Color.White.copy(alpha = 0.06f) else Color.White.copy(alpha = 0.55f))
+                    .padding(vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
+                HeroStat("${week.done}", "done this week", x.done)
+                HeroStat("${week.pending}", "still open", x.pending)
+                HeroStat(if (week.active > 0) "${Math.round(week.done * 100f / week.active)}%" else "–", "complete", x.rate)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroChip(text: String, color: Color?, icon: androidx.compose.ui.graphics.vector.ImageVector? = null) {
+    val x = LocalExtra.current
+    val c = color ?: MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        Modifier.clip(RoundedCornerShape(50))
+            .background(if (color != null) color.copy(alpha = 0.14f) else if (x.dark) Color.White.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.6f))
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (icon != null) Icon(icon, null, Modifier.size(14.dp).padding(end = 2.dp), tint = c)
+        Text(text, style = MaterialTheme.typography.labelMedium, color = c, maxLines = 1)
+    }
+}
+
+@Composable
+private fun HeroStat(value: String, label: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium, color = color)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** A titled group of settings; [card] wraps it in a rounded panel. */
+@Composable
+internal fun Section(title: String, card: Boolean = true, content: @Composable () -> Unit) {
+    val x = LocalExtra.current
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            title.uppercase(), Modifier.padding(start = 6.dp),
+            style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!card) content()
+        else Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(x.surfaceHigh)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp)),
+        ) { content() }
+    }
+}
+
+@Composable
+internal fun SettingRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, sub: String, enabled: Boolean = true, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+        Column(Modifier.weight(1f).padding(start = 14.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -304,6 +433,8 @@ private fun themeLabel(t: ThemePref) = when (t) {
     ThemePref.DIM -> AppTheme.DIM.label
     ThemePref.DARK -> AppTheme.MIDNIGHT.label
     ThemePref.ABYSS -> AppTheme.ABYSS.label
+    ThemePref.GLASS -> AppTheme.GLASS.label
+    ThemePref.GLASS_LIGHT -> AppTheme.GLASS_LIGHT.label
 }
 
 /** Five little pictures of the app, one per theme; the chosen one is outlined. */
@@ -316,10 +447,12 @@ fun ThemeSwatches(selected: ThemePref, onSelect: (ThemePref) -> Unit) {
         ThemePref.DIM to AppTheme.DIM,
         ThemePref.DARK to AppTheme.MIDNIGHT,
         ThemePref.ABYSS to AppTheme.ABYSS,
+        ThemePref.GLASS to AppTheme.GLASS,
+        ThemePref.GLASS_LIGHT to AppTheme.GLASS_LIGHT,
     )
-    // Three per row: six themes don't fit one row on a phone.
+    // Four per row: eight themes in two rows on a phone.
     Column(Modifier.fillMaxWidth().selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-      options.chunked(3).forEach { rowItems ->
+      options.chunked(4).forEach { rowItems ->
       Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         rowItems.forEach { (pref, look) ->
             val on = pref == selected
@@ -336,12 +469,28 @@ fun ThemeSwatches(selected: ThemePref, onSelect: (ThemePref) -> Unit) {
                     androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
                         fun look(t: AppTheme) {
                             drawRect(t.background)
+                            // Glass: coloured light behind a see-through card.
+                            val lights = when (t) {
+                                AppTheme.GLASS -> listOf(Color(0xFF3B5BFF), Color(0xFF9B3BFF), Color(0xFF00C2C7))
+                                AppTheme.GLASS_LIGHT -> listOf(Color(0xFF8FB3FF), Color(0xFFFFB3D9), Color(0xFF9FF0D8))
+                                else -> emptyList()
+                            }
+                            lights.forEachIndexed { i, c ->
+                                val o = androidx.compose.ui.geometry.Offset(size.width * listOf(0.15f, 0.9f, 0.4f)[i], size.height * listOf(0.1f, 0.45f, 1f)[i])
+                                drawCircle(androidx.compose.ui.graphics.Brush.radialGradient(listOf(c.copy(alpha = if (t.dark) 0.8f else 0.9f), Color.Transparent), o, size.width * 0.6f), size.width * 0.6f, o)
+                            }
                             val pad = size.width * 0.14f
                             drawCircle(t.accent, size.width * 0.07f, androidx.compose.ui.geometry.Offset(pad + size.width * 0.07f, pad + size.width * 0.07f))
                             drawRoundRect(
                                 t.card, androidx.compose.ui.geometry.Offset(pad, size.height * 0.36f),
                                 androidx.compose.ui.geometry.Size(size.width - pad * 2, size.height * 0.4f),
                                 androidx.compose.ui.geometry.CornerRadius(size.width * 0.08f),
+                            )
+                            if (t.glass) drawRoundRect(
+                                Color.White.copy(alpha = if (t.dark) 0.35f else 0.9f), androidx.compose.ui.geometry.Offset(pad, size.height * 0.36f),
+                                androidx.compose.ui.geometry.Size(size.width - pad * 2, size.height * 0.4f),
+                                androidx.compose.ui.geometry.CornerRadius(size.width * 0.08f),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(1.dp.toPx()),
                             )
                             val line = if (t.dark) Color.White.copy(alpha = 0.55f) else Color.Black.copy(alpha = 0.45f)
                             drawRoundRect(line, androidx.compose.ui.geometry.Offset(pad * 1.6f, size.height * 0.46f), androidx.compose.ui.geometry.Size(size.width * 0.5f, size.height * 0.05f), androidx.compose.ui.geometry.CornerRadius(4f))
@@ -357,11 +506,11 @@ fun ThemeSwatches(selected: ThemePref, onSelect: (ThemePref) -> Unit) {
                     }
                 }
                 Text(
-                    look?.label ?: "System",
+                    look?.shortLabel ?: "System",
                     style = MaterialTheme.typography.labelSmall,
                     color = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
-                    textAlign = TextAlign.Center, maxLines = 1,
+                    textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 6.dp, bottom = 4.dp),
                 )
             }

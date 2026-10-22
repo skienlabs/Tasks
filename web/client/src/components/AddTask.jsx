@@ -5,7 +5,7 @@ import Flag from '@mui/icons-material/Flag';
 import FlagOutlined from '@mui/icons-material/FlagOutlined';
 import Check from '@mui/icons-material/Check';
 import SellOutlined from '@mui/icons-material/SellOutlined';
-import { PRIORITIES, priorityColor } from '../theme.js';
+import { PRIORITIES, glass, hexAlpha, priorityColor } from '../theme.js';
 import { createTask, selectTag, useStoreVersion } from '../lib/store.js';
 import { TagAvatar } from './TagChip.jsx';
 import TagPicker from './TagPicker.jsx';
@@ -52,6 +52,11 @@ export default function AddTask({ date, inputRef, defaultTagId, onManageTags }) 
         boxShadow: focused ? `0 0 0 1px ${t.palette.primary.main}` : 'none',
         bgcolor: t.palette.mode === 'dark' ? t.tokens.surfaceHigh : t.tokens.surface,
         transition: 'border-color 120ms, box-shadow 120ms',
+        ...(t.tokens.glass && {
+          ...glass(t),
+          ...(focused && { borderColor: t.palette.primary.main, boxShadow: `0 0 0 1px ${t.palette.primary.main}, 0 0 28px ${hexAlpha(t.palette.primary.main, 0.35)}, inset 0 1px 0 ${t.tokens.glass.shine}` }),
+          transition: 'border-color .2s, box-shadow .3s',
+        }),
       })}
     >
       <Add sx={{ color: 'primary.main' }} />

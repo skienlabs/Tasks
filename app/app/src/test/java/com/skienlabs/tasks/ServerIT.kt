@@ -133,6 +133,13 @@ class ServerIT {
             assertTrue(store.removeAttachment(mail.id, img.id)!!.await())
             assertTrue(api.day(today, today).tasks.first { it.id == mail.id }.attachments.isEmpty())
             assertNotNull(api.tags())
+
+            // Search: words with spaces and symbols survive the trip; a step says why it matched.
+            val found = api.search("mail \"ser\" is:done", today)
+            assertEquals(listOf(mail.id), found.hits().map { it.task.id })
+            assertEquals(1, api.search("ports", today).hits().count { it.match?.field == "step" })
+            assertTrue(api.search("ma", today).suggestions.any { it.insert == "mail" })
+            assertTrue(api.search("#", today).hits().isEmpty())
             live.stop()
         }
         scope.coroutineContext[kotlinx.coroutines.Job]!!.cancel()

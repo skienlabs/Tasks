@@ -18,6 +18,7 @@ import Insights from '@mui/icons-material/Insights';
 import SellOutlined from '@mui/icons-material/SellOutlined';
 import InstallDesktopOutlined from '@mui/icons-material/InstallDesktopOutlined';
 import AccountCircleOutlined from '@mui/icons-material/AccountCircleOutlined';
+import SearchRounded from '@mui/icons-material/SearchRounded';
 import AccountDialog from './AccountDialog.jsx';
 import ThemePicker from './ThemePicker.jsx';
 
@@ -27,18 +28,19 @@ import MiniCalendar from './MiniCalendar.jsx';
 import DayView from './DayView.jsx';
 import TaskDialog from './TaskDialog.jsx';
 import TagManager from './TagManager.jsx';
+import SearchDialog from './SearchDialog.jsx';
 import { TagAvatar } from './TagChip.jsx';
 import Toast from './Toast.jsx';
 import { addDays, formatDate, fromKey, isValidKey, monthGrid, startOfWeek, todayKey } from '../lib/dates.js';
 import {
-  areTagsLoaded, isDayLoaded, loadDay, loadSummary, loadTags, loadedDates, selectTag, selectTags, showToast, useStoreVersion,
+  areTagsLoaded, isDayLoaded, loadDay, loadSummary, loadTags, loadedDates, selectSummary, selectTag, selectTags, showToast, useStoreVersion,
 } from '../lib/store.js';
 import { startLive } from '../lib/live.js';
 import { api } from '../lib/api.js';
 import { signOut } from '../lib/auth.js';
 import { isStandalone, useInstallPrompt } from '../lib/install.js';
 import { readPref, writePref } from '../lib/prefs.js';
-import { THEMES, hexAlpha, tagColor } from '../theme.js';
+import { THEMES, glass, hexAlpha, statusColors, tagColor, titleGradient } from '../theme.js';
 import { APP_VERSION } from '../lib/version.js';
 
 const DRAWER = 280;
@@ -72,6 +74,40 @@ const params = () => new URLSearchParams(window.location.search);
 function dateFromUrl(today) {
   const d = params().get('d');
   return isValidKey(d) ? d : today;
+}
+
+/**
+ * The day in the top bar: "Thursday, 22 October 2026" (short on phones). On today the
+ * weekday wears the theme's gradient.
+ */
+function DateTitle({ date, today }) {
+  const isToday = date === today;
+  const weekday = formatDate(date, { weekday: 'long' });
+  const full = formatDate(date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const rest = full.startsWith(weekday) ? full.slice(weekday.length) : null;
+  return (
+    <Typography component="div" noWrap sx={{ fontSize: { xs: 17, sm: 21 }, fontWeight: 400, ml: 0.5, minWidth: 0 }} title={full}>
+      <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>
+        {rest === null ? full : (
+          <>
+            <Box
+              component="span"
+              sx={(t) => ({
+                fontWeight: 500,
+                ...(isToday && { background: titleGradient(t), WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }),
+              })}
+            >
+              {weekday}
+            </Box>
+            {rest}
+          </>
+        )}
+      </Box>
+      <Box component="span" sx={{ display: { xs: 'inline', md: 'none' } }}>
+        {formatDate(date, { weekday: 'short', day: 'numeric', month: 'short' })}
+      </Box>
+    </Typography>
+  );
 }
 
 function NavItem({ icon, label, active, onClick, color, count }) {
@@ -115,6 +151,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
   const [dialog, setDialog] = useState(() => (params().get('new') === '1' ? { date: todayKey() } : null));
   const [tagsOpen, setTagsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [hideVerify, setHideVerify] = useState(() => readPref('tasks.hideVerify') === profile.uid);
   const [blocked, setBlocked] = useState(null); // { kind: 'forbidden' | 'session', message }
   const [failed, setFailed] = useState(() => new Set()); // days whose load failed
@@ -290,7 +327,26 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
     };
   }, [date, refreshDay, refreshSummary]);
 
-  // Keyboard: ← → change day, T today, N new task, S summary.
+  // Opening a search result: go to its day and show it in the details pane.
+  const openFromSearch = useCallback((task) => {
+    selectDate(task.date);
+    if (tagFilter && !(task.tagIds ?? []).includes(tagFilter)) setTagFilter(null);
+    setTimeout(() => setSelectedId(task.id), 0);
+  }, [selectDate, tagFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Ctrl/Cmd+K opens search from anywhere, even while typing.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Keyboard: ← → change day, T today, N new task, S summary, / search.
   useEffect(() => {
     const onKey = (e) => {
       if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
@@ -298,7 +354,10 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
       if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
       if (document.querySelector('[role="dialog"], [role="menu"]')) return;
       if (e.key === 'Escape') setSelectedId(null);
-      else if (e.key === 'ArrowLeft' && view === 'day') selectDate(addDays(date, -1));
+      else if (e.key === '/') {
+        e.preventDefault();
+        setSearchOpen(true);
+      } else if (e.key === 'ArrowLeft' && view === 'day') selectDate(addDays(date, -1));
       else if (e.key === 'ArrowRight' && view === 'day') selectDate(addDays(date, 1));
       else if (e.key === 't' || e.key === 'T') selectDate(today);
       else if (e.key === 's' || e.key === 'S') goView('summary');
@@ -361,6 +420,10 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
                 bgcolor: t.palette.mode === 'dark' ? t.tokens.surfaceHigh : '#f6f9fe',
                 boxShadow: t.palette.mode === 'dark' ? 'none' : '0 2px 4px rgba(0,0,0,.2), 0 6px 12px rgba(0,0,0,.1)',
               },
+              ...(t.tokens.glass && {
+                ...glass(t, t.tokens.surfaceHigh), transition: 'transform .3s cubic-bezier(.2,1.3,.4,1), background-color .2s',
+                '&:hover': { ...glass(t, t.tokens.surfaceHighest), transform: 'translateY(-1px)' },
+              }),
             })}
           >
             New task
@@ -421,7 +484,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
         </Button>
       )}
       <Typography variant="caption" color="text.secondary" sx={{ px: 2, display: { xs: 'none', md: 'block' } }}>
-        Shortcuts: ← → day · T today · N new · S summary · Esc close
+        Shortcuts: / or Ctrl K search · ← → day · T today · N new · S summary · Esc close
       </Typography>
       <Box component="footer" sx={(t) => ({ mt: 'auto', mx: 1, pt: 1.5, borderTop: `1px solid ${t.palette.divider}` })}>
         <Typography sx={{ fontSize: 12, color: 'text.secondary', lineHeight: 1.6 }}>
@@ -438,6 +501,11 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
 
   const themeLabel = THEMES.find((o) => o.v === themePref)?.label ?? 'System';
   const firstName = (user.displayName || '').split(' ')[0];
+  // This week at a glance, for the account card.
+  const weekCounts = Array.from({ length: 7 }, (_, i) => selectSummary(addDays(startOfWeek(today), i))).reduce(
+    (acc, c) => ({ done: acc.done + (c?.done ?? 0), pending: acc.pending + (c?.pending ?? 0) }),
+    { done: 0, pending: 0 },
+  );
   const since = profile.createdAt
     ? new Date(profile.createdAt).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
     : null;
@@ -453,6 +521,11 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
           bgcolor: 'background.default', borderBottom: `1px solid ${t.palette.divider}`,
           // Themes with a background glow get a frosted bar, so the glow shows through softly.
           ...(t.tokens.glow && { bgcolor: hexAlpha(t.tokens.bg, 0.78), backdropFilter: 'saturate(140%) blur(14px)' }),
+          // Glass: a frosted bar the aurora shows through, with a bright lower rim.
+          ...(t.tokens.glass && {
+            ...glass(t), borderWidth: '0 0 1px', borderRadius: 0,
+            boxShadow: `inset 0 -1px 0 ${t.tokens.glass.edge}, 0 6px 24px rgba(0,0,0,${t.palette.mode === 'dark' ? 0.35 : 0.06})`,
+          }),
         })}
       >
         <Toolbar sx={{ minHeight: `${APPBAR}px !important`, gap: { xs: 0.5, sm: 1 }, px: { xs: 1, sm: 2 } }}>
@@ -461,7 +534,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
               <MenuIcon />
             </IconButton>
           )}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, pr: { md: 5 }, width: { md: DRAWER - 16 } }}>
+          <Box sx={{ display: { xs: 'none', sm: 'flex' }, alignItems: 'center', gap: 1.25, pr: { md: 5 }, width: { md: DRAWER - 16 } }}>
             <Logo size={36} />
             <Typography variant="h6" sx={{ fontWeight: 400, fontSize: 22, display: { xs: 'none', sm: 'block' } }}>
               Tasks
@@ -470,31 +543,54 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
           <Button
             variant="outlined"
             onClick={() => selectDate(today)}
-            sx={(t) => ({ color: 'text.primary', borderColor: t.tokens.outline, ml: { xs: 0.5, md: 0 }, minWidth: 0 })}
+            aria-pressed={view === 'day' && date === today}
+            sx={(t) => ({
+              color: 'text.primary', borderColor: t.tokens.outline, ml: { xs: 0.5, md: 0 }, minWidth: 0,
+              // Filled while you're on today, so "where am I" needs no big heading.
+              ...(view === 'day' && date === today && { bgcolor: t.tokens.primaryContainer, color: t.tokens.onPrimaryContainer, borderColor: 'transparent' }),
+            })}
           >
             Today
           </Button>
           {view === 'day' && (
             <>
               <Tooltip title="Previous day">
-                <IconButton aria-label="Previous day" onClick={() => selectDate(addDays(date, -1))}>
+                <IconButton aria-label="Previous day" onClick={() => selectDate(addDays(date, -1))} sx={{ display: { xs: 'none', sm: 'inline-flex' } }}>
                   <ChevronLeft />
                 </IconButton>
               </Tooltip>
               <Tooltip title="Next day">
-                <IconButton aria-label="Next day" onClick={() => selectDate(addDays(date, 1))} sx={{ ml: -1 }}>
+                <IconButton aria-label="Next day" onClick={() => selectDate(addDays(date, 1))} sx={{ ml: -1, display: { xs: 'none', sm: 'inline-flex' } }}>
                   <ChevronRight />
                 </IconButton>
               </Tooltip>
-              <Typography
-                noWrap
-                sx={{ fontSize: { xs: 18, sm: 22 }, fontWeight: 400, ml: 0.5, display: { xs: 'none', sm: 'block' } }}
-              >
-                {formatDate(date, { month: 'long', year: 'numeric' })}
-              </Typography>
+              <DateTitle date={date} today={today} />
             </>
           )}
           <Box sx={{ flex: 1 }} />
+          <ButtonBase
+            onClick={() => setSearchOpen(true)}
+            aria-label="Search tasks"
+            sx={(t) => ({
+              display: { xs: 'none', md: 'flex' }, alignItems: 'center', gap: 1, height: 40, pl: 1.5, pr: 1, mr: 0.5,
+              width: { md: 220, lg: 300 }, borderRadius: 999, color: 'text.secondary', fontSize: 14.5, justifyContent: 'flex-start',
+              bgcolor: t.tokens.surfaceHigh, border: `1px solid ${t.palette.divider}`,
+              transition: 'background-color .2s, box-shadow .2s',
+              '&:hover': { bgcolor: t.tokens.surfaceHighest, boxShadow: `0 0 0 3px ${hexAlpha(t.palette.primary.main, 0.12)}` },
+              ...(t.tokens.glass && { ...glass(t, t.tokens.surfaceHigh), boxShadow: `inset 0 1px 0 ${t.tokens.glass.shine}` }),
+            })}
+          >
+            <SearchRounded sx={{ fontSize: 21 }} />
+            <Box component="span" sx={{ flex: 1, textAlign: 'left' }}>Search tasks</Box>
+            <Box component="kbd" sx={(t) => ({ px: 0.75, py: '1px', borderRadius: 1, fontSize: 11.5, fontFamily: 'inherit', border: `1px solid ${t.tokens.outline}` })}>
+              {/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘K' : 'Ctrl K'}
+            </Box>
+          </ButtonBase>
+          <Tooltip title="Search (/)">
+            <IconButton aria-label="Search tasks" onClick={() => setSearchOpen(true)} sx={{ display: { md: 'none' } }}>
+              <SearchRounded />
+            </IconButton>
+          </Tooltip>
           {canInstall && !isStandalone() && desktop && (
             <Tooltip title="Install Tasks as an app">
               <IconButton aria-label="Install app" onClick={doInstall}><InstallDesktopOutlined /></IconButton>
@@ -537,29 +633,71 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
             transformOrigin={{ vertical: 'top', horizontal: 'right' }}
             slotProps={{ paper: { sx: { width: 380, maxWidth: 'calc(100vw - 24px)', mt: 1, borderRadius: '24px' } }, list: { sx: { p: 1 } } }}
           >
-            {/* Who's signed in */}
-            <Box sx={{ display: 'grid', justifyItems: 'center', textAlign: 'center', px: 2, pt: 1.5, pb: 2 }}>
-              <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: '100%' }}>{user.email}</Typography>
-              <Avatar
-                src={user.photoURL || undefined}
-                alt=""
-                slotProps={{ img: { referrerPolicy: 'no-referrer' } }}
-                sx={{ width: 72, height: 72, my: 1.5, fontSize: 30, bgcolor: 'primary.main', color: 'primary.contrastText' }}
+            {/* Who's signed in: a hero card with a soft wash of the theme's gradient */}
+            <Box
+              sx={(t) => {
+                const g = t.tokens.gradient ?? (t.palette.mode === 'dark' ? ['#8ab4f8', '#d7aefb', '#ff8bcb'] : ['#1a73e8', '#9334e6', '#d01884']);
+                const a = t.palette.mode === 'dark' ? 0.22 : 0.14;
+                return {
+                  position: 'relative', overflow: 'hidden', display: 'grid', justifyItems: 'center', textAlign: 'center',
+                  px: 2, pt: 2.5, pb: 2, mb: 1, borderRadius: '20px',
+                  background: `radial-gradient(120% 90% at 100% 0%, ${hexAlpha(g[1], a + 0.08)}, transparent 60%), radial-gradient(120% 90% at 0% 100%, ${hexAlpha(g[0], a + 0.06)}, transparent 60%), linear-gradient(135deg, ${hexAlpha(g[0], a)}, ${hexAlpha(g[2], a)})`,
+                  border: `1px solid ${hexAlpha(g[0], 0.3)}`,
+                };
+              }}
+            >
+              <Box
+                sx={(t) => {
+                  const g = t.tokens.gradient ?? (t.palette.mode === 'dark' ? ['#8ab4f8', '#d7aefb', '#ff8bcb'] : ['#1a73e8', '#9334e6', '#d01884']);
+                  return {
+                    p: '3px', borderRadius: '50%', background: `conic-gradient(${g[0]}, ${g[1]}, ${g[2]}, ${g[0]})`,
+                    animation: 'ringSpin 12s linear infinite', '@keyframes ringSpin': { to: { transform: 'rotate(360deg)' } },
+                    '& > *': { animation: 'ringSpin 12s linear infinite reverse' },
+                    '@media (prefers-reduced-motion: reduce)': { animation: 'none', '& > *': { animation: 'none' } },
+                  };
+                }}
               >
-                {(user.displayName || user.email || '?').charAt(0).toUpperCase()}
-              </Avatar>
-              <Typography sx={{ fontSize: 20, fontWeight: 400 }}>Hi, {firstName || 'there'}!</Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25 }}>
-                {profile.provider === 'google.com' ? 'Google account' : 'Email account'}
-                {since ? ` · Member since ${since}` : ''}
-              </Typography>
+                <Avatar
+                  src={user.photoURL || undefined}
+                  alt=""
+                  slotProps={{ img: { referrerPolicy: 'no-referrer' } }}
+                  sx={(t) => ({ width: 76, height: 76, fontSize: 32, bgcolor: 'primary.main', color: 'primary.contrastText', border: `3px solid ${t.tokens.surfaceHighest}` })}
+                >
+                  {(user.displayName || user.email || '?').charAt(0).toUpperCase()}
+                </Avatar>
+              </Box>
+              <Typography sx={{ fontSize: 21, fontWeight: 500, mt: 1.25, maxWidth: '100%' }} noWrap>{user.displayName || firstName || 'Hi there'}</Typography>
+              <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: '100%' }}>{user.email}</Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 0.75, mt: 1.25 }}>
+                {[profile.provider === 'google.com' ? 'Google account' : 'Email account', since && `Since ${since}`].filter(Boolean).map((c) => (
+                  <Box key={c} sx={(t) => ({ px: 1.25, py: 0.4, borderRadius: 999, fontSize: 12, fontWeight: 500, color: 'text.secondary', bgcolor: t.palette.mode === 'dark' ? 'rgba(255,255,255,.08)' : 'rgba(255,255,255,.65)' })}>{c}</Box>
+                ))}
+              </Box>
+              <Box
+                sx={(t) => ({
+                  display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', width: '100%', mt: 1.75, py: 1.25, borderRadius: '14px',
+                  bgcolor: t.palette.mode === 'dark' ? 'rgba(255,255,255,.06)' : 'rgba(255,255,255,.6)',
+                })}
+              >
+                {[
+                  [weekCounts.done, 'done this week', (t) => statusColors(t).done],
+                  [weekCounts.pending, 'still open', (t) => statusColors(t).pending],
+                  [weekCounts.done + weekCounts.pending ? `${Math.round((weekCounts.done * 100) / (weekCounts.done + weekCounts.pending))}%` : '–', 'complete', (t) => statusColors(t).rate],
+                ].map(([v, l, c]) => (
+                  <Box key={l}>
+                    <Typography sx={(t) => ({ fontSize: 20, fontWeight: 500, color: c(t), lineHeight: 1.2 })}>{v}</Typography>
+                    <Typography sx={{ fontSize: 11.5, color: 'text.secondary' }}>{l}</Typography>
+                  </Box>
+                ))}
+              </Box>
               <Button
-                variant="outlined"
+                variant="contained"
+                disableElevation
                 onClick={() => {
                   setMenuEl(null);
                   setAccountOpen(true);
                 }}
-                sx={(t) => ({ mt: 1.5, color: 'primary.main', borderColor: t.tokens.outline })}
+                sx={{ mt: 1.75, width: '100%' }}
               >
                 Manage your account
               </Button>
@@ -704,6 +842,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
               position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: t.zIndex.appBar,
               borderTop: `1px solid ${t.palette.divider}`, bgcolor: t.palette.mode === 'dark' ? t.tokens.bg : t.tokens.surface,
               pb: 'env(safe-area-inset-bottom)',
+              ...(t.tokens.glass && { ...glass(t, hexAlpha(t.tokens.bg, 0.8)), borderWidth: '1px 0 0', borderRadius: 0, '& .MuiBottomNavigation-root': { bgcolor: 'transparent' } }),
             })}
           >
             <BottomNavigation
@@ -748,6 +887,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
         onManageTags={openTags}
       />
       <TagManager open={tagsOpen} onClose={() => setTagsOpen(false)} />
+      <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} onOpenTask={openFromSearch} today={today} uid={profile.uid} />
       <AccountDialog
         open={accountOpen}
         onClose={() => setAccountOpen(false)}

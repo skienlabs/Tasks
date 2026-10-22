@@ -7,6 +7,7 @@ import { clearStore } from './lib/store.js';
 import { readPref, writePref } from './lib/prefs.js';
 import Logo from './components/Logo.jsx';
 import Home from './components/Home.jsx';
+import GlassBackdrop from './components/GlassBackdrop.jsx';
 
 // Only needed when signed out / on first run: loaded on demand to keep the app quick to open.
 const SignIn = lazy(() => import('./components/SignIn.jsx'));
@@ -14,7 +15,7 @@ const Onboarding = lazy(() => import('./components/Onboarding.jsx'));
 
 export default function App() {
   const systemDark = useMediaQuery('(prefers-color-scheme: dark)', { noSsr: true });
-  // null follows the system; otherwise one of THEMES ('light' | 'dim' | 'dark' | 'abyss').
+  // null follows the system; otherwise one of THEMES ('light' | 'gray' | 'dim' | 'dark' | 'abyss' | 'glass' | 'glassLight').
   const [themePref, setThemePref] = useState(() => {
     const v = readPref('tasks.theme');
     return isThemeName(v) ? v : null;
@@ -120,6 +121,7 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
+      {theme.tokens.glass && <GlassBackdrop tokens={theme.tokens} dark={mode === 'dark'} />}
       <Suspense fallback={<Splash />}>{screen}</Suspense>
     </ThemeProvider>
   );

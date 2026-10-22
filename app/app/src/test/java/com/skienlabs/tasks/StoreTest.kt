@@ -2,6 +2,9 @@ package com.skienlabs.tasks
 
 import com.skienlabs.tasks.data.ApiException
 import com.skienlabs.tasks.data.DayResponse
+import com.skienlabs.tasks.data.DayCounts
+import com.skienlabs.tasks.data.Counts
+import com.skienlabs.tasks.data.Dates
 import com.skienlabs.tasks.data.NoCache
 import com.skienlabs.tasks.data.Profile
 import com.skienlabs.tasks.data.Stats
@@ -60,7 +63,8 @@ class FakeApi : TasksApi {
         dayGate?.await()
         return snapshot
     }
-    override suspend fun summary(from: String, to: String) = SummaryResponse(emptyList())
+    var summaryDays: List<DayCounts> = emptyList()
+    override suspend fun summary(from: String, to: String) = SummaryResponse(summaryDays.filter { it.date in from..to })
     override suspend fun stats(from: String, to: String, today: String) = Stats()
     override suspend fun createTask(body: JsonObject): Task {
         calls += "create"; fail()
@@ -171,6 +175,24 @@ class StoreTest {
         store.postponeTask(task.id, today) // only pending tasks can be postponed
         advanceUntilIdle()
         assertEquals(today, api.tasks[task.id]!!.date)
+    }
+
+    /** Tasks that moved on unfinished are only known to the server; local recounts keep them. */
+    @Test
+    fun missedDaysSurviveLocalRecounts() = runTest {
+        val api = FakeApi()
+        val (store, _) = newStore(api)
+        store.start("u", today)
+        val yesterday = Dates.addDays(today, -1)
+        api.tasks["y"] = Task("y", "Finished yesterday", date = yesterday, status = Status.DONE)
+        api.summaryDays = listOf(DayCounts(yesterday, pending = 0, done = 1, cancelled = 0, missed = 2))
+        store.loadSummary(Dates.addDays(today, -7), today)
+        advanceUntilIdle()
+        assertEquals(Counts(0, 1, 0, missed = 2), store.state.value.summary[yesterday])
+        store.loadDay(yesterday, today) // recounts the day from its tasks
+        advanceUntilIdle()
+        assertEquals(2, store.state.value.summary[yesterday]!!.missed)
+        assertEquals(3, store.state.value.summary[yesterday]!!.planned)
     }
 
     @Test

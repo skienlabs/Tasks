@@ -6,6 +6,7 @@ import fastifyStatic from '@fastify/static';
 import { createRepo } from './db.js';
 import { MAX_SUBTASKS, SUBTASK_TITLE_MAX, normalizeSubtasks, progress } from './subtasks.js';
 import { createEvents } from './events.js';
+import { hasFilters, parseQuery, searchTasks, suggest } from './search.js';
 import { AuthError } from './auth.js';
 import { addDays, daysBetween, isValidDate, maxDate } from './dates.js';
 
@@ -269,6 +270,41 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     return {
       tasks: repo.listByDate(req.user.uid, date),
       overdue: today && date === today ? repo.listOverdue(req.user.uid, today) : [],
+    };
+  });
+
+  // ---- Search ----------------------------------------------------------------
+  app.get('/api/search', {
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          q: { type: 'string', maxLength: 200 },
+          today: DATE,
+          // Query values arrive as text (no type coercion here), so the count is digits.
+          limit: { type: 'string', pattern: '^[1-9][0-9]?$|^100$' },
+        },
+        additionalProperties: false,
+      },
+    },
+  }, async (req) => {
+    const uid = req.user.uid;
+    const q = req.query.q ?? '';
+    const today = req.query.today && isValidDate(req.query.today) ? req.query.today : new Date(clock()).toISOString().slice(0, 10);
+    const tags = repo.listTags(uid);
+    const parsed = parseQuery(q, today);
+    const tasks = repo.allTasks(uid);
+    const suggestions = suggest(q, tasks, tags);
+    if (!parsed.terms.length && !parsed.phrases.length && !hasFilters(parsed)) {
+      return { results: [], total: 0, fuzzy: false, terms: [], suggestions };
+    }
+    const found = searchTasks(tasks, tags, parsed, today, req.query.limit ? Number(req.query.limit) : 30);
+    return {
+      results: found.results.map((r) => ({ ...r.task, match: r.match })),
+      total: found.total,
+      fuzzy: found.fuzzy,
+      terms: found.terms,
+      suggestions,
     };
   });
 

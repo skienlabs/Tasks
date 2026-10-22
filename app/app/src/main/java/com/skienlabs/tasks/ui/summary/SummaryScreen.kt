@@ -74,6 +74,8 @@ import com.skienlabs.tasks.ui.common.StackBar
 import com.skienlabs.tasks.ui.common.TagAvatar
 import com.skienlabs.tasks.ui.common.gradientBrush
 import com.skienlabs.tasks.ui.theme.LocalExtra
+import com.skienlabs.tasks.ui.theme.glassAppear
+import com.skienlabs.tasks.ui.theme.glassPanel
 import com.skienlabs.tasks.ui.theme.Palette
 import java.time.YearMonth
 
@@ -138,7 +140,7 @@ fun SummaryScreen(
         val totals = s.days.fold(Counts()) { acc, d -> acc.plus(d.counts()) }
         val active = totals.active
         val rate = if (active > 0) Math.round(totals.done * 100f / active) else 0
-        val activeDays = s.days.filter { it.pending + it.done + it.cancelled > 0 }
+        val activeDays = s.days.filter { it.pending + it.done + it.cancelled + it.missed > 0 }
 
         item(key = "kpis") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -199,7 +201,9 @@ fun SummaryScreen(
 private fun Card(title: String, icon: ImageVector, tint: Color, content: @Composable () -> Unit) {
     val x = LocalExtra.current
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(x.surfaceHigh).padding(16.dp),
+        Modifier.fillMaxWidth().glassAppear().clip(RoundedCornerShape(24.dp))
+            .then(if (x.glass != null) Modifier.glassPanel(RoundedCornerShape(24.dp)) else Modifier.background(x.surfaceHigh))
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 6.dp)) {
@@ -270,7 +274,7 @@ private fun DailyChart(days: List<DayCounts>, month: YearMonth, today: String, o
     val byDate = remember(days) { days.associateBy { it.date } }
     val n = month.lengthOfMonth()
     val all = remember(byDate, month) { List(n) { i -> month.atDay(i + 1).toString().let { byDate[it] ?: DayCounts(it) } } }
-    val max = (all.maxOfOrNull { it.pending + it.done + it.cancelled } ?: 0).coerceAtLeast(1)
+    val max = (all.maxOfOrNull { it.pending + it.done + it.cancelled + it.missed } ?: 0).coerceAtLeast(1)
     val todayColor = MaterialTheme.colorScheme.primary
     Canvas(
         Modifier.fillMaxWidth().height(150.dp)
@@ -288,7 +292,7 @@ private fun DailyChart(days: List<DayCounts>, month: YearMonth, today: String, o
         val h = size.height
         all.forEachIndexed { i, d ->
             val left = i * slot + gap / 2
-            val total = d.pending + d.done + d.cancelled
+            val total = d.pending + d.done + d.cancelled + d.missed
             if (total == 0) {
                 drawRoundRect(x.surfaceHighest, Offset(left, h - 3.dp.toPx()), Size(bw, 3.dp.toPx()), CornerRadius(2.dp.toPx()))
             } else {
@@ -301,6 +305,7 @@ private fun DailyChart(days: List<DayCounts>, month: YearMonth, today: String, o
                 }
                 seg(d.done, x.done)
                 seg(d.pending, if (d.date < today) x.overdue else x.pending)
+                seg(d.missed, x.overdue) // left unfinished, moved on to the next day
                 seg(d.cancelled, x.cancelled.copy(alpha = 0.6f))
             }
             if (d.date == today) drawCircle(todayColor, 2.5.dp.toPx(), Offset(left + bw / 2, 2.5.dp.toPx()))
@@ -315,7 +320,7 @@ private fun DailyChart(days: List<DayCounts>, month: YearMonth, today: String, o
         }
     }
     FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        listOf(x.done to "Completed", x.pending to "Left", x.overdue to "Overdue", x.cancelled.copy(alpha = 0.6f) to "Cancelled").forEach { (c, l) ->
+        listOf(x.done to "Completed", x.pending to "Left", x.overdue to "Not finished", x.cancelled.copy(alpha = 0.6f) to "Cancelled").forEach { (c, l) ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(10.dp).clip(RoundedCornerShape(3.dp)).background(c))
                 Text(" $l", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -341,7 +346,8 @@ private fun Breakdown(icon: @Composable () -> Unit, label: String, c: Counts) {
 private fun DayRow(d: DayCounts, today: String, onClick: () -> Unit) {
     val x = LocalExtra.current
     val overdue = d.pending > 0 && d.date < today
-    val total = d.pending + d.done
+    val notFinished = d.missed + if (overdue) d.pending else 0
+    val total = d.pending + d.done + d.missed
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(horizontal = 4.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -351,7 +357,8 @@ private fun DayRow(d: DayCounts, today: String, onClick: () -> Unit) {
             )
             Text("$total task${if (total == 1) "" else "s"}  ", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("${d.done} done  ", style = MaterialTheme.typography.labelMedium, color = x.done)
-            Text("${d.pending} left", style = MaterialTheme.typography.labelMedium, color = if (overdue) x.overdue else x.pending)
+            if (notFinished > 0) Text("$notFinished not finished", style = MaterialTheme.typography.labelMedium, color = x.overdue)
+            else Text("${d.pending} left", style = MaterialTheme.typography.labelMedium, color = x.pending)
         }
         StackBar(d.counts(), overdue = overdue)
     }

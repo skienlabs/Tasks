@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.Sell
 import androidx.compose.material.icons.outlined.Today
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -61,6 +62,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.animation.core.animateFloat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.skienlabs.tasks.AppController
 import com.skienlabs.tasks.data.Dates
@@ -80,6 +85,8 @@ import com.skienlabs.tasks.ui.tags.TagEditor
 import com.skienlabs.tasks.ui.tags.TagsScreen
 import com.skienlabs.tasks.ui.task.TaskSheet
 import com.skienlabs.tasks.ui.theme.LocalExtra
+import com.skienlabs.tasks.ui.theme.glassPanel
+import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -98,7 +105,8 @@ private fun dateOf(page: Int) = Dates.addDays(Dates.MIN, page.toLong())
 /** Which sheet is open, if any. A task sheet holds the task (null task = new). */
 private sealed interface Sheet {
     data class TaskEdit(val task: Task?) : Sheet
-    data class TaskView(val id: String) : Sheet
+    /** [date]: the task's day, when it may not be loaded yet (opened from search). */
+    data class TaskView(val id: String, val date: String? = null) : Sheet
     data object Month : Sheet
     data object Account : Sheet
 }
@@ -118,6 +126,8 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
     val haptics = LocalHapticFeedback.current
 
     var tab by rememberSaveable { mutableStateOf(TAB_TASKS) }
+    var searching by rememberSaveable { mutableStateOf(false) }
+    val recentSearches by remember(profile.uid) { app.prefs.recentSearches(profile.uid) }.collectAsStateWithLifecycle(emptyList())
     var sheet by remember { mutableStateOf<Sheet?>(null) }
     var newTag by remember { mutableStateOf(false) }
     val failed = remember { mutableStateMapOf<String, Boolean>() }
@@ -204,8 +214,8 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
         if (Dates.isValid(d)) app.visibleDate.value = d
     }
 
-    BackHandler(enabled = tab != TAB_TASKS) { tab = TAB_TASKS }
-    BackHandler(enabled = tab == TAB_TASKS && date != today && sheet == null) { go(today) }
+    BackHandler(enabled = tab != TAB_TASKS && !searching) { tab = TAB_TASKS }
+    BackHandler(enabled = tab == TAB_TASKS && date != today && sheet == null && !searching) { go(today) }
 
     val manageTags = { if (state.tags.isEmpty()) newTag = true else { sheet = null; tab = TAB_TAGS } }
     val actions = remember(store, today) {
@@ -224,6 +234,8 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
         )
     }
 
+    val firstName = profile.name.trim().split(' ').firstOrNull()?.takeIf { it.isNotBlank() }
+    androidx.compose.runtime.CompositionLocalProvider(com.skienlabs.tasks.ui.day.LocalGreetingName provides firstName) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -231,10 +243,10 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
                     if (tab == TAB_TASKS) {
                         Row(
                             Modifier.clip(RoundedCornerShape(12.dp)).clickable { app.visibleMonth.value = YearMonth.parse(date.take(7)); sheet = Sheet.Month }
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                .padding(horizontal = 6.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(Dates.monthYear(date), style = MaterialTheme.typography.titleLarge)
+                            DateTitle(date, date == today, Modifier.weight(1f, fill = false))
                             Icon(Icons.Filled.ArrowDropDown, "Open calendar")
                         }
                     } else {
@@ -248,13 +260,18 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
                     if (tab == TAB_TASKS && date != today) {
                         IconButton(onClick = { go(today) }) { Icon(Icons.Outlined.Today, "Go to today") }
                     }
+                    IconButton(onClick = { searching = true }) { Icon(Icons.Outlined.Search, "Search tasks") }
                     IconButton(onClick = { sheet = Sheet.Account }) { Avatar(profile, 32.dp) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         },
         bottomBar = {
-            NavigationBar(containerColor = LocalExtra.current.surfaceHigh) {
+            val glass = LocalExtra.current.glass
+            NavigationBar(
+                containerColor = if (glass != null) Color.Transparent else LocalExtra.current.surfaceHigh,
+                modifier = if (glass != null) Modifier.glassPanel(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp), glass.panelStrong) else Modifier,
+            ) {
                 val items = listOf(
                     Triple("Tasks", Icons.Filled.CheckCircle, Icons.Outlined.CheckCircle),
                     Triple("Summary", Icons.Filled.Insights, Icons.Outlined.Insights),
@@ -283,6 +300,8 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
         containerColor = MaterialTheme.colorScheme.background,
+        // Set outright: the Glass themes' page is see-through, which has no "content colour" of its own.
+        contentColor = MaterialTheme.colorScheme.onBackground,
     ) { inner ->
         Box(Modifier.fillMaxSize().padding(inner)) {
             when (tab) {
@@ -340,6 +359,34 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
         }
     }
 
+    }
+
+    // Search slides in over everything; a result opens its day and its details.
+    androidx.compose.animation.AnimatedVisibility(
+        visible = searching,
+        enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(180)) +
+            androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(260)) { it / 12 },
+        exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(150)),
+    ) {
+        com.skienlabs.tasks.ui.search.SearchScreen(
+            today = today,
+            tags = state.tags,
+            savedTasks = { store.state.value.tasks.values },
+            recent = recentSearches,
+            search = { q -> app.api.search(q, today) },
+            onRemember = { q -> scope.launch { app.prefs.addRecentSearch(profile.uid, q) } },
+            onClearRecent = { scope.launch { app.prefs.clearRecentSearches(profile.uid) } },
+            onOpen = { t ->
+                searching = false
+                tab = TAB_TASKS
+                if (filter != null && filter !in t.tagIds) setFilter(null)
+                go(t.date)
+                sheet = Sheet.TaskView(t.id, t.date)
+            },
+            onClose = { searching = false },
+        )
+    }
+
     when (val s = sheet) {
         is Sheet.TaskEdit -> TaskSheet(
             store = store, task = s.task?.let { state.tasks[it.id] ?: it }, defaultDate = maxOf(date, today), defaultTagId = filter,
@@ -347,8 +394,12 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
         )
         is Sheet.TaskView -> {
             val t = state.tasks[s.id]
-            if (t == null) LaunchedEffect(s.id) { sheet = null } // deleted (maybe on another device)
-            else com.skienlabs.tasks.ui.day.TaskDetailsSheet(t, state.tags, today, actions) { sheet = null }
+            when {
+                t != null -> com.skienlabs.tasks.ui.day.TaskDetailsSheet(t, state.tags, today, actions) { sheet = null }
+                // Opened from search: its day is loading; give it a moment before giving up.
+                s.date != null && !state.hasDay(s.date) -> LaunchedEffect(s.id) { kotlinx.coroutines.delay(10_000); if (state.tasks[s.id] == null) sheet = null }
+                else -> LaunchedEffect(s.id) { sheet = null } // deleted (maybe on another device)
+            }
         }
         Sheet.Month -> MonthSheet(
             month = visibleMonth, selected = date, today = today, summary = state.summary,
@@ -360,6 +411,46 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
         null -> Unit
     }
     if (newTag) TagEditor(store, null) { newTag = false }
+}
+
+/**
+ * "Thursday, 22 October 2026" in the top bar. On today the weekday shimmers in the theme's
+ * gradient. When it doesn't fit, it shortens to "Thu, 22 Oct 2026".
+ */
+@Composable
+internal fun DateTitle(date: String, isToday: Boolean, modifier: Modifier = Modifier) {
+    val x = LocalExtra.current
+    var short by remember(date) { mutableStateOf(false) }
+    val weekday = if (short) Dates.weekdayShort(date) else Dates.weekday(date)
+    val rest = if (short) Dates.dayMonthYearShort(date) else Dates.dayMonthYear(date)
+    // A slow sweep of light across the gradient, so today feels alive.
+    val shift by androidx.compose.animation.core.rememberInfiniteTransition(label = "title").animateFloat(
+        0f, 1f,
+        androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(6000, easing = androidx.compose.animation.core.LinearEasing), androidx.compose.animation.core.RepeatMode.Reverse),
+        label = "shift",
+    )
+    val brush = androidx.compose.ui.graphics.Brush.linearGradient(
+        x.gradient,
+        start = androidx.compose.ui.geometry.Offset(-200f + 200f * shift, 0f),
+        end = androidx.compose.ui.geometry.Offset(260f + 200f * shift, 0f),
+    )
+    val text = androidx.compose.ui.text.buildAnnotatedString {
+        if (isToday) pushStyle(androidx.compose.ui.text.SpanStyle(brush = brush, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium))
+        else pushStyle(androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium))
+        append(weekday)
+        pop()
+        append(", ")
+        append(rest)
+    }
+    Text(
+        text,
+        modifier.semantics { contentDescription = Dates.fullLabel(date) },
+        style = MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp),
+        maxLines = 1,
+        softWrap = false,
+        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        onTextLayout = { if (it.hasVisualOverflow && !short) short = true },
+    )
 }
 
 @Composable

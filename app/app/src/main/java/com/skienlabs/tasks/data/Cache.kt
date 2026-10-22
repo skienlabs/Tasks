@@ -48,7 +48,7 @@ data class TaskEntity(val id: String, val uid: String, val date: String, val sta
 data class TagEntity(val id: String, val uid: String, val json: String)
 
 @Entity(tableName = "summary", primaryKeys = ["uid", "date"])
-data class SummaryEntity(val uid: String, val date: String, val pending: Int, val done: Int, val cancelled: Int)
+data class SummaryEntity(val uid: String, val date: String, val pending: Int, val done: Int, val cancelled: Int, val missed: Int = 0)
 
 @Entity(tableName = "meta", primaryKeys = ["uid", "key"])
 data class MetaEntity(val uid: String, val key: String, val value: String)
@@ -106,7 +106,7 @@ interface CacheDao {
     suspend fun clearAllMeta()
 }
 
-@Database(entities = [TaskEntity::class, TagEntity::class, SummaryEntity::class, MetaEntity::class], version = 1, exportSchema = true)
+@Database(entities = [TaskEntity::class, TagEntity::class, SummaryEntity::class, MetaEntity::class], version = 2, exportSchema = true)
 abstract class CacheDatabase : RoomDatabase() {
     abstract fun dao(): CacheDao
 }
@@ -133,7 +133,7 @@ class RoomCache private constructor(context: Context) : Cache {
     override suspend fun load(uid: String, from: String, to: String, today: String): CacheSnapshot = CacheSnapshot(
         tasks = dao.tasks(uid, from, to, today).mapNotNull { decodeTask(it.json) },
         tags = dao.tags(uid).mapNotNull { decodeTag(it.json) },
-        summary = dao.summary(uid, from, to).associate { it.date to Counts(it.pending, it.done, it.cancelled) },
+        summary = dao.summary(uid, from, to).associate { it.date to Counts(it.pending, it.done, it.cancelled, it.missed) },
     )
 
     override suspend fun saveTasks(uid: String, upserts: List<Task>, deletes: List<String>) {
@@ -148,7 +148,7 @@ class RoomCache private constructor(context: Context) : Cache {
 
     override suspend fun saveSummary(uid: String, days: Map<String, Counts>) {
         if (days.isEmpty()) return
-        dao.upsertSummary(days.map { (d, c) -> SummaryEntity(uid, d, c.pending, c.done, c.cancelled) })
+        dao.upsertSummary(days.map { (d, c) -> SummaryEntity(uid, d, c.pending, c.done, c.cancelled, c.missed) })
     }
 
     override suspend fun saveProfile(uid: String, profile: Profile) =

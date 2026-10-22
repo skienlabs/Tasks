@@ -40,6 +40,23 @@ data class Extra(
     val gradient: List<Color>,
     val overdueBg: Color,
     val overdueBorder: Color,
+    /** Set for the Glass themes: see-through panels over moving light (see Glass.kt). */
+    val glass: GlassStyle? = null,
+)
+
+/** How a Glass theme looks: the lights behind, and the panels floating over them. */
+@Immutable
+data class GlassStyle(
+    val base: Color,
+    val blobs: List<Color>,
+    val blobAlpha: Float,
+    /** Fill of a panel (task card, summary card). */
+    val panel: Color,
+    /** Fill of bars that need to stay readable (navigation bar). */
+    val panelStrong: Color,
+    /** The rim of a panel, and the brighter light along its top edge. */
+    val edge: Color,
+    val shine: Color,
 )
 
 private val LightExtra = Extra(
@@ -104,6 +121,50 @@ private val GrayExtra = LightExtra.copy(
     gradient = listOf(Color(0xFF005FB8), Color(0xFF6B4FBB), Color(0xFFB3266E)),
     overdueBg = Color(0xFFF5E6E6),
     overdueBorder = Color(0xFFE2A6A6),
+)
+
+// Liquid glass on black: frosted, see-through panels floating over slowly moving coloured light.
+private val GlassExtra = DarkExtra.copy(
+    surfaceHigh = Color(0x17FFFFFF),
+    surfaceHighest = Color(0x24FFFFFF),
+    outline = Color(0x38FFFFFF),
+    pending = Color(0xFF9EC5FF),
+    done = Color(0xFF74E3A0),
+    overdue = Color(0xFFFF8A8A),
+    rate = Color(0xFFC49BFF),
+    gradient = listOf(Color(0xFF8FB8FF), Color(0xFFC49BFF), Color(0xFFFF9AD5)),
+    overdueBg = Color(0x1FFF5A5A),
+    overdueBorder = Color(0x99FF7878),
+    glass = GlassStyle(
+        base = Color(0xFF05060B),
+        blobs = listOf(Color(0xFF3B5BFF), Color(0xFF9B3BFF), Color(0xFF00C2C7), Color(0xFFFF3D9A), Color(0xFF2A7BFF)),
+        blobAlpha = 0.55f,
+        panel = Color(0x14FFFFFF),
+        panelStrong = Color(0xB30B0C14),
+        edge = Color(0x29FFFFFF),
+        shine = Color(0x66FFFFFF),
+    ),
+)
+
+// Liquid glass on white: milky panels over soft pastel light.
+private val GlassLightExtra = LightExtra.copy(
+    surfaceHigh = Color(0x99FFFFFF),
+    surfaceHighest = Color(0xCCFFFFFF),
+    outline = Color(0x381E2846),
+    pending = Color(0xFF0A63E0),
+    rate = Color(0xFF8B3CF0),
+    gradient = listOf(Color(0xFF2F6BFF), Color(0xFF8B3CF0), Color(0xFFE0388F)),
+    overdueBg = Color(0x14D93025),
+    overdueBorder = Color(0x80D93025),
+    glass = GlassStyle(
+        base = Color(0xFFEEF1F8),
+        blobs = listOf(Color(0xFF8FB3FF), Color(0xFFFFB3D9), Color(0xFF9FF0D8), Color(0xFFFFD59E), Color(0xFFC7B3FF)),
+        blobAlpha = 0.8f,
+        panel = Color(0x8CFFFFFF),
+        panelStrong = Color(0xD9FFFFFF),
+        edge = Color(0xB3FFFFFF),
+        shine = Color(0xFFFFFFFF),
+    ),
 )
 
 val LocalExtra = staticCompositionLocalOf { LightExtra }
@@ -226,6 +287,57 @@ private val GrayColors = LightColors.copy(
     inversePrimary = Color(0xFF9CC3F0),
 )
 
+// Glass themes: the page itself is clear so the light behind shows; sheets, menus and dialogs
+// (which float in their own windows) get solid, tinted colours so they stay readable.
+private val GlassColors = DarkColors.copy(
+    primary = Color(0xFF9EC5FF),
+    onPrimary = Color(0xFF04224F),
+    primaryContainer = Color(0x4D78AAFF),
+    onPrimaryContainer = Color(0xFFE3EDFF),
+    secondaryContainer = Color(0x4D78AAFF),
+    onSecondaryContainer = Color(0xFFE3EDFF),
+    background = Color.Transparent,
+    onBackground = Color(0xFFF4F6FB),
+    surface = Color(0xFF0B0C14),
+    onSurface = Color(0xFFF4F6FB),
+    surfaceVariant = Color(0x24FFFFFF),
+    onSurfaceVariant = Color(0xFFB9C0D4),
+    surfaceContainerLowest = Color(0xFF08090F),
+    surfaceContainerLow = Color(0xFF10121C),
+    surfaceContainer = Color(0xFF151826),
+    surfaceContainerHigh = Color(0xFF1A1D2E),
+    surfaceContainerHighest = Color(0xFF212538),
+    outline = Color(0x47FFFFFF),
+    outlineVariant = Color(0x1FFFFFFF),
+    error = Color(0xFFFF8A8A),
+    inverseSurface = Color(0xFFF4F6FB),
+    inverseOnSurface = Color(0xFF10121C),
+    inversePrimary = Color(0xFF0A63E0),
+)
+
+private val GlassLightColors = LightColors.copy(
+    primary = Color(0xFF0A63E0),
+    onPrimary = Color.White,
+    primaryContainer = Color(0x330A63E0),
+    onPrimaryContainer = Color(0xFF06306E),
+    secondaryContainer = Color(0x330A63E0),
+    onSecondaryContainer = Color(0xFF06306E),
+    background = Color.Transparent,
+    onBackground = Color(0xFF141821),
+    surface = Color(0xFFF7F8FC),
+    onSurface = Color(0xFF141821),
+    surfaceVariant = Color(0xCCFFFFFF),
+    onSurfaceVariant = Color(0xFF4A5068),
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Color(0xFFF7F8FC),
+    surfaceContainer = Color(0xFFF1F3FA),
+    surfaceContainerHigh = Color(0xFFEBEEF7),
+    surfaceContainerHighest = Color(0xFFE3E7F2),
+    outline = Color(0x4D1E2846),
+    outlineVariant = Color(0x261E2846),
+    error = Color(0xFFC62828),
+)
+
 /** The looks people can pick (Account → Theme). Same set as the web app. */
 enum class AppTheme(val dark: Boolean, val label: String, val background: Color, val card: Color, val accent: Color) {
     LIGHT(false, "Light", Color.White, Color(0xFFF0F4F9), Color(0xFF0B57D0)),
@@ -233,6 +345,14 @@ enum class AppTheme(val dark: Boolean, val label: String, val background: Color,
     DIM(true, "Dark", Color(0xFF131314), Color(0xFF1E1F20), Color(0xFFA8C7FA)),
     MIDNIGHT(true, "Midnight Black", Color.Black, Color(0xFF0F1012), Color(0xFFA8C7FA)),
     ABYSS(true, "Abyss", Color(0xFF000C18), Color(0xFF060621), Color(0xFF82AAFF)),
+    GLASS(true, "Glass Black", Color(0xFF05060B), Color(0x26FFFFFF), Color(0xFF9EC5FF)),
+    GLASS_LIGHT(false, "Glass White", Color(0xFFEEF1F8), Color(0xB3FFFFFF), Color(0xFF0A63E0)),
+    ;
+
+    val glass get() = this == GLASS || this == GLASS_LIGHT
+
+    /** For the small theme cards, where "Midnight Black" doesn't fit. */
+    val shortLabel get() = if (this == MIDNIGHT) "Midnight" else label
 }
 
 private val base = Typography()
@@ -265,6 +385,8 @@ fun TasksTheme(theme: AppTheme, content: @Composable () -> Unit) {
         AppTheme.DIM -> DimExtra
         AppTheme.MIDNIGHT -> DarkExtra
         AppTheme.ABYSS -> AbyssExtra
+        AppTheme.GLASS -> GlassExtra
+        AppTheme.GLASS_LIGHT -> GlassLightExtra
     }
     val colors = when (theme) {
         AppTheme.LIGHT -> LightColors
@@ -272,14 +394,19 @@ fun TasksTheme(theme: AppTheme, content: @Composable () -> Unit) {
         AppTheme.DIM -> DimColors
         AppTheme.MIDNIGHT -> DarkColors
         AppTheme.ABYSS -> AbyssColors
+        AppTheme.GLASS -> GlassColors
+        AppTheme.GLASS_LIGHT -> GlassLightColors
     }
     androidx.compose.runtime.CompositionLocalProvider(LocalExtra provides extra) {
         MaterialTheme(
             colorScheme = colors,
             typography = AppTypography,
             shapes = AppShapes,
-            content = content,
-        )
+        ) {
+            val g = extra.glass
+            if (g == null) content()
+            else GlassLayer(g, theme.dark, content)
+        }
     }
 }
 
