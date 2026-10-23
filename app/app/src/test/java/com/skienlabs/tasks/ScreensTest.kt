@@ -61,6 +61,7 @@ import com.skienlabs.tasks.ui.theme.TasksTheme
 import com.skienlabs.tasks.ui.theme.glassPanel
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.graphics.takeOrElse
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.Rule
 import org.junit.Test
@@ -128,13 +129,13 @@ class ScreensTest {
                         Icon(Icons.Outlined.Search, null, Modifier.padding(horizontal = 12.dp))
                         Box(Modifier.padding(end = 12.dp)) { Avatar(profile, 32.dp) }
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = LocalExtra.current.bar.takeOrElse { MaterialTheme.colorScheme.background }),
                 )
             },
             bottomBar = {
                 val glass = LocalExtra.current.glass
                 NavigationBar(
-                    containerColor = if (glass != null) androidx.compose.ui.graphics.Color.Transparent else LocalExtra.current.surfaceHigh,
+                    containerColor = if (glass != null) androidx.compose.ui.graphics.Color.Transparent else LocalExtra.current.bar.takeOrElse { LocalExtra.current.surfaceHigh },
                     modifier = if (glass != null) Modifier.glassPanel(androidx.compose.foundation.shape.RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp), glass.panelStrong) else Modifier,
                 ) {
                     NavigationBarItem(true, {}, { Icon(Icons.Filled.CheckCircle, null) }, label = { Text("Tasks") })
@@ -178,9 +179,10 @@ class ScreensTest {
     @Test fun today_dim() = shot("today_dim", com.skienlabs.tasks.ui.theme.AppTheme.DIM) { Home(state, today) }
     @Test fun today_abyss() = shot("today_abyss", com.skienlabs.tasks.ui.theme.AppTheme.ABYSS) { Home(state, today) }
     @Test fun today_gray() = shot("today_gray", com.skienlabs.tasks.ui.theme.AppTheme.GRAY) { Home(state, today) }
-    @Test fun today_glass() = shot("today_glass", com.skienlabs.tasks.ui.theme.AppTheme.GLASS) { Home(state, today) }
+    @Test fun today_mono() = shot("today_mono", com.skienlabs.tasks.ui.theme.AppTheme.MONO) { Home(state, today) }
+    @Test fun today_mono_light() = shot("today_mono_light", com.skienlabs.tasks.ui.theme.AppTheme.MONO_LIGHT) { Home(state, today) }
     @Test fun today_glass_light() = shot("today_glass_light", com.skienlabs.tasks.ui.theme.AppTheme.GLASS_LIGHT) { Home(state, today) }
-    @Test fun summary_glass() = shot("summary_glass", com.skienlabs.tasks.ui.theme.AppTheme.GLASS) {
+    @Test fun summary_mono() = shot("summary_mono", com.skienlabs.tasks.ui.theme.AppTheme.MONO) {
         SummaryScreen({ _, _, _ -> stats }, {}, today, state.tags, 0, 0.dp) {}
     }
 
@@ -218,7 +220,7 @@ class ScreensTest {
         rule.onRoot().captureRoboImage("build/screens/search_results.png")
     }
     @Test fun search_glass() {
-        searchShot("search_glass_tmp", com.skienlabs.tasks.ui.theme.AppTheme.GLASS)
+        searchShot("search_glass_tmp", com.skienlabs.tasks.ui.theme.AppTheme.GLASS_LIGHT)
         rule.onNode(androidx.compose.ui.test.hasSetTextAction()).performTextInput("is:open")
         rule.mainClock.advanceTimeBy(400)
         rule.waitForIdle()
@@ -236,13 +238,13 @@ class ScreensTest {
                 com.skienlabs.tasks.ui.account.SettingRow(Icons.Outlined.Sell, "Change password", "We'll email you a reset link") {}
             }
             com.skienlabs.tasks.ui.account.Section("Appearance", card = false) {
-                com.skienlabs.tasks.ui.account.ThemeDropdown(com.skienlabs.tasks.data.ThemePref.GLASS, startOpen = true) {}
+                com.skienlabs.tasks.ui.account.ThemeDropdown(com.skienlabs.tasks.data.ThemePref.MONO, startOpen = true) {}
             }
         }
     }
     @Test fun account_dark() = accountShot("account_dark", com.skienlabs.tasks.ui.theme.AppTheme.MIDNIGHT)
     @Test fun account_light() = accountShot("account_light", com.skienlabs.tasks.ui.theme.AppTheme.LIGHT)
-    @Test fun account_glass() = accountShot("account_glass", com.skienlabs.tasks.ui.theme.AppTheme.GLASS)
+    @Test fun account_gray() = accountShot("account_gray", com.skienlabs.tasks.ui.theme.AppTheme.GRAY)
     @Test fun theme_swatches() = shot("theme_swatches", com.skienlabs.tasks.ui.theme.AppTheme.ABYSS) {
         Column(Modifier.padding(20.dp)) {
             com.skienlabs.tasks.ui.account.ThemeSwatches(com.skienlabs.tasks.data.ThemePref.ABYSS) {}

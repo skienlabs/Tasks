@@ -181,10 +181,10 @@ fun SummaryScreen(
             }
         }
         item(key = "prio") {
-            Card("By priority", Icons.Filled.Flag, Palette.priority(1, x.dark)) {
+            Card("By priority", Icons.Filled.Flag, Palette.priority(1, LocalExtra.current)) {
                 if (s.byPriority.isEmpty()) Text("No tasks this month.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 s.byPriority.sortedBy { it.priority }.forEach { r ->
-                    Breakdown(icon = { Icon(Icons.Filled.Flag, null, tint = Palette.priority(r.priority, x.dark)) }, label = Palette.priorityLabel(r.priority), c = r.counts())
+                    Breakdown(icon = { Icon(Icons.Filled.Flag, null, tint = Palette.priority(r.priority, LocalExtra.current)) }, label = Palette.priorityLabel(r.priority), c = r.counts())
                 }
             }
         }
@@ -215,8 +215,10 @@ private fun Card(title: String, icon: ImageVector, tint: Color, content: @Compos
 }
 
 @Composable
-private fun Kpi(label: String, value: String, sub: String, color: Color, icon: ImageVector, modifier: Modifier) {
+private fun Kpi(label: String, value: String, sub: String, hue: Color, icon: ImageVector, modifier: Modifier) {
     val dark = LocalExtra.current.dark
+    // Black & White themes: the ink colour instead of a hue.
+    val color = if (LocalExtra.current.mono) MaterialTheme.colorScheme.onSurface else hue
     Column(
         modifier.clip(RoundedCornerShape(24.dp)).background(color.copy(alpha = if (dark) 0.14f else 0.09f))
             .border(1.dp, color.copy(alpha = 0.28f), RoundedCornerShape(24.dp)).padding(16.dp),

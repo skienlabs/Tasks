@@ -331,7 +331,7 @@ private fun Hit(h: SearchHit, terms: List<String>, today: String, tags: List<Tag
     ) {
         Box(Modifier.padding(top = 1.dp).size(22.dp), contentAlignment = Alignment.Center) {
             when {
-                t.isPending -> Box(Modifier.size(19.dp).border(2.dp, Palette.priority(t.priority, x.dark), CircleShape))
+                t.isPending -> Box(Modifier.size(19.dp).border(2.dp, Palette.priority(t.priority, LocalExtra.current), CircleShape))
                 t.isDone -> Icon(Icons.Filled.CheckCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
                 else -> Icon(Icons.Filled.Block, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(21.dp))
             }

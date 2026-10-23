@@ -147,7 +147,7 @@ fun TaskDetails(task: Task, tags: List<Tag>, today: String, actions: RowActions,
             Fact(Icons.Outlined.Event, "Date") {
                 Text("${Dates.relativeLabel(task.date, today)} · ${Dates.longDate(task.date)}", style = MaterialTheme.typography.bodyMedium)
             }
-            Fact(if (task.priority < 4) Icons.Filled.Flag else Icons.Outlined.Flag, "Priority", if (task.priority < 4) Palette.priority(task.priority, x.dark) else null) {
+            Fact(if (task.priority < 4) Icons.Filled.Flag else Icons.Outlined.Flag, "Priority", if (task.priority < 4) Palette.priority(task.priority, LocalExtra.current) else null) {
                 Text(Palette.priorityLabel(task.priority), style = MaterialTheme.typography.bodyMedium)
             }
             Fact(Icons.Outlined.Sell, "Tags") {

@@ -66,7 +66,7 @@ private object LogoCache {
 }
 
 @Composable
-fun tagColor(key: String): Color = Palette.tag(key, LocalExtra.current.dark)
+fun tagColor(key: String): Color = Palette.tag(key, LocalExtra.current)
 
 @Composable
 fun TagAvatar(tag: Tag, size: Dp = 18.dp) {
@@ -105,8 +105,11 @@ fun TagAvatar(tag: Tag, size: Dp = 18.dp) {
 @Composable
 fun TagChip(tag: Tag, modifier: Modifier = Modifier, selected: Boolean = false, dense: Boolean = false, onClick: (() -> Unit)? = null) {
     val c = tagColor(tag.color)
-    val dark = LocalExtra.current.dark
-    val bg = if (selected || dense) c.copy(alpha = if (dark) 0.16f else 0.12f) else Color.Transparent
+    val x = LocalExtra.current
+    val dark = x.dark
+    // Normal text colour (tag colours on tinted backgrounds were hard to read): the logo and the
+    // outline carry the colour.
+    val bg = if (selected) c.copy(alpha = if (dark) 0.16f else 0.12f) else if (dense) x.chip else Color.Transparent
     val shape = RoundedCornerShape(50)
     var m = modifier.clip(shape).background(bg)
     if (!dense) m = m.border(1.dp, if (selected) c else c.copy(alpha = 0.4f), shape)
@@ -119,7 +122,7 @@ fun TagChip(tag: Tag, modifier: Modifier = Modifier, selected: Boolean = false, 
         TagAvatar(tag, if (dense) 15.dp else 20.dp)
         Text(
             tag.name,
-            color = c,
+            color = MaterialTheme.colorScheme.onSurface,
             style = if (dense) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

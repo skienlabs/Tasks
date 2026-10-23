@@ -13,6 +13,8 @@ const DARK_ACCENTS = {
   warning: '#fdd663',
 };
 
+// Every theme also has card colours (task cards are neutral; colour only marks things) and
+// `sidebar`, the colour of the side bar and top bar.
 const TOKENS = {
   light: {
     primary: '#0b57d0',
@@ -30,28 +32,35 @@ const TOKENS = {
     error: '#b3261e',
     success: '#146c2e',
     warning: '#b06000',
-    carriedBg: '#fdf3f2',
-    carriedBorder: '#f1b4ae',
+    card: '#ffffff',
+    cardBorder: '#e1e5ea',
+    cardHover: '#f6f8fc',
+    chip: '#f0f3f8',
   },
-  // Medium light grey, after VS Code's light theme: grey chrome, lighter raised panels, its blue.
+  // Charcoal greys and blue, after VS Code's dark theme: a darker side bar and title bar
+  // around a slightly lighter page, hairline borders, VS Code's blue and syntax colours.
   gray: {
-    primary: '#005fb8',
-    onPrimary: '#ffffff',
-    primaryContainer: '#d2e3f6',
-    onPrimaryContainer: '#002f5c',
-    bg: '#e8e8ea',
-    surface: '#efeff1',
-    surfaceHigh: '#f7f7f8',
-    surfaceHighest: '#ffffff',
-    text: '#252526',
-    textMuted: '#5b5b60',
-    outline: '#bcbcc2',
-    divider: '#d5d5da',
-    error: '#c4314b',
-    success: '#2e7d32',
-    warning: '#9a6700',
-    carriedBg: '#f5e6e6',
-    carriedBorder: '#e2a6a6',
+    primary: '#4daafc',
+    onPrimary: '#002544',
+    primaryContainer: '#04395e',
+    onPrimaryContainer: '#d6ebff',
+    bg: '#1f1f1f',
+    sidebar: '#181818',
+    surface: '#1f1f1f',
+    surfaceHigh: '#252526',
+    surfaceHighest: '#2d2d30',
+    text: '#cccccc',
+    textMuted: '#9d9d9d',
+    outline: '#454545',
+    divider: '#2b2b2b',
+    error: '#f48771',
+    success: '#89d185',
+    warning: '#cca700',
+    card: '#252526',
+    cardBorder: '#2f2f31',
+    cardHover: '#2a2d2e',
+    chip: '#313131',
+    gradient: ['#4fc1ff', '#c586c0', '#dcdcaa'],
   },
   // Soft dark grey, like Google's own dark mode.
   dim: {
@@ -64,8 +73,10 @@ const TOKENS = {
     textMuted: '#c4c7c5',
     outline: '#444746',
     divider: '#2d2f31',
-    carriedBg: '#2a1d1c',
-    carriedBorder: '#8c3b35',
+    card: '#1b1c1d',
+    cardBorder: '#2d2f31',
+    cardHover: '#222325',
+    chip: '#282a2c',
   },
   // True black for OLED screens.
   dark: {
@@ -78,8 +89,10 @@ const TOKENS = {
     textMuted: '#a6a8ab',
     outline: '#3c3f43',
     divider: '#222426',
-    carriedBg: '#140807',
-    carriedBorder: '#6e2e2a',
+    card: '#0d0e10',
+    cardBorder: '#202225',
+    cardHover: '#141518',
+    chip: '#1b1c1f',
   },
   // Deep navy, after VS Code's Abyss: layered blues, a soft glow, and its blue/purple/gold accents.
   abyss: {
@@ -98,88 +111,76 @@ const TOKENS = {
     error: '#ff9e9e',
     success: '#7fdba0',
     warning: '#f0c674',
-    carriedBg: '#230c1f',
-    carriedBorder: '#8a3556',
+    card: '#06162b',
+    cardBorder: '#13264a',
+    cardHover: '#0b1d38',
+    chip: '#0f2342',
     gradient: ['#6688cc', '#9966b8', '#ddbb88'],
     glow: 'radial-gradient(1100px 600px at 88% -10%, rgba(102,136,204,.24), transparent 62%), '
       + 'radial-gradient(900px 560px at -10% 110%, rgba(153,102,184,.18), transparent 60%)',
   },
-  // Liquid glass on black: frosted, see-through panels floating over a slowly moving aurora.
-  glass: {
-    primary: '#9ec5ff',
-    onPrimary: '#04224f',
-    primaryContainer: 'rgba(120,170,255,.24)',
-    onPrimaryContainer: '#e3edff',
-    bg: '#05060b',
-    surface: 'rgba(255,255,255,.035)',
-    surfaceHigh: 'rgba(255,255,255,.07)',
-    surfaceHighest: 'rgba(255,255,255,.12)',
-    text: '#f4f6fb',
-    textMuted: 'rgba(235,240,255,.66)',
-    outline: 'rgba(255,255,255,.2)',
-    divider: 'rgba(255,255,255,.1)',
-    error: '#ff8a8a',
-    success: '#74e3a0',
-    warning: '#ffd479',
-    carriedBg: 'rgba(255,90,90,.1)',
-    carriedBorder: 'rgba(255,120,120,.55)',
-    gradient: ['#8fb8ff', '#c49bff', '#ff9ad5'],
-    glass: {
-      blur: 'blur(28px) saturate(185%)',
-      panel: 'rgba(22,24,34,.42)',
-      menu: 'rgba(24,26,38,.8)',
-      edge: 'rgba(255,255,255,.14)',
-      shine: 'rgba(255,255,255,.28)',
-      shadow: '0 10px 40px rgba(0,0,0,.45)',
-      blobs: ['#3b5bff', '#9b3bff', '#00c2c7', '#ff3d9a', '#2a7bff'],
-      blobOpacity: 0.55,
-    },
+  // Black and white only: a black page, white type, and white for everything selected.
+  mono: {
+    primary: '#ffffff',
+    onPrimary: '#000000',
+    primaryContainer: '#ffffff',
+    onPrimaryContainer: '#000000',
+    bg: '#000000',
+    surface: '#000000',
+    surfaceHigh: '#0e0e0e',
+    surfaceHighest: '#1c1c1c',
+    text: '#ffffff',
+    textMuted: '#a8a8a8',
+    outline: '#4a4a4a',
+    divider: '#262626',
+    error: '#ff8a80',
+    success: '#d9d9d9',
+    warning: '#e0e0e0',
+    card: '#0b0b0b',
+    cardBorder: '#2b2b2b',
+    cardHover: '#151515',
+    chip: '#1c1c1c',
+    gradient: ['#ffffff', '#9e9e9e', '#ffffff'],
+    mono: true,
   },
-  // Liquid glass on white: milky panels over soft pastel light.
-  glassLight: {
-    primary: '#0a63e0',
+  // The same, inverted: a white page, black type, and black for everything selected.
+  monoLight: {
+    primary: '#000000',
     onPrimary: '#ffffff',
-    primaryContainer: 'rgba(10,99,224,.14)',
-    onPrimaryContainer: '#06306e',
-    bg: '#eef1f8',
-    surface: 'rgba(255,255,255,.4)',
-    surfaceHigh: 'rgba(255,255,255,.58)',
-    surfaceHighest: 'rgba(255,255,255,.78)',
-    text: '#141821',
-    textMuted: 'rgba(28,34,52,.68)',
-    outline: 'rgba(30,40,70,.2)',
-    divider: 'rgba(30,40,70,.1)',
+    primaryContainer: '#000000',
+    onPrimaryContainer: '#ffffff',
+    bg: '#ffffff',
+    surface: '#ffffff',
+    surfaceHigh: '#f4f4f4',
+    surfaceHighest: '#e9e9e9',
+    text: '#000000',
+    textMuted: '#555555',
+    outline: '#bdbdbd',
+    divider: '#e4e4e4',
     error: '#c62828',
-    success: '#167a3c',
-    warning: '#a35c00',
-    carriedBg: 'rgba(217,48,37,.07)',
-    carriedBorder: 'rgba(217,48,37,.45)',
-    gradient: ['#2f6bff', '#8b3cf0', '#e0388f'],
-    glass: {
-      blur: 'blur(26px) saturate(170%)',
-      panel: 'rgba(255,255,255,.5)',
-      menu: 'rgba(255,255,255,.84)',
-      edge: 'rgba(255,255,255,.75)',
-      shine: 'rgba(255,255,255,.95)',
-      shadow: '0 10px 36px rgba(40,60,120,.14)',
-      blobs: ['#8fb3ff', '#ffb3d9', '#9ff0d8', '#ffd59e', '#c7b3ff'],
-      blobOpacity: 0.75,
-    },
+    success: '#2b2b2b',
+    warning: '#3a3a3a',
+    card: '#ffffff',
+    cardBorder: '#dedede',
+    cardHover: '#f7f7f7',
+    chip: '#f0f0f0',
+    gradient: ['#000000', '#6b6b6b', '#000000'],
+    mono: true,
   },
 };
 
-const LIGHT_THEMES = new Set(['light', 'gray', 'glassLight']);
+const LIGHT_THEMES = new Set(['light', 'monoLight']);
 
 /** The themes people can pick. `v` is what's saved; null follows the system (Light or Midnight Black). */
 export const THEMES = [
   { v: null, label: 'System', hint: 'Light or Midnight Black, following your device' },
   { v: 'light', label: 'Light', hint: 'Bright and clean' },
-  { v: 'gray', label: 'Light Gray', hint: 'Medium light grey, like VS Code\'s light theme' },
+  { v: 'gray', label: 'Dark Gray', hint: 'Charcoal greys and blue, like VS Code\'s dark theme' },
   { v: 'dim', label: 'Dark', hint: 'Soft dark grey' },
   { v: 'dark', label: 'Midnight Black', hint: 'True black, easy on OLED screens' },
   { v: 'abyss', label: 'Abyss', hint: 'Deep navy, like the VS Code theme' },
-  { v: 'glass', label: 'Glass Black', hint: 'Liquid glass over a moving aurora, on black' },
-  { v: 'glassLight', label: 'Glass White', hint: 'Liquid glass over soft pastel light' },
+  { v: 'mono', label: 'Black & White', hint: 'Black page, white ink, a touch of red for what\'s late' },
+  { v: 'monoLight', label: 'White & Black', hint: 'White page, black ink, a touch of red for what\'s late' },
 ];
 
 export const themeTokens = (name) => TOKENS[name] ?? TOKENS.light;
@@ -192,15 +193,19 @@ export const PRIORITIES = [
   { value: 4, label: 'None', light: '#80868b', dark: '#80868b' },
 ];
 
+// Black & White themes: shades of the ink colour instead of hues (only lateness stays red).
+const MONO_SHADES = { dark: ['#ffffff', '#c2c2c2', '#8f8f8f', '#5e5e5e'], light: ['#000000', '#3d3d3d', '#707070', '#a3a3a3'] };
+const shade = (theme, i) => MONO_SHADES[theme.palette.mode][i];
+
 export function priorityColor(theme, value) {
   const p = PRIORITIES.find((x) => x.value === value) ?? PRIORITIES[3];
+  if (theme.tokens?.mono) return shade(theme, p.value - 1);
   return theme.palette.mode === 'dark' ? p.dark : p.light;
 }
 
 export function makeTheme(name) {
   const t = themeTokens(name);
   const mode = LIGHT_THEMES.has(name) || !TOKENS[name] ? 'light' : 'dark';
-  const g = t.glass;
   return createTheme({
     palette: {
       mode,
@@ -212,7 +217,7 @@ export function makeTheme(name) {
       text: { primary: t.text, secondary: t.textMuted },
       divider: t.divider,
     },
-    tokens: t,
+    tokens: { sidebar: t.bg, ...t },
     themeName: name,
     shape: { borderRadius: 12 },
     typography: {
@@ -226,15 +231,13 @@ export function makeTheme(name) {
       MuiCssBaseline: {
         styleOverrides: {
           body: {
-            // Glass: the page colour sits on <html>, so the moving light behind (z-index -1) shows through.
-            backgroundColor: g ? 'transparent' : t.bg, WebkitTapHighlightColor: 'transparent',
-            transition: 'background-color .5s ease',
+            backgroundColor: t.bg, WebkitTapHighlightColor: 'transparent',
+            transition: 'background-color .3s ease',
             ...(t.glow && { backgroundImage: t.glow, backgroundAttachment: 'fixed', backgroundRepeat: 'no-repeat' }),
           },
-          ...(g && GLASS_KEYFRAMES),
           '*::-webkit-scrollbar': { width: 10, height: 10 },
           '*::-webkit-scrollbar-thumb': {
-            backgroundColor: t.outline, borderRadius: 8, border: `3px solid ${g ? 'transparent' : t.bg}`, backgroundClip: g ? 'padding-box' : undefined,
+            backgroundColor: t.outline, borderRadius: 8, border: `3px solid ${t.bg}`,
           },
         },
       },
@@ -247,25 +250,16 @@ export function makeTheme(name) {
       MuiPaper: { styleOverrides: { root: { backgroundImage: 'none' } } },
       MuiDialog: {
         styleOverrides: {
-          paper: {
-            borderRadius: 28, backgroundColor: t.surfaceHigh,
-            ...(g && { ...glassSurface(t, g.menu), animation: 'glassPop .42s cubic-bezier(.2,1.25,.35,1) both' }),
-          },
-          ...(g && { root: { '& .MuiBackdrop-root': { backgroundColor: mode === 'dark' ? 'rgba(0,0,0,.35)' : 'rgba(80,90,120,.18)', backdropFilter: 'blur(6px)' } } }),
+          paper: { borderRadius: 28, backgroundColor: t.surfaceHigh, ...(t.mono && { border: `1px solid ${t.divider}` }) },
         },
       },
       MuiMenu: {
         styleOverrides: {
           paper: {
             borderRadius: 12, backgroundColor: t.surfaceHighest, border: `1px solid ${t.divider}`,
-            ...(g && { ...glassSurface(t, g.menu), borderRadius: 18 }),
           },
         },
       },
-      ...(g && {
-        MuiPopover: { styleOverrides: { paper: { ...glassSurface(t, g.menu), borderRadius: 18 } } },
-        MuiDrawer: { styleOverrides: { paper: { ...glassSurface(t, g.menu) } } },
-      }),
       MuiTooltip: {
         defaultProps: { enterDelay: 500, disableInteractive: true },
         styleOverrides: { tooltip: { fontSize: 12, borderRadius: 6 } },
@@ -302,58 +296,6 @@ export const TAG_COLORS = {
   grey: { label: 'Grey', light: '#5f6368', dark: '#bdc1c6' },
 };
 
-const GLASS_KEYFRAMES = {
-  '@keyframes glassPop': {
-    from: { opacity: 0, transform: 'translateY(10px) scale(.96)', filter: 'blur(6px)' },
-    to: { opacity: 1, transform: 'none', filter: 'none' },
-  },
-  '@keyframes glassIn': {
-    from: { opacity: 0, transform: 'translateY(8px) scale(.985)' },
-    to: { opacity: 1, transform: 'none' },
-  },
-  '@keyframes glassSheen': {
-    from: { transform: 'translateX(-120%) skewX(-18deg)' },
-    to: { transform: 'translateX(260%) skewX(-18deg)' },
-  },
-  '@keyframes blobDrift1': {
-    '0%,100%': { transform: 'translate(0,0) scale(1)' },
-    '33%': { transform: 'translate(18vw,12vh) scale(1.18)' },
-    '66%': { transform: 'translate(-8vw,22vh) scale(.9)' },
-  },
-  '@keyframes blobDrift2': {
-    '0%,100%': { transform: 'translate(0,0) scale(1)' },
-    '40%': { transform: 'translate(-22vw,-10vh) scale(1.25)' },
-    '75%': { transform: 'translate(-6vw,14vh) scale(.92)' },
-  },
-  '@keyframes blobDrift3': {
-    '0%,100%': { transform: 'translate(0,0) rotate(0deg) scale(1)' },
-    '50%': { transform: 'translate(14vw,-18vh) rotate(40deg) scale(1.15)' },
-  },
-  '@media (prefers-reduced-motion: reduce)': {
-    '*, *::before, *::after': { animationDuration: '0.001ms !important', animationIterationCount: '1 !important' },
-  },
-};
-
-/**
- * A liquid-glass panel: blurred and brightened see-through fill, a bright rim that catches
- * the light along the top edge, and a soft shadow underneath. Empty for non-glass themes.
- */
-export function glassSurface(tokens, fill) {
-  const g = tokens.glass;
-  if (!g) return {};
-  return {
-    backgroundColor: fill ?? g.panel,
-    backdropFilter: g.blur,
-    WebkitBackdropFilter: g.blur,
-    border: `1px solid ${g.edge}`,
-    boxShadow: `inset 0 1px 0 ${g.shine}, inset 0 -1px 0 rgba(255,255,255,.04), ${g.shadow}`,
-  };
-}
-
-/** glassSurface for a component's sx: `sx={(t) => ({ ..., ...glass(t) })}`. */
-export const glass = (theme, fill) => glassSurface(theme.tokens, fill);
-export const isGlass = (theme) => Boolean(theme.tokens.glass);
-
 export function hexAlpha(hex, alpha) {
   const a = Math.round(alpha * 255).toString(16).padStart(2, '0');
   return `${hex}${a}`;
@@ -362,13 +304,19 @@ export function hexAlpha(hex, alpha) {
 export function tagColor(theme, key) {
   const c = TAG_COLORS[key] ?? TAG_COLORS.blue;
   const dark = theme.palette.mode === 'dark';
-  const main = dark ? c.dark : c.light;
+  const main = theme.tokens?.mono ? shade(theme, 1) : dark ? c.dark : c.light;
   return { main, bg: hexAlpha(main, dark ? 0.16 : 0.12), border: hexAlpha(main, dark ? 0.4 : 0.35) };
 }
 
 // Status colors used across summary widgets.
 export function statusColors(theme) {
   const dark = theme.palette.mode === 'dark';
+  if (theme.tokens?.mono) {
+    return {
+      done: shade(theme, 0), pending: shade(theme, 2), overdue: dark ? '#ff8a80' : '#c62828',
+      cancelled: shade(theme, 3), postponed: shade(theme, 1), rate: shade(theme, 0),
+    };
+  }
   return {
     done: dark ? '#81c995' : '#188038',
     pending: dark ? '#8ab4f8' : '#1a73e8',

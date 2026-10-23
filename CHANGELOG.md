@@ -4,6 +4,20 @@ One version number for the web app and the Android app. Bug fixes bump the last 
 
 Where it lives: `web/client/package.json` (`version`) and `app/app/build.gradle.kts` (`versionName`, plus `versionCode` +1 for every Android release).
 
+## 1.8.0 · 23 Oct 2026
+
+- **Works offline** (web and Android). The app opens and works with no connection: every day, search, the summary, adding, completing, editing, postponing, moving, deleting tasks, steps, images and tags. Changes are saved on the device and sent, in order, as soon as it's back online; a badge in the top bar shows "Offline · 3 waiting" and then "Syncing". The device keeps a full copy of your account (refreshed from the server whenever it's online), so even days you never opened are there.
+  - Changes made offline reach the server before anything is carried over, so a task you completed offline yesterday stays done on yesterday. A task added offline is accepted even when it syncs the next day.
+  - Sending a change twice (for example when the reply was lost) is harmless: postponing moves the task once, deleting something already gone is fine.
+  - If the server refuses an offline change (say, a tag name that's now taken), only that change is undone, with a message.
+  - Signing out with changes not yet sent asks first. Signing out also deletes this device's copy.
+  - Web: the whole app is saved by the service worker (every screen works offline, even ones not opened before), images are kept on the device, and several tabs share one queue without sending anything twice. Android: changes also wait safely if the app is closed, images to upload are kept in app storage, and widget ticks work offline too.
+- **Task cards redesigned**: calm, neutral cards with normal text everywhere. Colour now only marks things: the tag spine, a soft outline for tasks from earlier days (red for high priority), the logo ringed in its tag's colour, and the clock icon on "From Tue, 20 Oct". No more coloured fills, coloured names or tinted pills, so pink (or any) tags stay readable.
+- **Glass themes removed** on the web, and Glass Black removed on Android (Glass White stays on Android). Anyone using one is moved to System.
+- **Light Gray is now Dark Gray**: VS Code's dark theme (charcoal greys, a darker title bar and side bar around the page, hairline borders, VS Code blue and syntax colours).
+- **New themes: Black & White and White & Black**: pure ink on a black or white page; priorities, tags and charts in shades of grey, with only lateness kept red.
+- API: `GET /api/sync?today=` (the whole account, after carry-over); `POST /api/tasks/:id/postpone` takes an optional `from`.
+
 ## 1.7.0 · 22 Oct 2026
 
 - **Search every task** (web and Android). Results show as you type, best first: title matches before tag names, steps and notes, open tasks before finished ones, nearer days first, with the matched words highlighted and the step or note that matched. Suggestions complete the word you're typing (title words, tags, filters). Filters: `#tag`, `is:open` / `is:done` / `is:cancelled` / `is:late`, `p:high`, `date:today|tomorrow|week|month|2026-10-22`, `before:` / `after:`, `has:steps|images|notes`, and "quoted phrases". Close spellings still find things ("sevrer" → server). Recent searches and one-tap filters when the box is empty. Opening a result jumps to its day and shows its details.

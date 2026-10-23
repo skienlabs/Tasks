@@ -3,11 +3,12 @@ import { Box, Button, CssBaseline, LinearProgress, ThemeProvider, Typography, us
 import { isThemeName, makeTheme } from './theme.js';
 import { refreshUser, resendVerification, signOut, startAuth } from './lib/auth.js';
 import { api } from './lib/api.js';
-import { clearStore } from './lib/store.js';
+import { clearStore, startStore } from './lib/store.js';
+import { ApiError } from './lib/api.js';
+import { todayKey } from './lib/dates.js';
 import { readPref, writePref } from './lib/prefs.js';
 import Logo from './components/Logo.jsx';
 import Home from './components/Home.jsx';
-import GlassBackdrop from './components/GlassBackdrop.jsx';
 
 // Only needed when signed out / on first run: loaded on demand to keep the app quick to open.
 const SignIn = lazy(() => import('./components/SignIn.jsx'));
@@ -15,7 +16,7 @@ const Onboarding = lazy(() => import('./components/Onboarding.jsx'));
 
 export default function App() {
   const systemDark = useMediaQuery('(prefers-color-scheme: dark)', { noSsr: true });
-  // null follows the system; otherwise one of THEMES ('light' | 'gray' | 'dim' | 'dark' | 'abyss' | 'glass' | 'glassLight').
+  // null follows the system; otherwise one of THEMES ('light' | 'gray' | 'dim' | 'dark' | 'abyss' | 'mono' | 'monoLight').
   const [themePref, setThemePref] = useState(() => {
     const v = readPref('tasks.theme');
     return isThemeName(v) ? v : null;
@@ -30,6 +31,7 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [profileError, setProfileError] = useState(null);
   const [profileTry, setProfileTry] = useState(0);
+  const [storeFor, setStoreFor] = useState(null); // whose saved copy is open in the store
   const uid = user?.uid;
   const userRef = useRef(null);
 
@@ -39,10 +41,27 @@ export default function App() {
     setProfileError(null);
     if (!uid) return undefined;
     let alive = true;
+    const key = `tasks.profile.${uid}`;
     api('GET', '/api/me')
-      .then((p) => alive && setProfile(p))
+      .then((p) => {
+        if (!alive) return;
+        writePref(key, JSON.stringify(p)); // so the app opens offline next time
+        setProfile(p);
+      })
       .catch((err) => {
         if (!alive) return;
+        // Offline: open with the profile saved last time (changes sync when back online).
+        if (!(err instanceof ApiError) || err.status === 0) {
+          try {
+            const saved = JSON.parse(readPref(key) || 'null');
+            if (saved?.uid === uid) {
+              setProfile(saved);
+              return;
+            }
+          } catch {
+            /* no usable copy */
+          }
+        }
         // Never sign out automatically on an API error: a server or network hiccup
         // must not log people out. Firebase itself reports real sign-outs.
         setProfileError(err);
@@ -64,6 +83,15 @@ export default function App() {
     fetch('/api/config', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((cfg) => {
+        writePref('tasks.config', JSON.stringify(cfg));
+        return cfg;
+      }, (err) => {
+        // Offline: start with the settings saved last time.
+        const saved = readPref('tasks.config');
+        if (saved) return JSON.parse(saved);
+        throw err;
+      })
+      .then((cfg) => {
         if (!alive) return;
         if (!cfg.configured) {
           setBoot('setup');
@@ -74,7 +102,10 @@ export default function App() {
           cfg,
           (u) => {
             const prev = userRef.current;
-            if (prev && (!u || u.uid !== prev.uid)) clearStore(); // signed out or another account
+            if (prev && (!u || u.uid !== prev.uid)) {
+              clearStore(); // signed out or another account
+              setStoreFor(null);
+            }
             userRef.current = u;
             setUser(u);
           },
@@ -86,6 +117,17 @@ export default function App() {
       alive = false;
     };
   }, []);
+
+  // Open this account's saved copy before the home screen shows (fast, works offline).
+  const ready = Boolean(profile && profile.uid === uid && profile.onboarded);
+  useEffect(() => {
+    if (!ready) return undefined;
+    let alive = true;
+    startStore(uid, todayKey()).finally(() => alive && setStoreFor(uid));
+    return () => {
+      alive = false;
+    };
+  }, [ready, uid]);
 
   const changeTheme = (pref) => {
     setThemePref(pref);
@@ -105,6 +147,8 @@ export default function App() {
     screen = <Splash />;
   } else if (!profile.onboarded) {
     screen = <Onboarding profile={profile} onDone={setProfile} />;
+  } else if (storeFor !== user.uid) {
+    screen = <Splash />;
   } else {
     screen = (
       <Home
@@ -121,7 +165,6 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      {theme.tokens.glass && <GlassBackdrop tokens={theme.tokens} dark={mode === 'dark'} />}
       <Suspense fallback={<Splash />}>{screen}</Suspense>
     </ThemeProvider>
   );

@@ -15,7 +15,8 @@ import KeyboardReturnRounded from '@mui/icons-material/KeyboardReturnRounded';
 import { api } from '../lib/api.js';
 import { shortLabel } from '../lib/dates.js';
 import { readPref, writePref } from '../lib/prefs.js';
-import { selectTags } from '../lib/store.js';
+import { allTasks, selectTags } from '../lib/store.js';
+import { hasFilters, parseQuery, searchTasks, suggest } from '../lib/search.js';
 import { tagsOf } from '../lib/order.js';
 import { priorityColor, tagColor } from '../theme.js';
 import { TagAvatar } from './TagChip.jsx';
@@ -28,6 +29,19 @@ const QUICK = [
   { q: 'has:steps', label: 'With steps' },
   { q: 'is:done', label: 'Done' },
 ];
+
+/** The server's search, run on this device's copy (same answer shape as /api/search). */
+function searchHere(text, today) {
+  const tasks = allTasks();
+  const tags = selectTags();
+  const parsed = parseQuery(text, today);
+  const suggestions = suggest(text, tasks, tags);
+  if (!parsed.terms.length && !parsed.phrases.length && !hasFilters(parsed)) {
+    return { results: [], total: 0, fuzzy: false, terms: [], suggestions };
+  }
+  const found = searchTasks(tasks, tags, parsed, today, 40);
+  return { results: found.results.map((r) => ({ ...r.task, match: r.match })), total: found.total, fuzzy: found.fuzzy, terms: found.terms, suggestions };
+}
 
 const fold = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
@@ -138,7 +152,13 @@ export default function SearchDialog({ open, onClose, onOpenTask, today, uid }) 
         setError('');
         setActive(0);
       } catch (err) {
-        if (mine === seq.current) setError(err.message || 'Search failed');
+        if (mine !== seq.current) return;
+        if (err.status === 0) {
+          // Offline: the same search over the copy saved on this device.
+          setRes({ ...searchHere(text, today), q: text, offline: true });
+          setError('');
+          setActive(0);
+        } else setError(err.message || 'Search failed');
       } finally {
         if (mine === seq.current) setBusy(false);
       }
@@ -338,6 +358,7 @@ export default function SearchDialog({ open, onClose, onOpenTask, today, uid }) 
         {results.length > 0 && (
           <>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 1.5, pb: 0.5 }}>
+              {res.offline ? 'Offline: searching this device · ' : ''}
               {res.fuzzy ? `No exact matches. Showing close ones (${res.total})` : `${res.total} result${res.total === 1 ? '' : 's'}`}
               {res.total > results.length ? ` · showing ${results.length}` : ''}
             </Typography>

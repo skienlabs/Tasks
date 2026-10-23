@@ -241,7 +241,7 @@ fun QuickAdd(
                 }
                 Box {
                     IconButton(onClick = { prioMenu = true }) {
-                        Icon(if (priority == 4) Icons.Outlined.Flag else Icons.Filled.Flag, "Priority: ${Palette.priorityLabel(priority)}", tint = Palette.priority(priority, x.dark))
+                        Icon(if (priority == 4) Icons.Outlined.Flag else Icons.Filled.Flag, "Priority: ${Palette.priorityLabel(priority)}", tint = Palette.priority(priority, LocalExtra.current))
                     }
                     PriorityMenu(prioMenu, { prioMenu = false }, priority) { priority = it }
                 }
@@ -290,7 +290,7 @@ fun PriorityMenu(open: Boolean, onDismiss: () -> Unit, current: Int, onPick: (In
         for (p in 1..4) {
             DropdownMenuItem(
                 text = { Text(Palette.priorityLabel(p)) },
-                leadingIcon = { Icon(if (p == 4) Icons.Outlined.Flag else Icons.Filled.Flag, null, tint = Palette.priority(p, dark)) },
+                leadingIcon = { Icon(if (p == 4) Icons.Outlined.Flag else Icons.Filled.Flag, null, tint = Palette.priority(p, LocalExtra.current)) },
                 trailingIcon = { if (p == current) Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) },
                 onClick = { onPick(p); onDismiss() },
             )
@@ -375,33 +375,28 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
         },
     ) {
         val spine = rowTags.take(4).map { tagColor(it.color) }
-        val wash = spine.firstOrNull()?.copy(alpha = if (x.dark) 0.09f else 0.07f)
-        // Moved here by itself from an earlier day and still open: red outline, like the web app.
+        // From an earlier day and still open: a soft outline in its tag's colour (red if high priority).
         val late = task.isPending && (task.isCarried || showOrigin)
-        val lateShape = RoundedCornerShape(16.dp)
         val lateColors = carriedColors(task, rowTags.firstOrNull())
         val glass = x.glass
-        // Glass themes: every task floats as its own pane, pressing it sinks it a little.
+        val cardShape = RoundedCornerShape(if (glass != null) 20.dp else 16.dp)
+        // Pressing a card sinks it a little.
         val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
         val pressed by press.collectIsPressedAsState()
-        val pressScale by animateFloatAsState(if (pressed && glass != null) 0.975f else 1f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 500f), label = "press")
+        val pressScale by animateFloatAsState(if (pressed && task.isPending) 0.98f else 1f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 500f), label = "press")
         Row(
             Modifier.fillMaxWidth()
                 .then(
-                    if (glass != null) Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    // Open tasks are calm, neutral cards: colour only marks things (the tag spine,
+                    // a soft outline for work from earlier days, the logo), never the whole card.
+                    if (task.isPending) Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                         .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
-                        .glassPanel(RoundedCornerShape(20.dp), if (late) lateColors.bg else null)
-                        .then(if (late) Modifier.border(1.dp, lateColors.border, RoundedCornerShape(20.dp)) else Modifier)
-                    else if (late) Modifier.padding(horizontal = 12.dp, vertical = 3.dp).clip(lateShape)
-                        .border(1.dp, lateColors.border, lateShape).background(lateColors.bg)
+                        .then(if (glass != null) Modifier.glassPanel(cardShape) else Modifier.clip(cardShape).background(x.card))
+                        .border(1.dp, if (late) lateColors.border else x.cardBorder, cardShape)
                     else Modifier.background(containerColor),
                 )
                 .combinedClickable(interactionSource = press, indication = androidx.compose.material3.ripple(), onClick = { actions.view(task) }, onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menu = true })
                 .drawBehind {
-                    // A soft wash of the first tag's colour, fading in from the left (open tasks only).
-                    if (wash != null && task.isPending) {
-                        drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(wash, Color.Transparent), endX = size.width * 0.42f))
-                    }
                     // Tag spine: a slim rounded bar set inside the edge, one segment per tag.
                     if (spine.isNotEmpty()) {
                         val gap = 3.dp.toPx()
@@ -440,7 +435,7 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
                 }
                 val metas = buildList {
                     if (showOrigin) add(Triple(Icons.Outlined.CalendarToday, Dates.shortLabel(task.date, today), x.overdue))
-                    if (task.priority < 4 && task.isPending) add(Triple(Icons.Filled.Flag, Palette.priorityLabel(task.priority), Palette.priority(task.priority, x.dark)))
+                    if (task.priority < 4 && task.isPending) add(Triple(Icons.Filled.Flag, Palette.priorityLabel(task.priority), Palette.priority(task.priority, LocalExtra.current)))
                     if (task.postponed > 0 && task.isPending) add(Triple(Icons.Outlined.EventRepeat, if (task.postponed > 1) "Postponed ×${task.postponed}" else "Postponed", null))
                     if (task.isCancelled) add(Triple(Icons.Filled.Block, "Cancelled", null))
                     if (task.notes.isNotBlank()) add(Triple(Icons.AutoMirrored.Outlined.Notes, task.notes.lineSequence().first(), null))
@@ -473,7 +468,7 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
 @Composable
 private fun CheckCircle(task: Task, onClick: () -> Unit) {
     val x = LocalExtra.current
-    val ring = Palette.priority(task.priority, x.dark)
+    val ring = Palette.priority(task.priority, LocalExtra.current)
     Box(
         Modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Checkbox, onClick = onClick)
             .semantics { contentDescription = if (task.isPending) "Complete \"${task.title}\"" else "Restore \"${task.title}\"" },
@@ -510,7 +505,7 @@ internal fun TaskMenu(open: Boolean, onDismiss: () -> Unit, task: Task, today: S
                                 .background(if (task.priority == p) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(if (p == 4) Icons.Outlined.Flag else Icons.Filled.Flag, "Priority ${Palette.priorityLabel(p)}", tint = Palette.priority(p, dark))
+                            Icon(if (p == 4) Icons.Outlined.Flag else Icons.Filled.Flag, "Priority ${Palette.priorityLabel(p)}", tint = Palette.priority(p, LocalExtra.current))
                         }
                     }
                 }
@@ -546,22 +541,26 @@ fun SectionHeader(title: String, count: Int, open: Boolean, onToggle: () -> Unit
 }
 
 
-/** Red pill on a task that moved here by itself from an earlier day. */
+/**
+ * "From Tue, 20 Oct" on a task that moved here by itself from an earlier day: a quiet, readable
+ * pill (neutral background, normal text); only the clock icon carries the accent colour.
+ */
 @Composable
 fun CarriedBadge(task: Task, today: String, muted: Boolean = false, tag: Tag? = null) {
     val x = LocalExtra.current
     val from = task.carriedFrom ?: return
     val c = carriedColors(task, tag)
-    val color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else c.main
+    val high = task.priority == 1 && !muted
     Row(
-        Modifier.height(22.dp).clip(RoundedCornerShape(50))
-            .background(if (muted) x.surfaceHighest else c.main.copy(alpha = if (x.dark) 0.14f else 0.1f))
-            .border(1.dp, if (muted) Color.Transparent else c.border, RoundedCornerShape(50))
-            .padding(horizontal = 8.dp),
+        Modifier.height(22.dp).clip(RoundedCornerShape(50)).background(x.chip).padding(start = 6.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Outlined.History, null, Modifier.size(13.dp), tint = color)
-        Text(" " + Dates.carriedLabel(from, today), color = color, style = MaterialTheme.typography.labelMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, maxLines = 1)
+        Icon(Icons.Outlined.History, null, Modifier.size(13.dp), tint = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else c.main)
+        Text(
+            " " + Dates.carriedLabel(from, today),
+            color = if (high) c.main else MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, maxLines = 1,
+        )
     }
 }
 
@@ -575,10 +574,11 @@ class CarriedColors(val main: Color, val border: Color, val bg: Color)
 @Composable
 fun carriedColors(task: Task, tag: Tag?): CarriedColors {
     val x = LocalExtra.current
-    if (task.priority == 1) return CarriedColors(x.overdue, x.overdueBorder, x.overdueBg)
+    // The outline is soft on purpose: it marks the card without colouring it.
+    if (task.priority == 1) return CarriedColors(x.overdue, x.overdue.copy(alpha = if (x.dark) 0.45f else 0.4f), x.overdueBg)
     if (tag != null) {
         val c = tagColor(tag.color)
-        return CarriedColors(c, c.copy(alpha = 0.6f), c.copy(alpha = if (x.dark) 0.08f else 0.06f))
+        return CarriedColors(c, c.copy(alpha = if (x.dark) 0.4f else 0.38f), c.copy(alpha = if (x.dark) 0.08f else 0.06f))
     }
     return CarriedColors(MaterialTheme.colorScheme.onSurfaceVariant, x.outline, x.surfaceHigh)
 }

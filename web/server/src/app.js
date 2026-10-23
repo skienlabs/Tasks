@@ -308,6 +308,28 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     };
   });
 
+  // ---- Offline copy ----------------------------------------------------------
+  // Everything the apps need to work without a connection: every task, the tags, and the
+  // per-day "moved on unfinished" counts. Carry-over runs first, like opening today.
+  app.get('/api/sync', {
+    schema: {
+      querystring: {
+        type: 'object', properties: { today: DATE }, additionalProperties: false,
+      },
+    },
+  }, async (req) => {
+    const uid = req.user.uid;
+    const { today } = req.query;
+    if (today) assertDate(today, 'today');
+    carryOver(req, today);
+    return {
+      tasks: repo.allTasks(uid),
+      tags: repo.listTags(uid),
+      misses: repo.allMisses(uid),
+      serverTime: clock(),
+    };
+  });
+
   app.get('/api/summary', {
     schema: {
       querystring: {
@@ -370,9 +392,11 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     const now = Date.now();
     const subtasks = normalizeSubtasks(b.subtasks ?? []);
     const status = resolveStatus('pending', b.status, subtasks, subtasks.length > 0);
-    if ((b.createdAt ?? 0) > now + 60000 || (b.completedAt ?? 0) > now + 60000) {
-      throw new HttpError(400, 'Timestamps cannot be in the future');
-    }
+    // A device whose clock runs ahead sends times "in the future": use now instead of refusing
+    // (refusing would lose a task made offline on that device).
+    const clamp = (v) => (v === undefined ? undefined : Math.min(v, now));
+    b.createdAt = clamp(b.createdAt);
+    b.completedAt = clamp(b.completedAt);
     const task = repo.insert(uid, {
       id: b.id || crypto.randomUUID(),
       title: cleanTitle(b.title),
@@ -448,14 +472,24 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     schema: {
       params: idParams,
       body: {
-        type: 'object', required: ['today'], properties: { today: DATE }, additionalProperties: false,
+        type: 'object',
+        required: ['today'],
+        // from: the task's day when the app postponed it. A replay (sent again after the
+        // connection dropped) finds the task already moved and leaves it as it is.
+        properties: { today: DATE, from: DATE },
+        additionalProperties: false,
       },
     },
   }, async (req) => {
     const uid = req.user.uid;
     assertDate(req.body.today, 'today');
+    if (req.body.from) assertDate(req.body.from, 'from');
     const current = repo.get(uid, req.params.id);
     if (!current) throw new HttpError(404, 'Task not found');
+    // A repeat: the task already left that day because of this postpone (it isn't carried).
+    // If carry-over moved it meanwhile (carriedFrom is set), the postpone still applies.
+    const carried = current.status === 'pending' && current.carriedFrom && current.date > req.body.from;
+    if (req.body.from && current.date !== req.body.from && !carried) return current;
     if (current.status !== 'pending') throw new HttpError(409, 'Only pending tasks can be postponed');
     // "Tomorrow" means the day after today, or the day after the task's own
     // date if it is already in the future.

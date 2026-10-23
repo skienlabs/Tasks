@@ -16,7 +16,7 @@ import NotesRounded from '@mui/icons-material/NotesRounded';
 import ChecklistRounded from '@mui/icons-material/ChecklistRounded';
 import ImageOutlined from '@mui/icons-material/ImageOutlined';
 import Replay from '@mui/icons-material/Replay';
-import { PRIORITIES, glass, priorityColor } from '../theme.js';
+import { PRIORITIES, priorityColor } from '../theme.js';
 import TagChip from './TagChip.jsx';
 import TaskMenu, { postponeLabel } from './TaskMenu.jsx';
 import { CarriedBadge } from './TaskItem.jsx';
@@ -76,8 +76,6 @@ export default function TaskDetails({ task, today, onClose, onEdit, onManageTags
         ...(variant === 'pane' && {
           position: 'sticky', top: 88, alignSelf: 'start', maxHeight: 'calc(100dvh - 104px)', overflowY: 'auto',
           borderRadius: '24px', bgcolor: t.tokens.surfaceHigh, border: `1px solid ${t.palette.divider}`,
-          ...glass(t),
-          ...(t.tokens.glass && { animation: 'glassPop .45s cubic-bezier(.2,1.2,.35,1) both' }),
         }),
         p: 2.5, pt: 2,
       })}

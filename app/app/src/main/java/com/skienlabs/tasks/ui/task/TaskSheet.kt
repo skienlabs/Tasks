@@ -182,7 +182,7 @@ fun TaskSheet(
                         SegmentedButton(
                             selected = priority == p, onClick = { priority = p },
                             shape = SegmentedButtonDefaults.itemShape(p - 1, 4),
-                            icon = { Icon(if (p == 4) Icons.Outlined.Flag else Icons.Filled.Flag, null, Modifier.size(18.dp), tint = Palette.priority(p, dark)) },
+                            icon = { Icon(if (p == 4) Icons.Outlined.Flag else Icons.Filled.Flag, null, Modifier.size(18.dp), tint = Palette.priority(p, LocalExtra.current)) },
                         ) { Text(Palette.priorityLabel(p), maxLines = 1) }
                     }
                 }

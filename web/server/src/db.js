@@ -229,6 +229,7 @@ export function createRepo(db) {
     addMiss: db.prepare('INSERT OR IGNORE INTO task_misses (task_id, uid, date) VALUES (?, ?, ?)'),
     misses: db.prepare(`SELECT date, COUNT(*) AS n FROM task_misses WHERE uid = ? AND date BETWEEN ? AND ?
       GROUP BY date`),
+    allMisses: db.prepare('SELECT date, COUNT(*) AS n FROM task_misses WHERE uid = ? GROUP BY date ORDER BY date'),
     carry: db.prepare(`UPDATE tasks SET carried_from = COALESCE(carried_from, date), date = ?, updated_at = ?
       WHERE uid = ? AND status = 'pending' AND date < ?`),
     remove: db.prepare('DELETE FROM tasks WHERE uid = ? AND id = ?'),
@@ -360,9 +361,14 @@ export function createRepo(db) {
       });
     },
 
-    /** Every task of the user (for search). */
+    /** Every task of the user (for search and the apps' offline copy). */
     allTasks(uid) {
       return stmts.all.all(uid).map(toTask);
+    },
+
+    /** Per day, how many tasks were left unfinished there and moved on (all days). */
+    allMisses(uid) {
+      return stmts.allMisses.all(uid).map((r) => ({ date: r.date, missed: Number(r.n) }));
     },
 
     get(uid, id) {

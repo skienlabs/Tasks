@@ -15,10 +15,10 @@
       (function () {
         var pref = null;
         try { pref = localStorage.getItem('tasks.theme'); } catch (e) {}
-        var BG = { light: '#ffffff', gray: '#e8e8ea', dim: '#131314', dark: '#000000', abyss: '#000c18', glass: '#05060b', glassLight: '#eef1f8' };
+        var BG = { light: '#ffffff', gray: '#1f1f1f', dim: '#131314', dark: '#000000', abyss: '#000c18', mono: '#000000', monoLight: '#ffffff' };
         if (!BG[pref]) pref = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         var bg = BG[pref];
-        var dark = !(pref === 'light' || pref === 'gray' || pref === 'glassLight');
+        var dark = !(pref === 'light' || pref === 'monoLight');
         document.documentElement.style.backgroundColor = bg;
         document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
         document.querySelector('meta[name="theme-color"]').setAttribute('content', bg);

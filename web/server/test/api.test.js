@@ -256,6 +256,51 @@ test('carry-over: only unfinished tasks, keeps the first missed day, ignores a w
   assert.equal(r.json().carriedFrom, null, 'a "from" day after its own day is ignored');
 });
 
+test('offline copy (/api/sync) and safe replays of offline changes', async () => {
+  const { as } = await setup();
+  const u = await as('alice');
+  const bob = await as('bob');
+  const today = '2026-10-17';
+  const tag = (await u('POST', '/api/tags', { name: 'Skien', color: 'blue' })).json();
+  const old = (await u('POST', '/api/tasks', { id: 'offline-old-1', title: 'Left yesterday', date: '2026-10-16', createdAt: 1, tagIds: [tag.id] })).json();
+  const mine = (await u('POST', '/api/tasks', { title: 'Today', date: today, today })).json();
+  await bob('POST', '/api/tasks', { title: 'Not yours', date: today, today });
+
+  // Sync carries unfinished work over first, then returns everything (own data only).
+  let r = await u('GET', `/api/sync?today=${today}`);
+  assert.equal(r.statusCode, 200);
+  const s = r.json();
+  assert.deepEqual(s.tasks.map((t) => t.id).sort(), [old.id, mine.id].sort());
+  assert.equal(s.tasks.find((t) => t.id === old.id).date, today);
+  assert.deepEqual(s.tags.map((t) => t.id), [tag.id]);
+  assert.deepEqual(s.misses, [{ date: '2026-10-16', missed: 1 }]);
+  assert.equal(typeof s.serverTime, 'number');
+  assert.equal((await u('GET', '/api/sync?today=nope')).statusCode, 400);
+
+  // A postpone sent twice (the reply was lost) moves the task once.
+  r = await u('POST', `/api/tasks/${mine.id}/postpone`, { today, from: today });
+  assert.equal(r.json().date, '2026-10-18');
+  r = await u('POST', `/api/tasks/${mine.id}/postpone`, { today, from: today });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.json().date, '2026-10-18');
+  assert.equal(r.json().postponed, 1);
+
+  // Postponed offline, but carry-over moved it to today before the postpone arrived: it still applies.
+  const late = (await u('POST', '/api/tasks', { id: 'offline-late-1', title: 'Late', date: '2026-10-16', createdAt: 1 })).json();
+  await u('GET', `/api/sync?today=${today}`); // carried to the 17th
+  r = await u('POST', `/api/tasks/${late.id}/postpone`, { today: '2026-10-16', from: '2026-10-16' });
+  assert.equal(r.json().date, '2026-10-18');
+  assert.equal(r.json().postponed, 1);
+  assert.equal(r.json().carriedFrom, null);
+
+  // A create made offline yesterday (it carries createdAt) is still accepted today.
+  r = await u('POST', '/api/tasks', { id: 'made-offline-1', title: 'Offline', date: '2026-10-16', today: '2026-10-16', createdAt: Date.parse('2026-10-16T20:00:00Z') });
+  assert.equal(r.statusCode, 201);
+  // ...and sending it again returns the same task.
+  r = await u('POST', '/api/tasks', { id: 'made-offline-1', title: 'Offline', date: '2026-10-16', today: '2026-10-16', createdAt: Date.parse('2026-10-16T20:00:00Z') });
+  assert.equal(r.statusCode, 200);
+});
+
 test('migration v6 backfills missed days from carried_from', async () => {
   const fs = await import('node:fs');
   const os = await import('node:os');
@@ -598,7 +643,10 @@ test('audit regressions: auth bypass, outages, input hardening', async () => {
   });
   assert.equal(r.json().createdAt, orig.createdAt);
   assert.equal(r.json().completedAt, orig.completedAt);
-  assert.equal((await u('POST', '/api/tasks', { title: 'x', date: today, createdAt: Date.now() + 3600e3 })).statusCode, 400);
+  // A clock running ahead doesn't lose the task: its times are taken as "now".
+  r = await u('POST', '/api/tasks', { title: 'x', date: today, createdAt: Date.now() + 3600e3 });
+  assert.equal(r.statusCode, 201);
+  assert.ok(r.json().createdAt <= Date.now());
 });
 
 test('Google key outage is 503, not a sign-out', async () => {

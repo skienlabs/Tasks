@@ -39,7 +39,9 @@ export default function TagChip({ tag, selected, onClick, dense }) {
           display: 'inline-flex', alignItems: 'center', gap: 0.6, maxWidth: 200,
           height: dense ? 22 : 32, pl: dense ? 0.4 : 0.75, pr: dense ? 0.9 : 1.5,
           borderRadius: 999, font: 'inherit', fontSize: dense ? 12 : 13.5, fontWeight: 500,
-          color: c.main, bgcolor: selected ? c.bg : dense ? c.bg : 'transparent',
+          // Normal text colour (tag colours on tinted backgrounds were hard to read): the logo and
+          // the outline carry the colour.
+          color: 'text.primary', bgcolor: selected ? c.bg : dense ? t.tokens.chip : 'transparent',
           border: `1px solid ${selected ? c.main : dense ? 'transparent' : c.border}`,
           cursor: onClick ? 'pointer' : 'inherit', whiteSpace: 'nowrap', flexShrink: 0,
           transition: 'background-color 120ms, border-color 120ms',
@@ -55,8 +57,9 @@ export default function TagChip({ tag, selected, onClick, dense }) {
 }
 
 /**
- * The task's company, shown big on the right of a task card: a tinted plate with the tag's logo
- * and name. More tags show as a stack of logos after it.
+ * The task's company, on the right of a task card: a neutral plate with the tag's logo (ringed in
+ * its colour) and name in normal text, so it stays readable in every theme. More tags show as a
+ * stack of logos before it.
  */
 export function TagPlates({ tags, muted }) {
   if (!tags.length) return null;
@@ -89,24 +92,27 @@ export function TagPlates({ tags, muted }) {
         </Box>
       )}
       <Box
-        sx={(t) => {
-          const c = tagColor(t, first.color);
-          return {
-            display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, height: 36, pl: 0.5, pr: 1.5, borderRadius: '12px',
-            bgcolor: c.bg, border: `1px solid ${c.border}`,
-            boxShadow: `inset 0 1px 0 ${t.palette.mode === 'dark' ? 'rgba(255,255,255,.06)' : 'rgba(255,255,255,.7)'}`,
-          };
-        }}
+        sx={(t) => ({
+          display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, height: 34, pl: 0.5, pr: 1.5, borderRadius: '11px',
+          bgcolor: t.tokens.chip,
+        })}
       >
-        <Box sx={(t) => ({ p: '3px', borderRadius: '9px', bgcolor: t.palette.mode === 'dark' ? 'rgba(255,255,255,.08)' : '#fff', display: 'grid', flexShrink: 0 })}>
+        {/* The logo in a little ring of the tag's colour: the company at a glance. */}
+        <Box
+          sx={(t) => ({
+            p: '2px', borderRadius: '9px', display: 'grid', flexShrink: 0,
+            bgcolor: t.palette.mode === 'dark' ? 'rgba(255,255,255,.06)' : '#fff',
+            boxShadow: `0 0 0 1.5px ${tagColor(t, first.color).main}`,
+          })}
+        >
           <TagAvatar tag={first} size={22} />
         </Box>
         <Box
           component="span"
-          sx={(t) => ({
-            color: tagColor(t, first.color).main, fontSize: 14, fontWeight: 600, letterSpacing: 0.1,
+          sx={{
+            color: 'text.primary', fontSize: 13.5, fontWeight: 600, letterSpacing: 0.1,
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: { xs: 'none', sm: 'block' },
-          })}
+          }}
         >
           {first.name}
         </Box>

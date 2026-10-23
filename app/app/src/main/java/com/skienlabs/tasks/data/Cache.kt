@@ -12,11 +12,20 @@ import androidx.room.RoomDatabase
 import androidx.room.Transaction
 
 /**
- * Local copy of recent data so the app opens instantly and shows tasks offline.
- * The server is always the source of truth; this is only a cache per signed-in account.
+ * This device's copy of the account, so the app opens instantly and works offline, plus the
+ * queue of changes made offline that the server hasn't received yet (the outbox).
+ * The server is the source of truth for everything already sent.
  */
 interface Cache {
     suspend fun load(uid: String, from: String, to: String, today: String): CacheSnapshot
+    /** Every saved task, tag and day count of the account. */
+    suspend fun loadAll(uid: String): CacheSnapshot = load(uid, Dates.MIN, Dates.MAX, Dates.MAX)
+    suspend fun saveMeta(uid: String, key: String, value: String) {}
+    suspend fun loadMeta(uid: String, key: String): String? = null
+    /** Changes waiting for the server, oldest first. */
+    suspend fun loadOps(uid: String): List<String> = emptyList()
+    suspend fun saveOp(uid: String, key: Long, json: String) {}
+    suspend fun deleteOp(uid: String, key: Long) {}
     suspend fun saveTasks(uid: String, upserts: List<Task>, deletes: List<String>)
     suspend fun saveTags(uid: String, tags: List<Tag>)
     suspend fun saveSummary(uid: String, days: Map<String, Counts>)
@@ -52,6 +61,10 @@ data class SummaryEntity(val uid: String, val date: String, val pending: Int, va
 
 @Entity(tableName = "meta", primaryKeys = ["uid", "key"])
 data class MetaEntity(val uid: String, val key: String, val value: String)
+
+/** A change made here, waiting to be sent (JSON of [OutboxOp]). */
+@Entity(tableName = "outbox", primaryKeys = ["uid", "key"])
+data class OutboxEntity(val uid: String, val key: Long, val json: String)
 
 @Dao
 interface CacheDao {
@@ -93,6 +106,24 @@ interface CacheDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putMeta(row: MetaEntity)
 
+    @Query("SELECT * FROM tasks WHERE uid = :uid")
+    suspend fun allTasks(uid: String): List<TaskEntity>
+
+    @Query("SELECT * FROM summary WHERE uid = :uid")
+    suspend fun allSummary(uid: String): List<SummaryEntity>
+
+    @Query("SELECT json FROM outbox WHERE uid = :uid ORDER BY `key`")
+    suspend fun ops(uid: String): List<String>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putOp(row: OutboxEntity)
+
+    @Query("DELETE FROM outbox WHERE uid = :uid AND `key` = :key")
+    suspend fun deleteOp(uid: String, key: Long)
+
+    @Query("DELETE FROM outbox")
+    suspend fun clearAllOps()
+
     @Query("DELETE FROM tasks")
     suspend fun clearAllTasks()
 
@@ -106,7 +137,7 @@ interface CacheDao {
     suspend fun clearAllMeta()
 }
 
-@Database(entities = [TaskEntity::class, TagEntity::class, SummaryEntity::class, MetaEntity::class], version = 2, exportSchema = true)
+@Database(entities = [TaskEntity::class, TagEntity::class, SummaryEntity::class, MetaEntity::class, OutboxEntity::class], version = 3, exportSchema = true)
 abstract class CacheDatabase : RoomDatabase() {
     abstract fun dao(): CacheDao
 }
@@ -122,8 +153,10 @@ class RoomCache private constructor(context: Context) : Cache {
     }
 
     private val db = Room.databaseBuilder(context, CacheDatabase::class.java, "tasks-cache.db")
-        // It is only a cache: if a future version changes the format, start fresh rather than crash.
-        .fallbackToDestructiveMigration(dropAllTables = true)
+        // 2 → 3 adds the outbox. Later versions must migrate it too: it holds unsent changes.
+        .addMigrations(MIGRATION_2_3)
+        // Version 1 was only a cache: start fresh rather than crash.
+        .fallbackToDestructiveMigrationFrom(true, 1)
         .build()
     private val dao get() = db.dao()
 
@@ -151,6 +184,18 @@ class RoomCache private constructor(context: Context) : Cache {
         dao.upsertSummary(days.map { (d, c) -> SummaryEntity(uid, d, c.pending, c.done, c.cancelled, c.missed) })
     }
 
+    override suspend fun loadAll(uid: String): CacheSnapshot = CacheSnapshot(
+        tasks = dao.allTasks(uid).mapNotNull { decodeTask(it.json) },
+        tags = dao.tags(uid).mapNotNull { decodeTag(it.json) },
+        summary = dao.allSummary(uid).associate { it.date to Counts(it.pending, it.done, it.cancelled, it.missed) },
+    )
+
+    override suspend fun saveMeta(uid: String, key: String, value: String) = dao.putMeta(MetaEntity(uid, key, value))
+    override suspend fun loadMeta(uid: String, key: String): String? = dao.meta(uid, key)
+    override suspend fun loadOps(uid: String): List<String> = dao.ops(uid)
+    override suspend fun saveOp(uid: String, key: Long, json: String) = dao.putOp(OutboxEntity(uid, key, json))
+    override suspend fun deleteOp(uid: String, key: Long) = dao.deleteOp(uid, key)
+
     override suspend fun saveProfile(uid: String, profile: Profile) =
         dao.putMeta(MetaEntity(uid, "profile", AppJson.encodeToString(Profile.serializer(), profile)))
 
@@ -158,9 +203,16 @@ class RoomCache private constructor(context: Context) : Cache {
         dao.meta(uid, "profile")?.let { runCatching { AppJson.decodeFromString(Profile.serializer(), it) }.getOrNull() }
 
     override suspend fun clear() {
+        dao.clearAllOps()
         dao.clearAllTasks()
         dao.clearAllTags()
         dao.clearAllSummary()
         dao.clearAllMeta()
+    }
+}
+
+private val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `outbox` (`uid` TEXT NOT NULL, `key` INTEGER NOT NULL, `json` TEXT NOT NULL, PRIMARY KEY(`uid`, `key`))")
     }
 }

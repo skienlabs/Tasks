@@ -40,8 +40,16 @@ data class Extra(
     val gradient: List<Color>,
     val overdueBg: Color,
     val overdueBorder: Color,
-    /** Set for the Glass themes: see-through panels over moving light (see Glass.kt). */
+    /** Set for the Glass theme: see-through panels over moving light (see Glass.kt). */
     val glass: GlassStyle? = null,
+    /** Task cards are neutral (colour only marks things): fill, outline, and the tag/badge pills. */
+    val card: Color = surfaceHigh,
+    val cardBorder: Color = outline.copy(alpha = 0.5f),
+    val chip: Color = surfaceHighest,
+    /** Top bar colour (VS Code style themes: a shade darker than the page). Unspecified = the page. */
+    val bar: Color = Color.Unspecified,
+    /** Black & White themes: shades of the ink instead of hues (only lateness stays red). */
+    val mono: Boolean = false,
 )
 
 /** How a Glass theme looks: the lights behind, and the panels floating over them. */
@@ -112,38 +120,64 @@ private val AbyssExtra = DarkExtra.copy(
     overdueBorder = Color(0xFF8A3556),
 )
 
-// Medium light grey, after VS Code's light theme: grey chrome, lighter raised panels, its blue.
-private val GrayExtra = LightExtra.copy(
-    surfaceHigh = Color(0xFFF7F7F8),
-    surfaceHighest = Color(0xFFFFFFFF),
-    outline = Color(0xFFBCBCC2),
-    pending = Color(0xFF005FB8),
-    gradient = listOf(Color(0xFF005FB8), Color(0xFF6B4FBB), Color(0xFFB3266E)),
-    overdueBg = Color(0xFFF5E6E6),
-    overdueBorder = Color(0xFFE2A6A6),
+
+// Charcoal greys and blue, after VS Code's dark theme: a darker title bar around a slightly
+// lighter page, hairline borders, VS Code's blue and syntax colours.
+private val VsDarkExtra = DarkExtra.copy(
+    surfaceHigh = Color(0xFF252526),
+    surfaceHighest = Color(0xFF2D2D30),
+    outline = Color(0xFF454545),
+    pending = Color(0xFF4DAAFC),
+    done = Color(0xFF89D185),
+    overdue = Color(0xFFF48771),
+    rate = Color(0xFFC586C0),
+    gradient = listOf(Color(0xFF4FC1FF), Color(0xFFC586C0), Color(0xFFDCDCAA)),
+    overdueBg = Color(0xFF3A2320),
+    overdueBorder = Color(0xFF7A3B33),
+    card = Color(0xFF252526),
+    cardBorder = Color(0xFF2F2F31),
+    chip = Color(0xFF313131),
+    bar = Color(0xFF181818),
 )
 
-// Liquid glass on black: frosted, see-through panels floating over slowly moving coloured light.
-private val GlassExtra = DarkExtra.copy(
-    surfaceHigh = Color(0x17FFFFFF),
-    surfaceHighest = Color(0x24FFFFFF),
-    outline = Color(0x38FFFFFF),
-    pending = Color(0xFF9EC5FF),
-    done = Color(0xFF74E3A0),
-    overdue = Color(0xFFFF8A8A),
-    rate = Color(0xFFC49BFF),
-    gradient = listOf(Color(0xFF8FB8FF), Color(0xFFC49BFF), Color(0xFFFF9AD5)),
-    overdueBg = Color(0x1FFF5A5A),
-    overdueBorder = Color(0x99FF7878),
-    glass = GlassStyle(
-        base = Color(0xFF05060B),
-        blobs = listOf(Color(0xFF3B5BFF), Color(0xFF9B3BFF), Color(0xFF00C2C7), Color(0xFFFF3D9A), Color(0xFF2A7BFF)),
-        blobAlpha = 0.55f,
-        panel = Color(0x14FFFFFF),
-        panelStrong = Color(0xB30B0C14),
-        edge = Color(0x29FFFFFF),
-        shine = Color(0x66FFFFFF),
-    ),
+// Black and white only: a black page, white ink; lateness keeps a touch of red.
+private val MonoExtra = DarkExtra.copy(
+    surfaceHigh = Color(0xFF0E0E0E),
+    surfaceHighest = Color(0xFF1C1C1C),
+    outline = Color(0xFF4A4A4A),
+    done = Color.White,
+    pending = Color(0xFF8F8F8F),
+    overdue = Color(0xFFFF8A80),
+    cancelled = Color(0xFF5E5E5E),
+    postponed = Color(0xFFC2C2C2),
+    rate = Color.White,
+    gradient = listOf(Color.White, Color(0xFF9E9E9E), Color.White),
+    overdueBg = Color(0xFF1A0E0D),
+    overdueBorder = Color(0xFF7A3A35),
+    card = Color(0xFF0B0B0B),
+    cardBorder = Color(0xFF2B2B2B),
+    chip = Color(0xFF1C1C1C),
+    mono = true,
+)
+
+// The same, inverted: a white page, black ink.
+private val MonoLightExtra = LightExtra.copy(
+    surfaceHigh = Color(0xFFF4F4F4),
+    surfaceHighest = Color(0xFFE9E9E9),
+    outline = Color(0xFFBDBDBD),
+    done = Color.Black,
+    pending = Color(0xFF707070),
+    overdue = Color(0xFFC62828),
+    cancelled = Color(0xFFA3A3A3),
+    postponed = Color(0xFF3D3D3D),
+    rate = Color.Black,
+    gradient = listOf(Color.Black, Color(0xFF6B6B6B), Color.Black),
+    overdueBg = Color(0xFFFBEDED),
+    overdueBorder = Color(0xFFE3A6A6),
+    card = Color.White,
+    cardBorder = Color(0xFFDEDEDE),
+    chip = Color(0xFFF0F0F0),
+    mono = true,
 )
 
 // Liquid glass on white: milky panels over soft pastel light.
@@ -167,7 +201,12 @@ private val GlassLightExtra = LightExtra.copy(
     ),
 )
 
-val LocalExtra = staticCompositionLocalOf { LightExtra }
+private val LightCards = LightExtra.copy(card = Color.White, cardBorder = Color(0xFFE1E5EA), chip = Color(0xFFF0F3F8))
+private val DarkCards = DarkExtra.copy(card = Color(0xFF0D0E10), cardBorder = Color(0xFF202225), chip = Color(0xFF1B1C1F))
+private val DimCards = DimExtra.copy(card = Color(0xFF1B1C1D), cardBorder = Color(0xFF2D2F31), chip = Color(0xFF282A2C))
+private val AbyssCards = AbyssExtra.copy(card = Color(0xFF06162B), cardBorder = Color(0xFF13264A), chip = Color(0xFF0F2342))
+
+val LocalExtra = staticCompositionLocalOf { LightCards }
 
 private val LightColors = lightColorScheme(
     primary = Color(0xFF0B57D0),
@@ -263,56 +302,84 @@ private val AbyssColors = DarkColors.copy(
     inversePrimary = Color(0xFF2B5BB8),
 )
 
-private val GrayColors = LightColors.copy(
-    primary = Color(0xFF005FB8),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFD2E3F6),
-    onPrimaryContainer = Color(0xFF002F5C),
-    secondaryContainer = Color(0xFFD2E3F6),
-    onSecondaryContainer = Color(0xFF002F5C),
-    background = Color(0xFFE8E8EA),
-    onBackground = Color(0xFF252526),
-    surface = Color(0xFFE8E8EA),
-    onSurface = Color(0xFF252526),
-    surfaceVariant = Color(0xFFF7F7F8),
-    onSurfaceVariant = Color(0xFF5B5B60),
-    surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFF3F3F4),
-    surfaceContainer = Color(0xFFF7F7F8),
-    surfaceContainerHigh = Color(0xFFFBFBFC),
-    surfaceContainerHighest = Color(0xFFFFFFFF),
-    outline = Color(0xFFBCBCC2),
-    outlineVariant = Color(0xFFD5D5DA),
-    error = Color(0xFFC4314B),
-    inversePrimary = Color(0xFF9CC3F0),
+
+// VS Code's dark theme: #1f1f1f page, #181818 bars, #252526 panels, #2b2b2b borders.
+private val VsDarkColors = DarkColors.copy(
+    primary = Color(0xFF4DAAFC),
+    onPrimary = Color(0xFF002544),
+    primaryContainer = Color(0xFF04395E),
+    onPrimaryContainer = Color(0xFFD6EBFF),
+    secondaryContainer = Color(0xFF04395E),
+    onSecondaryContainer = Color(0xFFD6EBFF),
+    background = Color(0xFF1F1F1F),
+    onBackground = Color(0xFFCCCCCC),
+    surface = Color(0xFF1F1F1F),
+    onSurface = Color(0xFFCCCCCC),
+    surfaceVariant = Color(0xFF2D2D30),
+    onSurfaceVariant = Color(0xFF9D9D9D),
+    surfaceContainerLowest = Color(0xFF181818),
+    surfaceContainerLow = Color(0xFF202020),
+    surfaceContainer = Color(0xFF252526),
+    surfaceContainerHigh = Color(0xFF2A2D2E),
+    surfaceContainerHighest = Color(0xFF313131),
+    outline = Color(0xFF454545),
+    outlineVariant = Color(0xFF2B2B2B),
+    error = Color(0xFFF48771),
+    inverseSurface = Color(0xFFCCCCCC),
+    inverseOnSurface = Color(0xFF1F1F1F),
+    inversePrimary = Color(0xFF0078D4),
 )
 
-// Glass themes: the page itself is clear so the light behind shows; sheets, menus and dialogs
-// (which float in their own windows) get solid, tinted colours so they stay readable.
-private val GlassColors = DarkColors.copy(
-    primary = Color(0xFF9EC5FF),
-    onPrimary = Color(0xFF04224F),
-    primaryContainer = Color(0x4D78AAFF),
-    onPrimaryContainer = Color(0xFFE3EDFF),
-    secondaryContainer = Color(0x4D78AAFF),
-    onSecondaryContainer = Color(0xFFE3EDFF),
-    background = Color.Transparent,
-    onBackground = Color(0xFFF4F6FB),
-    surface = Color(0xFF0B0C14),
-    onSurface = Color(0xFFF4F6FB),
-    surfaceVariant = Color(0x24FFFFFF),
-    onSurfaceVariant = Color(0xFFB9C0D4),
-    surfaceContainerLowest = Color(0xFF08090F),
-    surfaceContainerLow = Color(0xFF10121C),
-    surfaceContainer = Color(0xFF151826),
-    surfaceContainerHigh = Color(0xFF1A1D2E),
-    surfaceContainerHighest = Color(0xFF212538),
-    outline = Color(0x47FFFFFF),
-    outlineVariant = Color(0x1FFFFFFF),
-    error = Color(0xFFFF8A8A),
-    inverseSurface = Color(0xFFF4F6FB),
-    inverseOnSurface = Color(0xFF10121C),
-    inversePrimary = Color(0xFF0A63E0),
+private val MonoColors = DarkColors.copy(
+    primary = Color.White,
+    onPrimary = Color.Black,
+    primaryContainer = Color.White,
+    onPrimaryContainer = Color.Black,
+    secondaryContainer = Color.White,
+    onSecondaryContainer = Color.Black,
+    background = Color.Black,
+    onBackground = Color.White,
+    surface = Color.Black,
+    onSurface = Color.White,
+    surfaceVariant = Color(0xFF1C1C1C),
+    onSurfaceVariant = Color(0xFFA8A8A8),
+    surfaceContainerLowest = Color.Black,
+    surfaceContainerLow = Color(0xFF0A0A0A),
+    surfaceContainer = Color(0xFF111111),
+    surfaceContainerHigh = Color(0xFF171717),
+    surfaceContainerHighest = Color(0xFF1F1F1F),
+    outline = Color(0xFF4A4A4A),
+    outlineVariant = Color(0xFF262626),
+    error = Color(0xFFFF8A80),
+    inverseSurface = Color.White,
+    inverseOnSurface = Color.Black,
+    inversePrimary = Color.Black,
+)
+
+private val MonoLightColors = LightColors.copy(
+    primary = Color.Black,
+    onPrimary = Color.White,
+    primaryContainer = Color.Black,
+    onPrimaryContainer = Color.White,
+    secondaryContainer = Color.Black,
+    onSecondaryContainer = Color.White,
+    background = Color.White,
+    onBackground = Color.Black,
+    surface = Color.White,
+    onSurface = Color.Black,
+    surfaceVariant = Color(0xFFF4F4F4),
+    onSurfaceVariant = Color(0xFF555555),
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Color(0xFFFAFAFA),
+    surfaceContainer = Color(0xFFF4F4F4),
+    surfaceContainerHigh = Color(0xFFEEEEEE),
+    surfaceContainerHighest = Color(0xFFE6E6E6),
+    outline = Color(0xFFBDBDBD),
+    outlineVariant = Color(0xFFE4E4E4),
+    error = Color(0xFFC62828),
+    inverseSurface = Color.Black,
+    inverseOnSurface = Color.White,
+    inversePrimary = Color.White,
 )
 
 private val GlassLightColors = LightColors.copy(
@@ -341,18 +408,25 @@ private val GlassLightColors = LightColors.copy(
 /** The looks people can pick (Account → Theme). Same set as the web app. */
 enum class AppTheme(val dark: Boolean, val label: String, val background: Color, val card: Color, val accent: Color) {
     LIGHT(false, "Light", Color.White, Color(0xFFF0F4F9), Color(0xFF0B57D0)),
-    GRAY(false, "Light Gray", Color(0xFFE8E8EA), Color(0xFFFFFFFF), Color(0xFF005FB8)),
+    // Saved as GRAY (it used to be a light grey); now VS Code's dark theme.
+    GRAY(true, "Dark Gray", Color(0xFF1F1F1F), Color(0xFF252526), Color(0xFF4DAAFC)),
     DIM(true, "Dark", Color(0xFF131314), Color(0xFF1E1F20), Color(0xFFA8C7FA)),
     MIDNIGHT(true, "Midnight Black", Color.Black, Color(0xFF0F1012), Color(0xFFA8C7FA)),
     ABYSS(true, "Abyss", Color(0xFF000C18), Color(0xFF060621), Color(0xFF82AAFF)),
-    GLASS(true, "Glass Black", Color(0xFF05060B), Color(0x26FFFFFF), Color(0xFF9EC5FF)),
+    MONO(true, "Black & White", Color.Black, Color(0xFF1C1C1C), Color.White),
+    MONO_LIGHT(false, "White & Black", Color.White, Color(0xFFEDEDED), Color.Black),
     GLASS_LIGHT(false, "Glass White", Color(0xFFEEF1F8), Color(0xB3FFFFFF), Color(0xFF0A63E0)),
     ;
 
-    val glass get() = this == GLASS || this == GLASS_LIGHT
+    val glass get() = this == GLASS_LIGHT
 
     /** For the small theme cards, where "Midnight Black" doesn't fit. */
-    val shortLabel get() = if (this == MIDNIGHT) "Midnight" else label
+    val shortLabel get() = when (this) {
+        MIDNIGHT -> "Midnight"
+        MONO -> "Black & White"
+        MONO_LIGHT -> "White & Black"
+        else -> label
+    }
 }
 
 private val base = Typography()
@@ -380,21 +454,23 @@ fun TasksTheme(dark: Boolean, content: @Composable () -> Unit) =
 @Composable
 fun TasksTheme(theme: AppTheme, content: @Composable () -> Unit) {
     val extra = when (theme) {
-        AppTheme.LIGHT -> LightExtra
-        AppTheme.GRAY -> GrayExtra
-        AppTheme.DIM -> DimExtra
-        AppTheme.MIDNIGHT -> DarkExtra
-        AppTheme.ABYSS -> AbyssExtra
-        AppTheme.GLASS -> GlassExtra
+        AppTheme.LIGHT -> LightCards
+        AppTheme.GRAY -> VsDarkExtra
+        AppTheme.DIM -> DimCards
+        AppTheme.MIDNIGHT -> DarkCards
+        AppTheme.ABYSS -> AbyssCards
+        AppTheme.MONO -> MonoExtra
+        AppTheme.MONO_LIGHT -> MonoLightExtra
         AppTheme.GLASS_LIGHT -> GlassLightExtra
     }
     val colors = when (theme) {
         AppTheme.LIGHT -> LightColors
-        AppTheme.GRAY -> GrayColors
+        AppTheme.GRAY -> VsDarkColors
         AppTheme.DIM -> DimColors
         AppTheme.MIDNIGHT -> DarkColors
         AppTheme.ABYSS -> AbyssColors
-        AppTheme.GLASS -> GlassColors
+        AppTheme.MONO -> MonoColors
+        AppTheme.MONO_LIGHT -> MonoLightColors
         AppTheme.GLASS_LIGHT -> GlassLightColors
     }
     androidx.compose.runtime.CompositionLocalProvider(LocalExtra provides extra) {
@@ -434,6 +510,14 @@ object Palette {
         P("Low", Color(0xFF1A73E8), Color(0xFF8AB4F8)),
         P("None", Color(0xFF80868B), Color(0xFF80868B)),
     )
+
+    private val monoShades = mapOf(true to listOf(Color.White, Color(0xFFC2C2C2), Color(0xFF8F8F8F), Color(0xFF5E5E5E)), false to listOf(Color.Black, Color(0xFF3D3D3D), Color(0xFF707070), Color(0xFFA3A3A3)))
+
+    /** A priority's colour in the current theme (Black & White themes: shades of the ink). */
+    fun priority(p: Int, x: Extra): Color = if (x.mono) monoShades.getValue(x.dark)[(p - 1).coerceIn(0, 3)] else priority(p, x.dark)
+
+    /** A tag's colour in the current theme (Black & White themes: one grey). */
+    fun tag(key: String, x: Extra): Color = if (x.mono) monoShades.getValue(x.dark)[1] else tag(key, x.dark)
 
     fun tag(key: String, dark: Boolean): Color = (tags[key] ?: tags.getValue("blue")).let { if (dark) it.dark else it.light }
     fun priority(p: Int, dark: Boolean): Color = priorities[(p - 1).coerceIn(0, 3)].let { if (dark) it.dark else it.light }

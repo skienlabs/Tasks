@@ -44,7 +44,8 @@ interface TasksApi {
     suspend fun stats(from: String, to: String, today: String): Stats
     suspend fun createTask(body: JsonObject): Task
     suspend fun updateTask(id: String, patch: JsonObject): Task
-    suspend fun postpone(id: String, today: String): Task
+    /** [from]: the task's day when it was postponed, so sending it twice moves it once. */
+    suspend fun postpone(id: String, today: String, from: String? = null): Task
     suspend fun deleteTask(id: String)
     suspend fun tags(): TagsResponse
     suspend fun createTag(body: JsonObject): Tag
@@ -59,6 +60,8 @@ interface TasksApi {
     /** Searches every task; the app falls back to what it has saved when this fails. */
     suspend fun search(q: String, today: String, limit: Int = 40): SearchResponse =
         throw ApiException(0, "Search needs a connection")
+    /** Everything in the account (after carry-over), for the offline copy. */
+    suspend fun sync(today: String): SyncResponse = throw ApiException(0, "You appear to be offline")
 }
 
 /** Supplies the Firebase ID token; `force` asks Firebase for a fresh one. */
@@ -168,7 +171,11 @@ class HttpTasksApi(
     override suspend fun stats(from: String, to: String, today: String) = req("GET", "/api/stats?from=$from&to=$to&today=$today", null, Stats.serializer())
     override suspend fun createTask(body: JsonObject) = req("POST", "/api/tasks", body, Task.serializer())
     override suspend fun updateTask(id: String, patch: JsonObject) = req("PATCH", "/api/tasks/$id", patch, Task.serializer())
-    override suspend fun postpone(id: String, today: String) = req("POST", "/api/tasks/$id/postpone", buildJsonObject { put("today", today) }, Task.serializer())
+    override suspend fun postpone(id: String, today: String, from: String?) = req("POST", "/api/tasks/$id/postpone", buildJsonObject {
+        put("today", today)
+        from?.let { put("from", it) }
+    }, Task.serializer())
+    override suspend fun sync(today: String) = req("GET", "/api/sync?today=$today", null, SyncResponse.serializer())
     override suspend fun deleteTask(id: String) { call("DELETE", "/api/tasks/$id", null, null as KSerializer<Unit>?) }
     override suspend fun tags() = req("GET", "/api/tags", null, TagsResponse.serializer())
     override suspend fun createTag(body: JsonObject) = req("POST", "/api/tags", body, Tag.serializer())

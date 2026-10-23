@@ -1,6 +1,9 @@
 package com.skienlabs.tasks
 
 import com.skienlabs.tasks.data.ApiException
+import com.skienlabs.tasks.data.Cache
+import com.skienlabs.tasks.data.CacheSnapshot
+import com.skienlabs.tasks.data.SyncStatus
 import com.skienlabs.tasks.data.DayResponse
 import com.skienlabs.tasks.data.DayCounts
 import com.skienlabs.tasks.data.Counts
@@ -46,14 +49,34 @@ class FakeApi : TasksApi {
     var failWrites = false
     var dayGate: CompletableDeferred<Unit>? = null // holds day responses until completed
     val calls = mutableListOf<String>()
+    val createBodies = mutableListOf<JsonObject>()
     private var clock = 1000L
 
-    private fun fail() { if (failWrites) throw ApiException(0, "You appear to be offline") }
+    /** Offline: every request fails like a dropped connection. */
+    var offline = false
+    /** The server refuses writes (a 400), e.g. a rule the phone didn't know about. */
+    var refuseWrites = false
+
+    private fun fail() {
+        if (failWrites || offline) throw ApiException(0, "You appear to be offline")
+        if (refuseWrites) throw ApiException(400, "Not allowed")
+    }
+
+    override suspend fun sync(today: String): com.skienlabs.tasks.data.SyncResponse {
+        calls += "sync"
+        if (offline) throw ApiException(0, "You appear to be offline")
+        tasks.replaceAll { _, t -> if (t.isPending && t.date < today) t.copy(carriedFrom = t.carriedFrom ?: t.date, date = today) else t }
+        return com.skienlabs.tasks.data.SyncResponse(
+            tasks.values.toList(), tags.values.toList(),
+            summaryDays.filter { it.missed > 0 }.map { com.skienlabs.tasks.data.MissCount(it.date, it.missed) }, clock,
+        )
+    }
 
     override suspend fun me() = Profile("u", name = "U", onboarded = true)
     override suspend fun updateMe(name: String?, onboarded: Boolean?) = me()
     override suspend fun day(date: String, today: String): DayResponse {
         calls += "day:$date"
+        if (offline) throw ApiException(0, "You appear to be offline")
         // Like the server: unfinished tasks from earlier days move to today, remembering where they came from.
         tasks.replaceAll { _, t -> if (t.isPending && t.date < today) t.copy(carriedFrom = t.carriedFrom ?: t.date, date = today) else t }
         val snapshot = DayResponse(
@@ -68,6 +91,7 @@ class FakeApi : TasksApi {
     override suspend fun stats(from: String, to: String, today: String) = Stats()
     override suspend fun createTask(body: JsonObject): Task {
         calls += "create"; fail()
+        createBodies += body
         val id = body["id"]!!.jsonPrimitive.content
         tasks[id]?.let { return it }
         val t = Task(
@@ -100,9 +124,10 @@ class FakeApi : TasksApi {
         tasks[id] = n
         return n
     }
-    override suspend fun postpone(id: String, today: String): Task {
+    override suspend fun postpone(id: String, today: String, from: String?): Task {
         calls += "postpone"; fail()
         val cur = tasks[id] ?: throw ApiException(404, "Task not found")
+        if (from != null && cur.date != from) return cur // a repeat: already moved
         val base = if (cur.date > today) cur.date else today
         val n = cur.copy(date = java.time.LocalDate.parse(base).plusDays(1).toString(), postponed = cur.postponed + 1, carriedFrom = null)
         tasks[id] = n
@@ -114,6 +139,7 @@ class FakeApi : TasksApi {
     }
     override suspend fun tags() = TagsResponse(tags.values.toList())
     override suspend fun createTag(body: JsonObject): Tag {
+        fail()
         val t = Tag(body["id"]!!.jsonPrimitive.content, body["name"]!!.jsonPrimitive.content)
         tags[t.id] = t
         return t
@@ -213,17 +239,17 @@ class StoreTest {
     }
 
     @Test
-    fun failedAddThenEditLeavesNoGhost() = runTest {
+    fun refusedAddThenEditLeavesNoGhost() = runTest {
         val api = FakeApi()
         val (store, toasts) = newStore(api)
         store.start("u", today)
-        api.failWrites = true
+        api.refuseWrites = true
         val (task, saved) = store.createTask("Offline add", today)
         store.completeTask(task.id) // queued behind the failing create
         advanceUntilIdle()
         assertFalse(saved.await())
         assertNull("nothing the server never saved may stay on screen", store.state.value.tasks[task.id])
-        assertEquals(0, store.state.value.summary[today]!!.total)
+        assertEquals(0, store.state.value.summary[today]?.total ?: 0)
         assertTrue(toasts.any { it.message.startsWith("Couldn't add task") })
     }
 
@@ -234,7 +260,7 @@ class StoreTest {
         store.start("u", today)
         val (task, _) = store.createTask("Original", today)
         advanceUntilIdle()
-        api.failWrites = true
+        api.refuseWrites = true
         store.updateTask(task.id, TaskPatch(title = "Renamed"))
         assertEquals("Renamed", store.state.value.tasks[task.id]!!.title)
         advanceUntilIdle()
@@ -314,6 +340,7 @@ class StoreTest {
         val load = launch { runCatching { store.loadDay(today, today) } }
         advanceUntilIdle()
         store.clear()
+        api.tasks.clear() // the other account's server has nothing
         store.start("other", today)
         api.dayGate!!.complete(Unit)
         load.join()
@@ -417,11 +444,149 @@ class StoreTest {
         assertEquals(listOf("create", "attach"), api.calls.filter { it == "create" || it == "attach" })
         assertFalse(store.state.value.tasks[task.id]!!.attachments.single().uploading)
 
-        api.failWrites = true
+        api.refuseWrites = true
         store.removeAttachment(task.id, "img-aaaaaaaa")
         assertTrue(store.state.value.tasks[task.id]!!.attachments.isEmpty())
         advanceUntilIdle()
         assertEquals("back after the failed delete", 1, store.state.value.tasks[task.id]!!.attachments.size)
         assertTrue(toasts.any { it.message.startsWith("Couldn't remove image") })
     }
+    // ---- Offline ------------------------------------------------------------------
+
+    @Test
+    fun offlineChangesWaitAndSyncInOrder() = runTest {
+        val api = FakeApi()
+        val (store, toasts) = newStore(api)
+        store.start("u", today)
+        advanceUntilIdle()
+        api.offline = true
+        val (task, saved) = store.createTask("Made offline", today, priority = 1)
+        store.completeTask(task.id)
+        advanceUntilIdle()
+        assertFalse("settles only when the server answers", saved.isCompleted)
+        assertEquals(Status.DONE, store.state.value.tasks[task.id]!!.status)
+        assertTrue(api.tasks.isEmpty())
+        assertEquals(SyncStatus(online = false, pending = 2, syncing = false), store.sync.value)
+        assertTrue(toasts.any { it.message.startsWith("You're offline") })
+        assertFalse("no error for a change that's only waiting", toasts.any { it.message.startsWith("Couldn't") })
+
+        api.offline = false
+        store.onNetworkBack()
+        advanceUntilIdle()
+        assertTrue(saved.await())
+        assertTrue("sent with when it was made, so a later day still accepts it", api.createBodies.single().containsKey("createdAt"))
+        assertEquals(Status.DONE, api.tasks[task.id]!!.status)
+        assertEquals("Made offline", api.tasks[task.id]!!.title)
+        assertEquals(0, store.sync.value.pending)
+        assertTrue(store.sync.value.online)
+    }
+
+    @Test
+    fun offlineQueueSurvivesARestart() = runTest {
+        val api = FakeApi()
+        val cache = MemoryCache()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        fun store() = Store(api, cache, CoroutineScope(dispatcher), io = dispatcher, todayFn = { today })
+        val first = store()
+        first.start("u", today)
+        advanceUntilIdle()
+        api.offline = true
+        val (task, _) = first.createTask("Before the restart", today)
+        first.updateTask(task.id, TaskPatch(title = "Renamed offline"))
+        advanceUntilIdle()
+        assertEquals(2, cache.ops.size)
+
+        // The app is closed and opened again, still offline: the change is there and still waiting.
+        val second = store()
+        second.start("u", today)
+        advanceUntilIdle()
+        assertEquals("Renamed offline", second.state.value.tasks[task.id]!!.title)
+        assertEquals(2, second.sync.value.pending)
+
+        api.offline = false
+        second.onNetworkBack()
+        advanceUntilIdle()
+        val saved = api.tasks[task.id]!!
+        assertEquals("Renamed offline", saved.title)
+        assertTrue("sent as an earlier task (createdAt), so a past day is accepted", api.createBodies.single().containsKey("createdAt"))
+        assertTrue(cache.ops.isEmpty())
+    }
+
+    @Test
+    fun completedOfflineIsSentBeforeCarryOver() = runTest {
+        val api = FakeApi()
+        val yesterday = Dates.addDays(today, -1)
+        api.tasks["y"] = Task("y", "Left yesterday", date = yesterday)
+        val (store, _) = newStore(api)
+        store.start("u", yesterday)
+        advanceUntilIdle()
+        api.offline = true
+        store.completeTask("y") // done yesterday, but the phone was offline
+        advanceUntilIdle()
+        api.offline = false
+        api.calls.clear()
+        store.loadDay(today, today) // the next day: opening today would carry unfinished tasks over
+        advanceUntilIdle()
+        assertEquals(listOf("patch", "day:$today"), api.calls.filter { it == "patch" || it.startsWith("day:") })
+        assertEquals(yesterday, api.tasks["y"]!!.date)
+        assertEquals(Status.DONE, api.tasks["y"]!!.status)
+    }
+
+    @Test
+    fun fullCopyMakesEveryDayKnownOffline() = runTest {
+        val api = FakeApi()
+        val far = Dates.addDays(today, 40)
+        api.tasks["f"] = Task("f", "Next month", date = far)
+        val (store, _) = newStore(api)
+        store.start("u", today)
+        advanceUntilIdle()
+        assertTrue(store.state.value.knownAll)
+        assertTrue(store.state.value.hasDay(far))
+        assertEquals(1, store.state.value.summary[far]!!.pending)
+        val stats = store.localStats(far.take(8) + "01", far.take(8) + "28", today)
+        assertEquals(1, stats.days.single().pending)
+    }
+
+    @Test
+    fun tagMadeOfflineIsQueuedAndRefusalCleansUp() = runTest {
+        val api = FakeApi()
+        val (store, toasts) = newStore(api)
+        store.start("u", today)
+        advanceUntilIdle()
+        api.offline = true
+        val tag = store.saveTag(null, "Client", "teal", null, logoChanged = false)
+        val (task, _) = store.createTask("For the client", today, tagIds = listOf(tag.id))
+        advanceUntilIdle()
+        assertEquals(listOf(tag.id), store.state.value.tasks[task.id]!!.tagIds)
+        api.offline = false
+        store.onNetworkBack()
+        advanceUntilIdle()
+        assertEquals("Client", api.tags[tag.id]!!.name)
+        assertEquals(listOf(tag.id), api.tasks[task.id]!!.tagIds)
+        assertFalse(toasts.any { it.message.startsWith("Couldn't") })
+    }
+}
+
+/** A Cache kept in memory, including the outbox, to test what survives a restart. */
+class MemoryCache : Cache {
+    val tasks = HashMap<String, Task>()
+    var tags = emptyList<Tag>()
+    val summary = HashMap<String, Counts>()
+    val meta = HashMap<String, String>()
+    val ops = java.util.TreeMap<Long, String>()
+    override suspend fun load(uid: String, from: String, to: String, today: String) = CacheSnapshot(tasks.values.toList(), tags, summary.toMap())
+    override suspend fun saveTasks(uid: String, upserts: List<Task>, deletes: List<String>) {
+        deletes.forEach { tasks.remove(it) }
+        upserts.forEach { tasks[it.id] = it }
+    }
+    override suspend fun saveTags(uid: String, tags: List<Tag>) { this.tags = tags }
+    override suspend fun saveSummary(uid: String, days: Map<String, Counts>) { summary.putAll(days) }
+    override suspend fun saveProfile(uid: String, profile: Profile) = Unit
+    override suspend fun loadProfile(uid: String): Profile? = null
+    override suspend fun clear() { tasks.clear(); summary.clear(); meta.clear(); ops.clear() }
+    override suspend fun saveMeta(uid: String, key: String, value: String) { meta[key] = value }
+    override suspend fun loadMeta(uid: String, key: String) = meta[key]
+    override suspend fun loadOps(uid: String) = ops.values.toList()
+    override suspend fun saveOp(uid: String, key: Long, json: String) { ops[key] = json }
+    override suspend fun deleteOp(uid: String, key: Long) { ops.remove(key) }
 }

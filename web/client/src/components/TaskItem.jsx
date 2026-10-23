@@ -8,7 +8,7 @@ import TodayOutlined from '@mui/icons-material/TodayOutlined';
 import NotesRounded from '@mui/icons-material/NotesRounded';
 import HistoryRounded from '@mui/icons-material/HistoryRounded';
 import Check from '@mui/icons-material/Check';
-import { PRIORITIES, glass, hexAlpha, priorityColor, tagColor } from '../theme.js';
+import { PRIORITIES, hexAlpha, priorityColor, tagColor } from '../theme.js';
 import { TagPlates } from './TagChip.jsx';
 import TaskMenu, { postponeLabel } from './TaskMenu.jsx';
 import { StepsInline, StepsProgress } from './Steps.jsx';
@@ -26,33 +26,37 @@ function Meta({ icon, children, color = 'text.secondary' }) {
 }
 
 /**
- * The colour a task from an earlier day is outlined in: red when it's high priority (it's late
- * and it matters), otherwise its (first) tag's colour, or a neutral one without tags.
+ * The colour that marks a task from an earlier day: red when it's high priority (late and it
+ * matters), otherwise its (first) tag's colour, or a neutral one without tags. `border` is soft
+ * on purpose: it outlines the card without colouring it.
  */
 export function carriedColor(t, tag, high = false) {
-  if (high) {
-    return { main: t.palette.error.main, border: t.tokens.carriedBorder, bg: t.tokens.carriedBg };
-  }
+  const dark = t.palette.mode === 'dark';
+  if (high) return { main: t.palette.error.main, border: hexAlpha(t.palette.error.main, dark ? 0.45 : 0.4) };
   if (tag) {
     const c = tagColor(t, tag.color);
-    return { main: c.main, border: hexAlpha(c.main, t.palette.mode === 'dark' ? 0.6 : 0.55), bg: hexAlpha(c.main, t.palette.mode === 'dark' ? 0.08 : 0.06) };
+    return { main: c.main, border: hexAlpha(c.main, dark ? 0.4 : 0.38) };
   }
-  return { main: t.palette.text.secondary, border: t.tokens.outline, bg: t.tokens.surfaceHigh };
+  return { main: t.palette.text.secondary, border: t.tokens.outline };
 }
 
-/** Pill on a task that moved here by itself from an earlier day, in its tag's colour. */
+/**
+ * "From Tue 20 Oct" on a task that moved here by itself from an earlier day: a quiet, readable
+ * pill (neutral background, normal text), with only the clock icon and a dot in the accent colour.
+ */
 export function CarriedBadge({ task, today, muted, tag }) {
   return (
     <Box
       component="span"
       sx={(t) => {
         const c = carriedColor(t, tag, task.priority === 1);
+        const high = task.priority === 1 && !muted;
         return {
-          display: 'inline-flex', alignItems: 'center', gap: 0.5, height: 22, px: 1, borderRadius: 999,
+          display: 'inline-flex', alignItems: 'center', gap: 0.5, height: 22, pl: 0.75, pr: 1, borderRadius: 999,
           fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
-          color: muted ? 'text.secondary' : c.main,
-          bgcolor: muted ? t.tokens.surfaceHighest : hexAlpha(c.main, t.palette.mode === 'dark' ? 0.14 : 0.1),
-          border: `1px solid ${muted ? 'transparent' : c.border}`,
+          color: high ? c.main : 'text.secondary',
+          bgcolor: t.tokens.chip,
+          '& svg': { color: muted ? 'text.secondary' : c.main },
         };
       }}
     >
@@ -114,51 +118,39 @@ function TaskItem({ task, today, showOrigin, selected, onSelect, onEdit, onManag
           onSelect(task);
         }
       }}
-      sx={(t) => ({
-        display: 'flex', alignItems: 'flex-start', gap: 0.5, pl: tags.length ? 1.75 : 0.5, pr: 0.5, py: 0.5,
-        borderRadius: '18px', cursor: 'pointer', transition: 'background-color 120ms, border-color 120ms', position: 'relative',
-        border: '1px solid transparent', outline: 'none',
-        // From an earlier day and still open: outlined in its tag's colour.
-        ...(late && { borderColor: carriedColor(t, tags[0], task.priority === 1).border, bgcolor: carriedColor(t, tags[0], task.priority === 1).bg, my: 0.75 }),
-        ...(selected && {
-          bgcolor: late ? carriedColor(t, tags[0], task.priority === 1).bg : t.tokens.surfaceHigh,
-          borderColor: late ? carriedColor(t, tags[0], task.priority === 1).main : t.palette.primary.main,
-        }),
-        // A soft wash of the first tag's colour, fading in from the spine (open tasks only).
-        ...(tags.length && pending && {
-          backgroundImage: `linear-gradient(90deg, ${hexAlpha(tagColor(t, tags[0].color).main, t.palette.mode === 'dark' ? 0.09 : 0.07)}, transparent 42%)`,
-          // Paint once, under the border too: a repeating tile showed a sliver at the right edge.
-          backgroundRepeat: 'no-repeat', backgroundOrigin: 'border-box',
-        }),
-        '&:hover': { bgcolor: late ? carriedColor(t, tags[0], task.priority === 1).bg : t.tokens.surfaceHigh },
-        '&:focus-visible': { borderColor: t.palette.primary.main },
-        // Glass themes: every task is its own floating pane that lifts and catches the light.
-        ...(t.tokens.glass && {
-          ...glass(t, late ? carriedColor(t, tags[0], task.priority === 1).bg : selected ? t.tokens.surfaceHighest : undefined),
-          ...(late && { borderColor: carriedColor(t, tags[0], task.priority === 1).border }),
-          ...(selected && { borderColor: late ? carriedColor(t, tags[0], task.priority === 1).main : t.palette.primary.main }),
-          my: 0.75, overflow: 'hidden', isolation: 'isolate',
-          animation: 'glassIn .5s cubic-bezier(.2,.9,.3,1.15) both',
-          transition: 'transform .35s cubic-bezier(.2,1.3,.4,1), box-shadow .3s, background-color .2s, border-color .2s',
-          '&::after': {
-            content: '""', position: 'absolute', top: 0, bottom: 0, left: 0, width: '35%', zIndex: -1, pointerEvents: 'none',
-            background: `linear-gradient(90deg, transparent, ${t.tokens.glass.shine}, transparent)`, opacity: 0.35,
-            transform: 'translateX(-120%) skewX(-18deg)',
-          },
+      sx={(t) => {
+        const dark = t.palette.mode === 'dark';
+        const accent = late ? carriedColor(t, tags[0], task.priority === 1) : null;
+        return {
+          display: 'flex', alignItems: 'flex-start', gap: 0.5, pl: tags.length ? 1.75 : 0.5, pr: 0.5, py: 0.5,
+          borderRadius: '16px', cursor: 'pointer', position: 'relative', outline: 'none',
+          transition: 'background-color 120ms, border-color 120ms, box-shadow 120ms',
+          border: '1px solid transparent',
+          // Open tasks are calm, neutral cards: colour only marks things (the tag spine, a soft
+          // outline for work from earlier days, the logo), never the whole card.
+          ...(pending && {
+            mb: 1,
+            bgcolor: t.tokens.card,
+            borderColor: accent ? accent.border : t.tokens.cardBorder,
+            boxShadow: dark ? 'none' : '0 1px 2px rgba(15,23,42,.04)',
+          }),
+          ...(selected && {
+            bgcolor: t.tokens.cardHover,
+            borderColor: t.palette.primary.main,
+            boxShadow: `0 0 0 3px ${hexAlpha(t.palette.primary.main, 0.14)}`,
+          }),
           '&:hover': {
-            transform: 'translateY(-2px) scale(1.004)',
-            bgcolor: late ? carriedColor(t, tags[0], task.priority === 1).bg : t.tokens.surfaceHigh,
-            boxShadow: `inset 0 1px 0 ${t.tokens.glass.shine}, ${t.tokens.glass.shadow}, 0 0 0 1px ${t.tokens.glass.edge}`,
+            bgcolor: t.tokens.cardHover,
+            ...(pending && !selected && { borderColor: accent ? accent.main : t.tokens.outline }),
           },
-          '&:hover::after': { animation: 'glassSheen .9s ease-out' },
-          '&:active': { transform: 'scale(.99)', transitionDuration: '.12s' },
-        }),
-        '@media (hover: hover)': {
-          '& .task-actions': { opacity: selected ? 1 : 0 },
-          '& .task-actions:has(.menu-open)': { opacity: 1 },
-          '&:hover .task-actions, &:focus-within .task-actions': { opacity: 1 },
-        },
-      })}
+          '&:focus-visible': { borderColor: t.palette.primary.main },
+          '@media (hover: hover)': {
+            '& .task-actions': { opacity: selected ? 1 : 0 },
+            '& .task-actions:has(.menu-open)': { opacity: 1 },
+            '&:hover .task-actions, &:focus-within .task-actions': { opacity: 1 },
+          },
+        };
+      }}
     >
       {tags.length > 0 && <TagSpine tags={tags} active={pending} />}
       <Tooltip title={pending ? 'Mark complete' : done ? 'Mark not done' : 'Restore'}>

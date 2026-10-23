@@ -140,6 +140,18 @@ data class Stats(
 
 @Serializable data class ErrorBody(val error: String? = null)
 
+/** How many tasks were left unfinished on a day and moved on. */
+@Serializable data class MissCount(val date: String, val missed: Int = 0)
+
+/** /api/sync: the whole account, for the offline copy. */
+@Serializable
+data class SyncResponse(
+    val tasks: List<Task> = emptyList(),
+    val tags: List<Tag> = emptyList(),
+    val misses: List<MissCount> = emptyList(),
+    val serverTime: Long = 0,
+)
+
 /** Why a search result matched when it wasn't the title: a step, or a bit of the notes. */
 @Immutable @Serializable data class SearchMatch(val field: String, val text: String)
 

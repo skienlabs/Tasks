@@ -19,6 +19,8 @@ import SellOutlined from '@mui/icons-material/SellOutlined';
 import InstallDesktopOutlined from '@mui/icons-material/InstallDesktopOutlined';
 import AccountCircleOutlined from '@mui/icons-material/AccountCircleOutlined';
 import SearchRounded from '@mui/icons-material/SearchRounded';
+import CloudOffRounded from '@mui/icons-material/CloudOffRounded';
+import SyncRounded from '@mui/icons-material/SyncRounded';
 import AccountDialog from './AccountDialog.jsx';
 import ThemePicker from './ThemePicker.jsx';
 
@@ -33,14 +35,15 @@ import { TagAvatar } from './TagChip.jsx';
 import Toast from './Toast.jsx';
 import { addDays, formatDate, fromKey, isValidKey, monthGrid, startOfWeek, todayKey } from '../lib/dates.js';
 import {
-  areTagsLoaded, isDayLoaded, loadDay, loadSummary, loadTags, loadedDates, selectSummary, selectTag, selectTags, showToast, useStoreVersion,
+  areTagsLoaded, flush, isDayLoaded, lastSyncedAt, loadDay, loadSummary, loadTags, loadedDates, selectSummary, selectSync, selectTag, selectTags,
+  showToast, syncAll, useStoreVersion,
 } from '../lib/store.js';
 import { startLive } from '../lib/live.js';
 import { api } from '../lib/api.js';
 import { signOut } from '../lib/auth.js';
 import { isStandalone, useInstallPrompt } from '../lib/install.js';
 import { readPref, writePref } from '../lib/prefs.js';
-import { THEMES, glass, hexAlpha, statusColors, tagColor, titleGradient } from '../theme.js';
+import { THEMES, hexAlpha, statusColors, tagColor, titleGradient } from '../theme.js';
 import { APP_VERSION } from '../lib/version.js';
 
 const DRAWER = 280;
@@ -107,6 +110,34 @@ function DateTitle({ date, today }) {
         {formatDate(date, { weekday: 'short', day: 'numeric', month: 'short' })}
       </Box>
     </Typography>
+  );
+}
+
+/**
+ * Shows when the app is working offline ("Offline · 3 waiting") or sending changes made
+ * offline ("Syncing 3…"). Hidden when everything is up to date.
+ */
+function SyncBadge() {
+  useStoreVersion();
+  const { online, pending, syncing } = selectSync();
+  if (online && !pending) return null;
+  const label = !online ? (pending ? `Offline · ${pending} waiting` : 'Offline') : `Syncing ${pending}…`;
+  return (
+    <Tooltip title={online ? 'Sending the changes you made offline' : "No connection. Everything still works; changes sync when you're back online."}>
+      <Box
+        role="status"
+        sx={(t) => ({
+          display: 'inline-flex', alignItems: 'center', gap: 0.75, height: 32, px: 1.25, mr: 0.5, borderRadius: 999, flexShrink: 0,
+          fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
+          color: online ? t.palette.primary.main : t.palette.warning.main,
+          bgcolor: hexAlpha(online ? t.palette.primary.main : t.palette.warning.main, 0.12),
+        })}
+      >
+        {online ? <SyncRounded sx={{ fontSize: 17, animation: 'spin 1.2s linear infinite', '@keyframes spin': { to: { transform: 'rotate(-360deg)' } } }} /> : <CloudOffRounded sx={{ fontSize: 17 }} />}
+        <Box component="span" sx={{ display: { xs: pending ? 'none' : 'inline', sm: 'inline' } }}>{label}</Box>
+        {pending > 0 && <Box component="span" sx={{ display: { xs: 'inline', sm: 'none' } }}>{pending}</Box>}
+      </Box>
+    </Tooltip>
   );
 }
 
@@ -214,7 +245,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
   const handleError = useCallback((err, { quiet = false } = {}) => {
     if (err.status === 403) setBlocked({ kind: 'forbidden', message: err.message });
     else if (err.status === 401) setBlocked({ kind: 'session', message: 'Your session could not be confirmed' });
-    else if (!quiet) showToast(err.message);
+    else if (!quiet && err.status !== 0) showToast(err.message); // offline: the badge says so
   }, []);
 
   useEffect(() => {
@@ -301,7 +332,11 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
         else if (c.type === 'tags') queue({ tags: true, ...(c.tasks ? { tasks: true } : {}) });
         else if (c.type === 'profile') queue({ profile: true });
       },
-      onConnected: () => queue({ all: true }),
+      onConnected: () => {
+        // Back online: send what was changed offline, then refresh the whole offline copy.
+        flush().then(() => syncAll(liveRef.current.today)).catch(() => {});
+        queue({ all: true });
+      },
     });
     return () => {
       clearTimeout(timer);
@@ -318,6 +353,8 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
       refreshDay(date);
       refreshSummary();
       loadTags().catch(() => {});
+      // Keep the offline copy fresh (cheap; once every few minutes at most).
+      if (Date.now() - lastSyncedAt() > 5 * 60 * 1000) syncAll(today).catch(() => {});
     };
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onFocus);
@@ -325,7 +362,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onFocus);
     };
-  }, [date, refreshDay, refreshSummary]);
+  }, [date, today, refreshDay, refreshSummary]);
 
   // Opening a search result: go to its day and show it in the details pane.
   const openFromSearch = useCallback((task) => {
@@ -420,10 +457,6 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
                 bgcolor: t.palette.mode === 'dark' ? t.tokens.surfaceHigh : '#f6f9fe',
                 boxShadow: t.palette.mode === 'dark' ? 'none' : '0 2px 4px rgba(0,0,0,.2), 0 6px 12px rgba(0,0,0,.1)',
               },
-              ...(t.tokens.glass && {
-                ...glass(t, t.tokens.surfaceHigh), transition: 'transform .3s cubic-bezier(.2,1.3,.4,1), background-color .2s',
-                '&:hover': { ...glass(t, t.tokens.surfaceHighest), transform: 'translateY(-1px)' },
-              }),
             })}
           >
             New task
@@ -518,14 +551,9 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
         elevation={0}
         color="inherit"
         sx={(t) => ({
-          bgcolor: 'background.default', borderBottom: `1px solid ${t.palette.divider}`,
+          bgcolor: t.tokens.sidebar, borderBottom: `1px solid ${t.palette.divider}`,
           // Themes with a background glow get a frosted bar, so the glow shows through softly.
           ...(t.tokens.glow && { bgcolor: hexAlpha(t.tokens.bg, 0.78), backdropFilter: 'saturate(140%) blur(14px)' }),
-          // Glass: a frosted bar the aurora shows through, with a bright lower rim.
-          ...(t.tokens.glass && {
-            ...glass(t), borderWidth: '0 0 1px', borderRadius: 0,
-            boxShadow: `inset 0 -1px 0 ${t.tokens.glass.edge}, 0 6px 24px rgba(0,0,0,${t.palette.mode === 'dark' ? 0.35 : 0.06})`,
-          }),
         })}
       >
         <Toolbar sx={{ minHeight: `${APPBAR}px !important`, gap: { xs: 0.5, sm: 1 }, px: { xs: 1, sm: 2 } }}>
@@ -568,6 +596,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
             </>
           )}
           <Box sx={{ flex: 1 }} />
+          <SyncBadge />
           <ButtonBase
             onClick={() => setSearchOpen(true)}
             aria-label="Search tasks"
@@ -577,7 +606,6 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
               bgcolor: t.tokens.surfaceHigh, border: `1px solid ${t.palette.divider}`,
               transition: 'background-color .2s, box-shadow .2s',
               '&:hover': { bgcolor: t.tokens.surfaceHighest, boxShadow: `0 0 0 3px ${hexAlpha(t.palette.primary.main, 0.12)}` },
-              ...(t.tokens.glass && { ...glass(t, t.tokens.surfaceHigh), boxShadow: `inset 0 1px 0 ${t.tokens.glass.shine}` }),
             })}
           >
             <SearchRounded sx={{ fontSize: 21 }} />
@@ -760,7 +788,11 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
       {desktop ? (
         <Box
           component="nav"
-          sx={{ width: DRAWER, flexShrink: 0, pt: `${APPBAR}px`, position: 'sticky', top: 0, alignSelf: 'flex-start', height: '100dvh', overflowY: 'auto' }}
+          sx={(t) => ({
+            width: DRAWER, flexShrink: 0, pt: `${APPBAR}px`, position: 'sticky', top: 0, alignSelf: 'flex-start', height: '100dvh', overflowY: 'auto',
+            // VS Code style themes: the side bar is a shade darker than the page, with a hairline edge.
+            ...(t.tokens.sidebar !== t.tokens.bg && { bgcolor: t.tokens.sidebar, borderRight: `1px solid ${t.palette.divider}` }),
+          })}
         >
           {drawerContent}
         </Box>
@@ -842,7 +874,6 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
               position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: t.zIndex.appBar,
               borderTop: `1px solid ${t.palette.divider}`, bgcolor: t.palette.mode === 'dark' ? t.tokens.bg : t.tokens.surface,
               pb: 'env(safe-area-inset-bottom)',
-              ...(t.tokens.glass && { ...glass(t, hexAlpha(t.tokens.bg, 0.8)), borderWidth: '1px 0 0', borderRadius: 0, '& .MuiBottomNavigation-root': { bgcolor: 'transparent' } }),
             })}
           >
             <BottomNavigation

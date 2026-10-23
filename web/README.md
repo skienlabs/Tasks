@@ -12,7 +12,8 @@ A fast, lightweight daily task planner with Google sign-in. One Docker container
 - **Summary**: per-day counts (tasks / done / left) on every day, a side panel with week and month progress on large screens, and a monthly summary page with a daily chart, per-company and per-priority breakdowns, and a day-by-day list.
 - **Installable app** (PWA): in Chrome or Edge use *Install app* (sidebar, account menu or the address bar icon), then pin it to the Windows taskbar. Works on Android too.
 - **Built for PC and phone**: sidebar + side panel on desktop, bottom navigation and a floating add button on mobile.
-- **Eight themes**: System, Light, Light Gray (VS Code-style medium light grey), Dark (soft grey), Midnight Black (true black), Abyss (deep navy with a soft glow, like the VS Code theme), and **Glass Black** / **Glass White** (Apple Liquid Glass style: frosted see-through panels over slowly moving light, with animations). Google Sans, Material Design.
+- **Eight themes**: System, Light, Dark Gray (VS Code's dark theme), Dark (soft grey), Midnight Black (true black), Abyss (deep navy with a soft glow, like the VS Code theme), Black & White and White & Black (pure ink, shades of grey). Google Sans, Material Design.
+- **Works offline**: the app opens with no connection and everything keeps working; changes are saved in the browser (IndexedDB) and sync in order when it's back online. The service worker saves the whole app.
 - **Search** every task from the top bar (`/` or `Ctrl K`): ranked results as you type, suggestions, highlights, and filters like `#tag`, `is:done`, `p:high`, `date:week`, "phrases".
 - **Unfinished days stay unfinished** in the summary: tasks that moved on to the next day count as "not finished" (red) on the day they left.
 - **One sorted list**: priority first, then company (tag) A–Z, then title A–Z (numbers by value).
@@ -127,11 +128,12 @@ All endpoints except `/api/health` and `/api/config` need `Authorization: Bearer
 | GET | `/api/me` | Profile (creates it on first call): `name, email, provider, emailVerified, onboarded` |
 | PATCH | `/api/me` | `{ name?, onboarded?: true }` |
 | GET | `/api/tasks?date=YYYY-MM-DD&today=YYYY-MM-DD` | Tasks for a day. With `today` (within a day of the server's date), unfinished tasks from earlier days first move to `today`, keeping `carriedFrom` (the day they were first due). `overdue` stays for older apps and is normally empty |
+| GET | `/api/sync?today=` | The whole account for the apps' offline copy (after carry-over): `{ tasks, tags, misses: [{date, missed}], serverTime }` |
 | GET | `/api/summary?from=&to=` | Per-day counts for the calendar (max 92 days): `pending, done, cancelled`, and `missed` (tasks that were on the day unfinished and moved on) |
 | GET | `/api/search?q=&today=&limit=` | Ranked search over all tasks (`limit` 1–100, default 30). Words, "phrases", `#tag`/`tag:`, `is:open\|done\|cancelled\|late`, `p:high\|medium\|low\|none`, `date:today\|tomorrow\|yesterday\|week\|month\|YYYY-MM-DD`, `before:`, `after:`, `has:steps\|images\|notes`. Returns `{ results (tasks, each with an optional match {field, text}), total, fuzzy, terms, suggestions }` |
 | POST | `/api/tasks` | `{ title, date, priority?, notes?, id? }` (client `id` makes retries safe) |
 | PATCH | `/api/tasks/:id` | Any of `title, notes, priority, date, status, postponed, tagIds, subtasks` |
-| POST | `/api/tasks/:id/postpone` | `{ today }` moves to the day after today (or after its own date, if later) |
+| POST | `/api/tasks/:id/postpone` | `{ today, from? }` moves to the day after today (or after its own date, if later). With `from` (the day it was on), a repeat finds it already moved and leaves it |
 | DELETE | `/api/tasks/:id` | Its images are kept for a day so Undo can bring them back |
 | POST | `/api/tasks/:id/attachments` | `{ id, image, thumb, width, height }` (JPEG/PNG/WebP data URLs, resized on the device; max 6 MB, 20 per task). Returns the task |
 | GET | `/api/attachments/:id?size=thumb\|full` | The image file (needs the sign-in header) |

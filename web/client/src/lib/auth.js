@@ -20,6 +20,7 @@ import {
 } from '@firebase/auth';
 import { setTokenGetter } from './api.js';
 import { readPref, writePref } from './prefs.js';
+import { clearStore, pendingChanges, wipeOffline } from './store.js';
 
 let auth = null;
 let devMode = false;
@@ -125,6 +126,15 @@ export function suggestedName() {
 }
 
 export async function signOut() {
+  // Changes made offline and not sent yet would be lost: ask first.
+  const waiting = pendingChanges();
+  if (waiting > 0 && !window.confirm(
+    `${waiting} change${waiting === 1 ? " hasn't" : "s haven't"} reached the server yet (you're offline). `
+    + 'Signing out now discards them. Sign out anyway?',
+  )) return;
+  // Stop everything first (no late save can bring the copy back), then delete this device's copy.
+  clearStore();
+  await wipeOffline();
   if (devMode) {
     writePref('tasks.devSignedIn', '0');
     window.location.reload();

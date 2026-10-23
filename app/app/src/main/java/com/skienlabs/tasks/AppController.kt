@@ -48,7 +48,10 @@ class AppController(context: Context) {
     val api = HttpTasksApi(BuildConfig.API_URL, auth)
     private val cache: Cache by lazy { RoomCache.get(context) }
     val images by lazy { com.skienlabs.tasks.ui.images.ImageStore(context, api, api.client) }
-    val store by lazy { Store(api, cache, scope).also { s -> s.onImagePrepared = { images.seed(it) } } }
+    val store by lazy {
+        Store(api, cache, scope, files = com.skienlabs.tasks.data.DiskOutboxFiles(java.io.File(appContext.filesDir, "outbox-images")))
+            .also { s -> s.onImagePrepared = { images.seed(it) } }
+    }
 
     private val _session = MutableStateFlow<Session>(Session.Starting)
     val session: StateFlow<Session> = _session.asStateFlow()
@@ -80,6 +83,7 @@ class AppController(context: Context) {
             return
         }
         watchWidgets()
+        watchNetwork()
         live = LiveSync(BuildConfig.API_URL, api, scope, ::onLiveChange) { refreshAll(quiet = true) }
         userJob = scope.launch { auth.user.collect { onUser(it) } }
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
@@ -166,7 +170,7 @@ class AppController(context: Context) {
         val user = currentUser()
         if (api != null && user != null && (api.status == 401 || api.status == 403)) {
             _session.value = Session.Failed(user, api.status, api.message ?: "")
-        } else if (!quiet) {
+        } else if (!quiet && api?.status != 0) { // offline: the badge says so, and changes wait
             store.toast(api?.message ?: "Something went wrong. Please try again.")
         }
     }
@@ -208,6 +212,25 @@ class AppController(context: Context) {
         refreshTags()
         currentUser()?.let { loadProfile(it) }
         _statsVersion.value++
+        // Send what was changed offline, and keep the offline copy fresh (at most every 2 minutes).
+        store.onNetworkBack()
+        if (System.currentTimeMillis() - store.lastSyncedAt > 2 * 60_000) scope.launch { runCatching { store.syncAll(today) } }
+    }
+
+    /** The phone got a connection back: send waiting changes right away, then refresh. */
+    private fun watchNetwork() {
+        val cm = appContext.getSystemService(android.net.ConnectivityManager::class.java) ?: return
+        runCatching {
+            cm.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    scope.launch {
+                        if (_session.value !is Session.Ready) return@launch
+                        store.onNetworkBack()
+                        runCatching { store.syncAll(_today.value) }
+                    }
+                }
+            })
+        }
     }
 
     private var pendingTags = false

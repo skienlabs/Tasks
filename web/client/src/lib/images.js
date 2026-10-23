@@ -2,6 +2,23 @@
 // can't send it), keeping object URLs in memory so each image downloads once.
 import { useEffect, useState } from 'react';
 import { ApiError, authHeaders, newId } from './api.js';
+import * as idb from './idb.js';
+
+// Images are also kept on the device (IndexedDB "images", shared by accounts: ids are random),
+// so they show offline. Keyed "<id>:<size>".
+const IMG = 'local';
+const keep = (id, size, blob) => idb.write('images', IMG, [[`${id}:${size}`, blob]]);
+const saved = (id, size) => idb.get('images', IMG, `${id}:${size}`);
+
+/** Keeps the just-prepared copies so a queued upload still shows after a reload. */
+export async function saveImageCopy(img) {
+  try {
+    const [full, thumb] = await Promise.all([fetch(img.image).then((r) => r.blob()), fetch(img.thumb).then((r) => r.blob())]);
+    await Promise.all([keep(img.id, 'full', full), keep(img.id, 'thumb', thumb)]);
+  } catch {
+    /* only a convenience */
+  }
+}
 
 const FULL_PX = 1600;
 const THUMB_PX = 400;
@@ -74,10 +91,20 @@ export function imageUrl(id, size = 'thumb') {
   const key = `${id}:${size}`;
   if (!cache.has(key)) {
     const p = (async () => {
-      let res = await fetch(`/api/attachments/${id}?size=${size}`, { headers: await authHeaders() });
-      if (res.status === 401) res = await fetch(`/api/attachments/${id}?size=${size}`, { headers: await authHeaders(true) });
+      // The device's copy first: images never change, and this works offline.
+      const local = await saved(id, size);
+      if (local instanceof Blob) return URL.createObjectURL(local);
+      let res;
+      try {
+        res = await fetch(`/api/attachments/${id}?size=${size}`, { headers: await authHeaders() });
+        if (res.status === 401) res = await fetch(`/api/attachments/${id}?size=${size}`, { headers: await authHeaders(true) });
+      } catch {
+        throw new ApiError(0, 'Image not available offline');
+      }
       if (!res.ok) throw new ApiError(res.status, 'Image not available');
-      return URL.createObjectURL(await res.blob());
+      const blob = await res.blob();
+      keep(id, size, blob);
+      return URL.createObjectURL(blob);
     })();
     p.catch(() => cache.delete(key)); // let a later render retry
     cache.set(key, p);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Button, ButtonBase, CircularProgress, IconButton, Skeleton, Tooltip, Typography } from '@mui/material';
+import { Box, Button, ButtonBase, CircularProgress, IconButton, Skeleton, Tooltip, Typography, useTheme } from '@mui/material';
 import ChevronLeft from '@mui/icons-material/ChevronLeft';
 import ChevronRight from '@mui/icons-material/ChevronRight';
 import EventNoteOutlined from '@mui/icons-material/EventNoteOutlined';
@@ -10,10 +10,9 @@ import EventRepeatOutlined from '@mui/icons-material/EventRepeatOutlined';
 import BlockOutlined from '@mui/icons-material/BlockOutlined';
 import Flag from '@mui/icons-material/Flag';
 import SellOutlined from '@mui/icons-material/SellOutlined';
-import { api } from '../lib/api.js';
 import { addDays, formatDate, shortLabel, toKey } from '../lib/dates.js';
-import { selectTag, useStoreVersion } from '../lib/store.js';
-import { PRIORITIES, glass, hexAlpha, priorityColor, statusColors } from '../theme.js';
+import { fetchStats, localStats, selectTag, useStoreVersion } from '../lib/store.js';
+import { PRIORITIES, hexAlpha, priorityColor, statusColors } from '../theme.js';
 import { TagAvatar } from './TagChip.jsx';
 
 function monthRange(y, m) {
@@ -27,8 +26,7 @@ function Card({ title, icon, children, sx }) {
     <Box
       sx={(t) => ({
         borderRadius: '24px', p: { xs: 2, sm: 2.5 }, bgcolor: t.tokens.surfaceHigh,
-        border: `1px solid ${t.palette.divider}`, minWidth: 0, ...glass(t),
-        ...(t.tokens.glass && { animation: 'glassIn .6s cubic-bezier(.2,.9,.3,1.1) both' }), ...sx,
+        border: `1px solid ${t.palette.divider}`, minWidth: 0, ...sx,
       })}
     >
       {title && (
@@ -42,7 +40,10 @@ function Card({ title, icon, children, sx }) {
   );
 }
 
-function Kpi({ label, value, sub, color, icon }) {
+function Kpi({ label, value, sub, color: hue, icon }) {
+  const theme = useTheme();
+  // Black & White themes: the ink colour instead of a hue.
+  const color = theme.tokens.mono ? theme.tokens.text : hue;
   return (
     <Box
       sx={(t) => ({
@@ -179,7 +180,7 @@ export default function SummaryView({ today, onOpenDay }) {
     const d = new Date();
     return { y: d.getFullYear(), m: d.getMonth() };
   });
-  const [data, setData] = useState(null);
+  const [loaded, setData] = useState(null);
   const [error, setError] = useState('');
   const { from, to } = monthRange(month.y, month.m);
 
@@ -188,10 +189,16 @@ export default function SummaryView({ today, onOpenDay }) {
   const load = useCallback(() => {
     const id = ++requestRef.current;
     setError('');
-    api('GET', `/api/stats?from=${from}&to=${to}&today=${today}`)
+    fetchStats(from, to, today)
       .then((res) => id === requestRef.current && setData({ key: from, ...res }))
-      .catch((err) => id === requestRef.current && setError(err.message));
+      .catch((err) => {
+        if (id !== requestRef.current) return;
+        // Offline: work it out from the copy on this device (kept up to date as you work).
+        if (err.status === 0) setData({ key: from, offline: true });
+        else setError(err.message);
+      });
   }, [from, to, today]);
+  const data = loaded?.offline && loaded.key === from ? { key: from, ...localStats(from, to, today) } : loaded;
 
   useEffect(() => {
     load();

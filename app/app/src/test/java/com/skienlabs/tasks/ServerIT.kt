@@ -140,6 +140,17 @@ class ServerIT {
             assertEquals(1, api.search("ports", today).hits().count { it.match?.field == "step" })
             assertTrue(api.search("ma", today).suggestions.any { it.insert == "mail" })
             assertTrue(api.search("#", today).hits().isEmpty())
+
+            // The offline copy: everything, and a postpone sent twice moves the task once.
+            val copy = api.sync(today)
+            assertTrue(copy.tasks.any { it.id == mail.id })
+            assertTrue(copy.tags.isEmpty()) // the tag was deleted above
+            val (later, okLater) = store.createTask("Postpone me", today)
+            assertTrue(okLater.await())
+            val once = api.postpone(later.id, today, from = today)
+            val twice = api.postpone(later.id, today, from = today)
+            assertEquals(once.date, twice.date)
+            assertEquals(1, twice.postponed)
             live.stop()
         }
         scope.coroutineContext[kotlinx.coroutines.Job]!!.cancel()

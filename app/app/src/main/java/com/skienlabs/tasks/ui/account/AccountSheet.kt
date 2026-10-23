@@ -208,8 +208,31 @@ fun AccountSheet(app: AppController, profile: Profile, theme: ThemePref, onDismi
                 ThemeDropdown(theme) { t -> scope.launch { app.prefs.setTheme(t) } }
             }
 
+            // Changes made offline and not sent yet would be lost: ask first.
+            var confirmSignOut by remember { mutableStateOf(0) }
+            if (confirmSignOut > 0) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { confirmSignOut = 0 },
+                    title = { Text("Sign out and lose unsynced changes?") },
+                    text = {
+                        Text(
+                            "$confirmSignOut change${if (confirmSignOut == 1) " hasn't" else "s haven't"} reached the server yet " +
+                                "(the phone is offline). Signing out now discards ${if (confirmSignOut == 1) "it" else "them"}.",
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { confirmSignOut = 0; onDismiss(); app.signOut() }) {
+                            Text("Sign out anyway", color = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                    dismissButton = { TextButton(onClick = { confirmSignOut = 0 }) { Text("Stay signed in") } },
+                )
+            }
             OutlinedButton(
-                onClick = { onDismiss(); app.signOut() },
+                onClick = {
+                    val waiting = app.store.pendingChanges
+                    if (waiting > 0) confirmSignOut = waiting else { onDismiss(); app.signOut() }
+                },
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
                 colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
@@ -433,7 +456,8 @@ private fun themeLabel(t: ThemePref) = when (t) {
     ThemePref.DIM -> AppTheme.DIM.label
     ThemePref.DARK -> AppTheme.MIDNIGHT.label
     ThemePref.ABYSS -> AppTheme.ABYSS.label
-    ThemePref.GLASS -> AppTheme.GLASS.label
+    ThemePref.MONO -> AppTheme.MONO.label
+    ThemePref.MONO_LIGHT -> AppTheme.MONO_LIGHT.label
     ThemePref.GLASS_LIGHT -> AppTheme.GLASS_LIGHT.label
 }
 
@@ -447,12 +471,13 @@ fun ThemeSwatches(selected: ThemePref, onSelect: (ThemePref) -> Unit) {
         ThemePref.DIM to AppTheme.DIM,
         ThemePref.DARK to AppTheme.MIDNIGHT,
         ThemePref.ABYSS to AppTheme.ABYSS,
-        ThemePref.GLASS to AppTheme.GLASS,
+        ThemePref.MONO to AppTheme.MONO,
+        ThemePref.MONO_LIGHT to AppTheme.MONO_LIGHT,
         ThemePref.GLASS_LIGHT to AppTheme.GLASS_LIGHT,
     )
-    // Four per row: eight themes in two rows on a phone.
+    // Three per row: nine themes in three rows on a phone.
     Column(Modifier.fillMaxWidth().selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-      options.chunked(4).forEach { rowItems ->
+      options.chunked(3).forEach { rowItems ->
       Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         rowItems.forEach { (pref, look) ->
             val on = pref == selected
@@ -471,7 +496,6 @@ fun ThemeSwatches(selected: ThemePref, onSelect: (ThemePref) -> Unit) {
                             drawRect(t.background)
                             // Glass: coloured light behind a see-through card.
                             val lights = when (t) {
-                                AppTheme.GLASS -> listOf(Color(0xFF3B5BFF), Color(0xFF9B3BFF), Color(0xFF00C2C7))
                                 AppTheme.GLASS_LIGHT -> listOf(Color(0xFF8FB3FF), Color(0xFFFFB3D9), Color(0xFF9FF0D8))
                                 else -> emptyList()
                             }

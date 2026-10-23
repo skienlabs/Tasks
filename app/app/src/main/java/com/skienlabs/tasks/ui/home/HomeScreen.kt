@@ -56,6 +56,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -87,6 +90,7 @@ import com.skienlabs.tasks.ui.task.TaskSheet
 import com.skienlabs.tasks.ui.theme.LocalExtra
 import com.skienlabs.tasks.ui.theme.glassPanel
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.takeOrElse
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -116,6 +120,7 @@ private sealed interface Sheet {
 fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
     val store = app.store
     val state by store.state.collectAsStateWithLifecycle()
+    val sync by store.sync.collectAsStateWithLifecycle()
     val today by app.today.collectAsStateWithLifecycle()
     val date by app.visibleDate.collectAsStateWithLifecycle()
     val visibleMonth by app.visibleMonth.collectAsStateWithLifecycle()
@@ -260,16 +265,19 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
                     if (tab == TAB_TASKS && date != today) {
                         IconButton(onClick = { go(today) }) { Icon(Icons.Outlined.Today, "Go to today") }
                     }
+                    SyncBadge(sync)
                     IconButton(onClick = { searching = true }) { Icon(Icons.Outlined.Search, "Search tasks") }
                     IconButton(onClick = { sheet = Sheet.Account }) { Avatar(profile, 32.dp) }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = LocalExtra.current.bar.takeOrElse { MaterialTheme.colorScheme.background },
+                ),
             )
         },
         bottomBar = {
             val glass = LocalExtra.current.glass
             NavigationBar(
-                containerColor = if (glass != null) Color.Transparent else LocalExtra.current.surfaceHigh,
+                containerColor = if (glass != null) Color.Transparent else LocalExtra.current.bar.takeOrElse { LocalExtra.current.surfaceHigh },
                 modifier = if (glass != null) Modifier.glassPanel(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp), glass.panelStrong) else Modifier,
             ) {
                 val items = listOf(
@@ -350,7 +358,21 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
                         )
                     }
                 }
-                TAB_SUMMARY -> SummaryScreen(app.api::stats, { app.handleLoadError(it, quiet = true) }, today, state.tags, statsVersion, 0.dp) { d ->
+                TAB_SUMMARY -> SummaryScreen(
+                    { f, t, d ->
+                        try {
+                            // Changes made offline go first: asking for stats carries tasks over.
+                            if (!store.drained()) throw com.skienlabs.tasks.data.ApiException(0, "You appear to be offline")
+                            app.api.stats(f, t, d)
+                        } catch (e: com.skienlabs.tasks.data.ApiException) {
+                            // Offline: worked out from the copy on this phone.
+                            if (e.status == 0) store.localStats(f, t, d) else throw e
+                        }
+                    },
+                    { app.handleLoadError(it, quiet = true) }, today, state.tags,
+                    // Offline, it follows the changes made here as they happen.
+                    if (sync.online) statsVersion else statsVersion * 31 + state.tasks.hashCode(), 0.dp,
+                ) { d ->
                     tab = TAB_TASKS
                     go(d)
                 }
@@ -411,6 +433,30 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
         null -> Unit
     }
     if (newTag) TagEditor(store, null) { newTag = false }
+}
+
+/** "Offline · 3" or a spinning sync icon while changes made offline are sent. Hidden otherwise. */
+@Composable
+private fun SyncBadge(s: com.skienlabs.tasks.data.SyncStatus) {
+    if (s.online && s.pending == 0) return
+    val x = LocalExtra.current
+    val color = if (s.online) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color(if (x.dark) 0xFFFDD663 else 0xFFB06000)
+    val spin by androidx.compose.animation.core.rememberInfiniteTransition(label = "sync").animateFloat(
+        0f, -360f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1200, easing = androidx.compose.animation.core.LinearEasing)), label = "spin",
+    )
+    Row(
+        Modifier.padding(end = 2.dp).clip(RoundedCornerShape(50)).background(color.copy(alpha = 0.14f))
+            .padding(horizontal = 10.dp, vertical = 5.dp)
+            .semantics { contentDescription = if (s.online) "Syncing ${s.pending} changes" else "Offline, ${s.pending} changes waiting" },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (s.online) Icon(androidx.compose.material.icons.Icons.Outlined.Sync, null, Modifier.size(16.dp).graphicsLayer { rotationZ = spin }, tint = color)
+        else Icon(androidx.compose.material.icons.Icons.Outlined.CloudOff, null, Modifier.size(16.dp), tint = color)
+        Text(
+            if (s.online) " ${s.pending}" else if (s.pending > 0) " Offline · ${s.pending}" else " Offline",
+            style = MaterialTheme.typography.labelMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, color = color,
+        )
+    }
 }
 
 /**

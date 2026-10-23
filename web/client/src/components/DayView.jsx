@@ -12,7 +12,7 @@ import TagChip from './TagChip.jsx';
 import { StackBar } from './SummaryView.jsx';
 import { addDays, formatDate, fromKey, isCarried, startOfWeek, toKey, weekdayNames } from '../lib/dates.js';
 import { getTask, selectDay, selectOverdue, selectSummary, selectTags, useStoreVersion } from '../lib/store.js';
-import { glass, hexAlpha, statusColors } from '../theme.js';
+import { hexAlpha, statusColors } from '../theme.js';
 
 const NAMES = weekdayNames();
 
@@ -100,7 +100,7 @@ function PanelCard({ title, c, onClick, extra }) {
   const active = c.pending + c.done;
   const rate = active ? Math.round((c.done / active) * 100) : 0;
   return (
-    <Box sx={(t) => ({ borderRadius: '24px', p: 2, bgcolor: t.tokens.surfaceHigh, border: `1px solid ${t.palette.divider}`, ...glass(t), ...(t.tokens.glass && { animation: 'glassIn .6s cubic-bezier(.2,.9,.3,1.1) both' }) })}>
+    <Box sx={(t) => ({ borderRadius: '24px', p: 2, bgcolor: t.tokens.surfaceHigh, border: `1px solid ${t.palette.divider}` })}>
       <Box sx={{ display: 'flex', alignItems: 'baseline', mb: 1.5 }}>
         <Typography sx={{ fontWeight: 500, flex: 1 }}>{title}</Typography>
         <Typography sx={(t) => ({ fontWeight: 600, color: statusColors(t).rate })}>{rate}%</Typography>

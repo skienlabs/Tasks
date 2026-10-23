@@ -342,6 +342,23 @@ class CompleteTask : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
         val id = parameters[TaskIdKey] ?: return
         val user = runCatching { FirebaseAuth.getInstance().currentUser }.getOrNull() ?: return
+        // Through the app's store, so it works offline too (queued, sent when back online).
+        val viaStore = runCatching {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                val store = (context.applicationContext as com.skienlabs.tasks.TasksApp).controller.store
+                if (store.currentUid != user.uid) store.start(user.uid, com.skienlabs.tasks.data.Dates.today())
+                if (store.currentUid != user.uid || store.state.value.tasks[id] == null) return@withContext false
+                store.updateTask(id, com.skienlabs.tasks.data.TaskPatch(status = Status.DONE))
+                store.settle()
+                true
+            }
+        }.getOrDefault(false)
+        if (viaStore) {
+            WidgetRepo.markLocal(context)
+            Widgets.updateAll(context)
+            Widgets.onWidgetChange?.invoke()
+            return
+        }
         val saved = withTimeoutOrNull(10_000) {
             runCatching {
                 HttpTasksApi(BuildConfig.API_URL, Auth(context)).updateTask(id, buildJsonObject { put("status", Status.DONE) })
