@@ -88,6 +88,8 @@ export function loadConfig(env = process.env, log = (m) => console.warn(`[config
     dbPath: env.DB_PATH || path.join(dataDir, 'tasks.db'),
     filesDir: env.FILES_DIR || path.join(dataDir, 'files'),
     staticDir: path.resolve(env.STATIC_DIR || path.join(here, '../public')),
+    // The Android app offered for download on the web (see web/downloads/README.md).
+    apkPath: path.resolve(env.ANDROID_APK_PATH || path.join(here, '../downloads/Tasks.apk')),
     firebase: loadFirebase(env, log),
     allowList: parseAllowList(env.ALLOWED_EMAILS),
     devAuth,

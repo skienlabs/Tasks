@@ -6,6 +6,7 @@ import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import ArrowBack from '@mui/icons-material/ArrowBack';
 import WelcomeArt from './WelcomeArt.jsx';
+import AndroidApp from './AndroidApp.jsx';
 import { resetPassword, signInWithEmail, signInWithGoogle, signUpWithEmail } from '../lib/auth.js';
 
 function GoogleG() {
@@ -33,7 +34,13 @@ function Shell({ children }) {
       }}
     >
       <WelcomeArt compact={!wide} />
-      <Box component="main" sx={{ display: 'grid', placeItems: 'center', px: { xs: 2.5, sm: 4, md: 6 }, py: { xs: 4, md: 6 } }}>
+      <Box
+        component="main"
+        sx={{
+          display: 'grid', placeItems: { xs: 'start center', md: 'center' }, px: { xs: 2.5, sm: 4, md: 6 },
+          pt: { xs: 2.5, md: 6 }, pb: { xs: 'max(24px, env(safe-area-inset-bottom, 0px))', md: 6 },
+        }}
+      >
         <Box sx={{ width: '100%', maxWidth: 400 }}>{children}</Box>
       </Box>
     </Box>
@@ -42,9 +49,9 @@ function Shell({ children }) {
 
 function Header({ title, subtitle }) {
   return (
-    <Box sx={{ mb: 3 }}>
-      <Typography component="h1" sx={{ fontWeight: 500, fontSize: { xs: 28, sm: 34 }, letterSpacing: '-0.015em', lineHeight: 1.15 }}>{title}</Typography>
-      {subtitle && <Typography color="text.secondary" sx={{ mt: 0.75, fontSize: 16 }}>{subtitle}</Typography>}
+    <Box sx={{ mb: { xs: 2.25, sm: 3 } }}>
+      <Typography component="h1" sx={{ fontWeight: 500, fontSize: { xs: 26, sm: 34 }, letterSpacing: '-0.015em', lineHeight: 1.15 }}>{title}</Typography>
+      {subtitle && <Typography color="text.secondary" sx={{ mt: 0.5, fontSize: { xs: 15, sm: 16 } }}>{subtitle}</Typography>}
     </Box>
   );
 }
@@ -183,7 +190,7 @@ export default function SignIn({ variant, error, onError }) {
       {mode !== 'reset' && (
         <>
           {google}
-          <Divider sx={{ my: 2.5, color: 'text.secondary', fontSize: 13 }}>or</Divider>
+          <Divider sx={{ my: { xs: 2, sm: 2.5 }, color: 'text.secondary', fontSize: 13 }}>or</Divider>
         </>
       )}
 
@@ -256,6 +263,7 @@ export default function SignIn({ variant, error, onError }) {
           </Link>
         </Typography>
       )}
+      {mode !== 'reset' && <AndroidApp sx={{ mt: 3 }} />}
       <Typography sx={{ textAlign: 'center', mt: 2, fontSize: 13 }}>
         <Link href="/privacypolicy.html" target="_blank" rel="noopener" color="text.secondary" sx={{ fontSize: 13 }}>Privacy policy</Link>
       </Typography>

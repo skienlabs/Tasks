@@ -43,15 +43,25 @@ export function startLive({ onChange, onConnected }) {
           const block = buffer.slice(0, cut);
           buffer = buffer.slice(cut + 2);
           const { event, data } = parse(block);
+          // A handler that throws must never take the stream down (it would reconnect forever).
           if (event === 'ready') {
             retryMs = 1000;
-            onConnected();
-          } else if (event === 'change') {
             try {
-              const change = JSON.parse(data);
-              if (change.source !== CLIENT_ID) onChange(change);
+              onConnected();
+            } catch (err) {
+              console.error(err);
+            }
+          } else if (event === 'change') {
+            let change = null;
+            try {
+              change = JSON.parse(data);
             } catch {
               /* ignore a malformed event */
+            }
+            try {
+              if (change && change.source !== CLIENT_ID) onChange(change);
+            } catch (err) {
+              console.error(err);
             }
           }
         }

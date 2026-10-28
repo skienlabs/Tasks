@@ -37,8 +37,14 @@ export function startAuth(config, onUser, onError) {
   started = true;
   if (config.devAuth) {
     devMode = true;
-    setTokenGetter(async () => null);
-    onUser(readPref('tasks.devSignedIn') !== '0' ? DEV_USER : null);
+    // Local development: localStorage "tasks.devAs" = "ann" signs in as ann@localhost instead
+    // (to try teams with several people). The server ignores this outside development.
+    const as = /^[a-z0-9]{1,20}$/.test(readPref('tasks.devAs') || '') ? readPref('tasks.devAs') : null;
+    const user = as
+      ? { uid: `dev-${as}`, displayName: as[0].toUpperCase() + as.slice(1), email: `${as}@localhost`, photoURL: null }
+      : DEV_USER;
+    setTokenGetter(async () => (as ? `dev:${as}` : null));
+    onUser(readPref('tasks.devSignedIn') !== '0' ? user : null);
     return;
   }
   const app = initializeApp(config.firebase);

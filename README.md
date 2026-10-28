@@ -1,6 +1,6 @@
 # Tasks
 
-Daily task planner: calendar days, priorities, company tags, nested steps (sub-tasks), images on tasks, carry-over of unfinished work, monthly summaries, and an end-of-day summary notification on Android.
+Daily task planner: calendar days, priorities, company tags, nested steps (sub-tasks), images on tasks, time limits with countdowns, carry-over of unfinished work, monthly summaries, teams (invite people by email, give them tasks, see who finished what), works offline, and an end-of-day summary notification on Android.
 
 ```
 tasks/

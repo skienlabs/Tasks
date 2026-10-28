@@ -38,6 +38,10 @@ const inflightDates = new Map(); // date -> number of unsent changes touching it
 const tags = new Map(); // id -> tag
 let tagsLoaded = false;
 let tagsTouched = 0; // seq of the latest local tag change
+let teams = []; // the teams I'm in, as I see them (members, my role, invites if I'm an admin)
+let invites = []; // invites waiting for me
+let teamsLoaded = false;
+const boards = new Map(); // teamId -> { tasks, from, to } last loaded (admins' view of the team's tasks)
 let seq = 0;
 let epoch = 0;
 let version = 0;
@@ -226,6 +230,10 @@ export function clearStore() {
   lastSync = 0;
   tagsLoaded = false;
   tagsTouched = 0;
+  teams = [];
+  invites = [];
+  teamsLoaded = false;
+  boards.clear();
   toldOffline = false;
   toast = null;
   clearImages();
@@ -265,11 +273,13 @@ async function persist() {
       ['days', [...loadedAt.keys()]],
       ['knownAll', knownAll],
       ['lastSync', lastSync],
+      ['teams', teams],
+      ['invites', invites],
     ]);
   }
 }
 
-const META_KEYS = ['tags', 'tagsLoaded', 'summary', 'misses', 'days', 'knownAll', 'lastSync'];
+const META_KEYS = ['tags', 'tagsLoaded', 'summary', 'misses', 'days', 'knownAll', 'lastSync', 'teams', 'invites'];
 
 /**
  * Opens the account's saved copy (instantly, with no network) and then brings it up to
@@ -286,7 +296,7 @@ export async function startStore(newUid, today) {
     idb.getAll('outbox', newUid),
   ]);
   if (ep !== epoch) return;
-  const [savedTags, savedTagsLoaded, savedSummary, savedMisses, savedDays, savedKnownAll, savedLastSync] = meta;
+  const [savedTags, savedTagsLoaded, savedSummary, savedMisses, savedDays, savedKnownAll, savedLastSync, savedTeams, savedInvites] = meta;
   // Anything fetched while the saved copy was being read is newer: keep it.
   for (const t of savedTasks) {
     if (byId.has(t.id) || touched.has(t.id)) continue;
@@ -302,6 +312,10 @@ export async function startStore(newUid, today) {
   for (const d of savedDays ?? []) if (!loadedAt.has(d)) loadedAt.set(d, 0);
   knownAll = Boolean(savedKnownAll);
   lastSync = savedLastSync ?? 0;
+  if (!teamsLoaded && Array.isArray(savedTeams)) {
+    teams = savedTeams;
+    invites = Array.isArray(savedInvites) ? savedInvites : [];
+  }
   // Changes made offline (maybe in an earlier visit) are waiting again, in their order.
   ops.sort((a, b) => a.n - b.n);
   for (const op of ops) {
@@ -648,6 +662,7 @@ export async function syncAll(today = todayKey()) {
   }
   misses.clear();
   for (const m of res.misses) misses.set(m.date, m.missed);
+  if (Array.isArray(res.teams)) setTeams(res.teams, res.invites ?? []);
   recountAll();
   knownAll = true;
   lastSync = Date.now();
@@ -732,7 +747,7 @@ function mutate(id, nextLocal, request, errorLabel) {
 }
 
 /** Returns the new task and a promise: true once the server has it, false if it was refused. */
-export function createTask({ title, notes = '', priority = 4, date: wanted, tagIds = [], subtasks = [] }) {
+export function createTask({ title, notes = '', priority = 4, date: wanted, tagIds = [], subtasks = [], dueAt = null }) {
   const now = Date.now();
   // New tasks go on today or later (the server refuses earlier days).
   const date = wanted < todayKey() ? todayKey() : wanted;
@@ -742,12 +757,14 @@ export function createTask({ title, notes = '', priority = 4, date: wanted, tagI
     id: newId(), title: title.replace(/\s+/g, ' ').trim(), notes: notes.trim(), priority, date,
     status, originalDate: date, postponed: 0, createdAt: now, updatedAt: now,
     completedAt: status === 'done' ? now : null, tagIds: ids, subtasks, attachments: [], carriedFrom: null,
+    dueAt: dueAt || null, teamId: null, assignee: null, assignedBy: null,
   };
   const saved = mutate(task.id, task, {
     kind: 'createTask', method: 'POST', url: '/api/tasks',
     body: {
       id: task.id, title: task.title, notes: task.notes, priority, date, tagIds: ids, today: todayKey(),
       ...(subtasks.length ? { subtasks } : {}),
+      ...(task.dueAt ? { dueAt: task.dueAt } : {}),
     },
   }, "Couldn't add task");
   return { task, saved };
@@ -875,6 +892,9 @@ export function deleteTask(id) {
         ...(old.subtasks?.length ? { subtasks: old.subtasks } : {}),
         createdAt: old.createdAt, ...(old.completedAt ? { completedAt: old.completedAt } : {}),
         ...(old.carriedFrom ? { carriedFrom: old.carriedFrom } : {}),
+        ...(old.dueAt ? { dueAt: old.dueAt } : {}),
+        // A team task (only its admins can delete one) comes back as the same team task.
+        ...(old.teamId ? { teamId: old.teamId, ...(old.assignedBy ? { assignedBy: old.assignedBy } : {}) } : {}),
       },
     }, "Couldn't restore");
   });
@@ -972,4 +992,192 @@ export async function removeTag(id) {
   emit();
   // Not awaited: offline it waits in the queue; a refusal shows a message and reloads the tags.
   enqueue({ kind: 'deleteTag', tagId: id, method: 'DELETE', url: `/api/tags/${id}`, label: "Couldn't delete tag", mine });
+}
+
+// ---- Teams -----------------------------------------------------------------------
+// Teams are managed online (the server checks every permission); the latest copy is kept
+// on the device so names, roles and badges still show offline.
+
+function setTeams(list, mine) {
+  teams = list;
+  invites = mine;
+  teamsLoaded = true;
+  for (const id of [...boards.keys()]) if (!list.some((t) => t.id === id)) boards.delete(id);
+  metaDirty = true;
+  schedulePersist();
+  emit();
+}
+
+export function selectTeams() {
+  return teams;
+}
+
+export function areTeamsLoaded() {
+  return teamsLoaded;
+}
+
+export function selectInvites() {
+  return invites;
+}
+
+export function selectTeam(id) {
+  return teams.find((t) => t.id === id) ?? null;
+}
+
+export const isTeamAdmin = (team) => team?.role === 'owner' || team?.role === 'admin';
+
+/**
+ * What I may do with a task: team tasks are worked on by the person they're given to, while
+ * what the task is (title, priority, time limit, steps) stays with the team's admins.
+ */
+export function taskAccess(task) {
+  if (!task?.teamId) return { team: null, restricted: false };
+  const team = selectTeam(task.teamId);
+  return { team, restricted: !isTeamAdmin(team) };
+}
+
+/** A teammate's name (or null if they are no longer in the team). */
+export function memberName(teamId, memberUid) {
+  if (!memberUid) return null;
+  if (memberUid === uid) return 'you';
+  const m = selectTeam(teamId)?.members.find((x) => x.uid === memberUid);
+  return m ? m.name : null;
+}
+
+export function myUid() {
+  return uid;
+}
+
+export async function loadTeams() {
+  const ep = epoch;
+  const res = await api('GET', '/api/teams');
+  if (ep !== epoch) return;
+  setOnline(true);
+  setTeams(res.teams, res.invites);
+}
+
+/** Puts one team's fresh copy (as the server returned it) in place. */
+function putTeam(view) {
+  if (!view) return;
+  const i = teams.findIndex((t) => t.id === view.id);
+  setTeams(i < 0 ? [...teams, view] : teams.map((t) => (t.id === view.id ? view : t)), invites);
+}
+
+const teamsOnline = () => {
+  if (!online) throw new ApiError(0, 'Teams need a connection. Try again when you are back online.');
+};
+
+export async function createTeam(name, color = 'blue') {
+  teamsOnline();
+  const view = await api('POST', '/api/teams', { id: newId(), name, color });
+  putTeam(view);
+  return view;
+}
+
+export async function updateTeam(id, patch) {
+  teamsOnline();
+  const view = await api('PATCH', `/api/teams/${id}`, patch);
+  putTeam(view);
+  return view;
+}
+
+/** The team's tasks stay with their people as their own: refresh mine. */
+async function afterTeamGone() {
+  await loadTeams().catch(() => {});
+  syncAll().catch(() => {});
+}
+
+export async function deleteTeam(id) {
+  teamsOnline();
+  await api('DELETE', `/api/teams/${id}`);
+  await afterTeamGone();
+}
+
+export async function inviteToTeam(id, emails, role = 'member') {
+  teamsOnline();
+  const res = await api('POST', `/api/teams/${id}/invites`, { emails, role });
+  putTeam(res.team);
+  return res;
+}
+
+export async function cancelInvite(teamId, inviteId) {
+  teamsOnline();
+  putTeam(await api('DELETE', `/api/teams/${teamId}/invites/${inviteId}`));
+}
+
+export async function acceptInvite(inviteId) {
+  teamsOnline();
+  const res = await api('POST', `/api/invites/${inviteId}/accept`);
+  await loadTeams().catch(() => putTeam(res.team));
+  return res.team;
+}
+
+export async function declineInvite(inviteId) {
+  teamsOnline();
+  await api('POST', `/api/invites/${inviteId}/decline`);
+  setTeams(teams, invites.filter((i) => i.id !== inviteId));
+}
+
+export async function setMemberRole(teamId, memberUid, role) {
+  teamsOnline();
+  putTeam(await api('PATCH', `/api/teams/${teamId}/members/${encodeURIComponent(memberUid)}`, { role }));
+}
+
+/** Removes someone (or, with my own uid, leaves the team). */
+export async function removeMember(teamId, memberUid) {
+  teamsOnline();
+  await api('DELETE', `/api/teams/${teamId}/members/${encodeURIComponent(memberUid)}`);
+  if (memberUid === uid) await afterTeamGone();
+  else await loadTeams().catch(() => {});
+}
+
+export function selectBoard(teamId) {
+  return boards.get(teamId) ?? null;
+}
+
+/** The team's tasks on days from..to plus every open one (admins only). */
+export async function loadBoard(teamId, from, to) {
+  const ep = epoch;
+  const res = await api('GET', `/api/teams/${teamId}/tasks?from=${from}&to=${to}`);
+  if (ep !== epoch) return null;
+  const board = { tasks: res.tasks, from, to, at: Date.now() };
+  boards.set(teamId, board);
+  emit();
+  return board;
+}
+
+function patchBoard(teamId, task, removed = false) {
+  const b = boards.get(teamId);
+  if (!b) return;
+  const rest = b.tasks.filter((t) => t.id !== task.id);
+  boards.set(teamId, { ...b, tasks: removed ? rest : [...rest, task] });
+  emit();
+}
+
+/** A team task given to me shows up in my own list; the server doesn't echo my own change back. */
+function refreshMine(...tasks) {
+  if (tasks.some((t) => t && (t.assignee === uid || t.wasMine))) syncAll().catch(() => {});
+}
+
+export async function assignTask(teamId, data) {
+  teamsOnline();
+  const task = await api('POST', `/api/teams/${teamId}/tasks`, { id: newId(), today: todayKey(), ...data });
+  patchBoard(teamId, task);
+  refreshMine(task);
+  return task;
+}
+
+export async function updateTeamTask(teamId, current, patch) {
+  teamsOnline();
+  const task = await api('PATCH', `/api/teams/${teamId}/tasks/${current.id}`, patch);
+  patchBoard(teamId, task);
+  refreshMine(task, { wasMine: current.assignee === uid });
+  return task;
+}
+
+export async function deleteTeamTask(teamId, current) {
+  teamsOnline();
+  await api('DELETE', `/api/teams/${teamId}/tasks/${current.id}`);
+  patchBoard(teamId, current, true);
+  refreshMine(current);
 }

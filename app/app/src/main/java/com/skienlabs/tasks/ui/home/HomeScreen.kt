@@ -21,10 +21,12 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Sell
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.Sell
+import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -100,7 +102,8 @@ import kotlin.math.abs
 
 private const val TAB_TASKS = 0
 private const val TAB_SUMMARY = 1
-private const val TAB_TAGS = 2
+private const val TAB_TEAMS = 2
+private const val TAB_TAGS = 3
 
 private val PAGE_COUNT = (Dates.between(Dates.MIN, Dates.MAX) + 1).toInt()
 private fun pageOf(date: String) = Dates.between(Dates.MIN, date).toInt()
@@ -121,6 +124,7 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
     val store = app.store
     val state by store.state.collectAsStateWithLifecycle()
     val sync by store.sync.collectAsStateWithLifecycle()
+    val teams by store.teams.collectAsStateWithLifecycle()
     val today by app.today.collectAsStateWithLifecycle()
     val date by app.visibleDate.collectAsStateWithLifecycle()
     val visibleMonth by app.visibleMonth.collectAsStateWithLifecycle()
@@ -240,7 +244,11 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
     }
 
     val firstName = profile.name.trim().split(' ').firstOrNull()?.takeIf { it.isNotBlank() }
-    androidx.compose.runtime.CompositionLocalProvider(com.skienlabs.tasks.ui.day.LocalGreetingName provides firstName) {
+    androidx.compose.runtime.CompositionLocalProvider(
+        com.skienlabs.tasks.ui.day.LocalGreetingName provides firstName,
+        com.skienlabs.tasks.ui.teams.LocalTeams provides teams,
+        com.skienlabs.tasks.ui.teams.LocalMyUid provides profile.uid,
+    ) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -283,6 +291,7 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
                 val items = listOf(
                     Triple("Tasks", Icons.Filled.CheckCircle, Icons.Outlined.CheckCircle),
                     Triple("Summary", Icons.Filled.Insights, Icons.Outlined.Insights),
+                    Triple("Teams", Icons.Filled.Groups, Icons.Outlined.Groups),
                     Triple("Tags", Icons.Filled.Sell, Icons.Outlined.Sell),
                 )
                 items.forEachIndexed { i, (label, on, off) ->
@@ -292,7 +301,14 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
                             if (tab == i && i == TAB_TASKS) go(today) // tapping Tasks again jumps to today
                             tab = i
                         },
-                        icon = { Icon(if (tab == i) on else off, null) },
+                        icon = {
+                            val badge = if (i == TAB_TEAMS) teams.invites.size else 0
+                            if (badge > 0) {
+                                androidx.compose.material3.BadgedBox(badge = { androidx.compose.material3.Badge { Text("$badge") } }) {
+                                    Icon(if (tab == i) on else off, "$label, $badge invite${if (badge == 1) "" else "s"}")
+                                }
+                            } else Icon(if (tab == i) on else off, null)
+                        },
                         label = { Text(label) },
                     )
                 }
@@ -350,7 +366,7 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
                             failed = failed[d] == true,
                             onRetry = { scope.launch { load(d, prefetch = false) } },
                             actions = actions,
-                            onAdd = { title, priority, tagIds -> store.createTask(title, d, priority, "", tagIds).second },
+                            onAdd = { title, priority, tagIds, dueAt -> store.createTask(title, d, priority, "", tagIds, dueAt = dueAt).second },
                             onMoveAllToToday = { list -> store.moveTasks(list.map { it.id }, today) },
                             quickAddFocus = quickAddFocus,
                             bottomPadding = 0.dp,
@@ -375,6 +391,12 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
                 ) { d ->
                     tab = TAB_TASKS
                     go(d)
+                }
+                TAB_TEAMS -> com.skienlabs.tasks.ui.teams.TeamsScreen(store, today, profile.uid, com.skienlabs.tasks.BuildConfig.API_URL) { t ->
+                    tab = TAB_TASKS
+                    if (filter != null && filter !in t.tagIds) setFilter(null)
+                    go(t.date)
+                    sheet = Sheet.TaskView(t.id, t.date)
                 }
                 else -> TagsScreen(store, state.tags, state.tagsLoaded, 0.dp)
             }

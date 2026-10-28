@@ -17,6 +17,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Flag
+import androidx.compose.material.icons.outlined.LabelOff
+import androidx.compose.foundation.background
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -95,6 +97,14 @@ fun TaskSheet(
     var stepsJson by rememberSaveable(key) { mutableStateOf(encodeSteps(task?.subtasks ?: emptyList())) }
     val steps = remember(stepsJson) { decodeSteps(stepsJson) }
     var stepsChanged by rememberSaveable(key) { mutableStateOf(false) }
+    var dueAt by rememberSaveable(key) { mutableStateOf(task?.dueAt) }
+    // A new task needs a tag, or "No tag" chosen on purpose.
+    var noTag by rememberSaveable(key) { mutableStateOf(false) }
+    var tagError by rememberSaveable(key) { mutableStateOf(false) }
+    // A task from a team: you work on it; what it is (title, priority, time limit, steps) is the admins' call.
+    val access = com.skienlabs.tasks.ui.teams.accessOf(task ?: Task(id = "", title = "", date = today))
+    val restricted = access.restricted
+    val live = task // the caller passes the current copy
     // Images: saved ones minus removed, plus new ones; applied on Save.
     var removedImages by remember(key) { mutableStateOf(emptySet<String>()) }
     var newImages by remember(key) { mutableStateOf(emptyList<NewImage>()) }
@@ -102,7 +112,8 @@ fun TaskSheet(
     var picking by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
     val dateOk = Dates.isValid(date) && (date >= today || (task != null && date == task.date))
-    val valid = title.isNotBlank() && dateOk
+    val valid = title.isNotBlank() && dateOk && (dueAt == null || com.skienlabs.tasks.data.Due.isValid(dueAt))
+    val tagsOk = task != null || noTag || tagIds.any { id -> tags.any { it.id == id } }
     val dark = LocalExtra.current.dark
 
     fun close() {
@@ -111,28 +122,35 @@ fun TaskSheet(
 
     fun save() {
         if (!valid) return
+        if (!tagsOk) {
+            tagError = true
+            return
+        }
         fun applyImages(id: String) {
             removedImages.forEach { store.removeAttachment(id, it) }
             newImages.forEach { store.addAttachment(id, it.prepared) }
         }
         if (task == null) {
-            val (created, _) = store.createTask(title, date, priority, notes, tagIds, steps)
+            val (created, _) = store.createTask(title, date, priority, notes, tagIds, steps, dueAt)
             applyImages(created.id)
         } else if (store.state.value.tasks[task.id] == null) {
             // Deleted (maybe on another device) while open: keep the edits on offer.
-            val t = title; val n = notes; val p = priority; val d = date; val ids = tagIds; val st = steps
-            store.toast("This task was deleted, so changes weren't saved", "Add as new") { store.createTask(t, d, p, n, ids, st) }
+            val t = title; val n = notes; val p = priority; val d = date; val ids = tagIds; val st = steps; val due = dueAt
+            store.toast("This task was deleted, so changes weren't saved", "Add as new") { store.createTask(t, d, p, n, ids, st, due) }
         } else {
             // Compare with the task as it was when the sheet opened, so a field changed meanwhile
             // on another device is only overwritten if it was edited here too.
             val o = original ?: task
+            val dueChanged = dueAt != o.dueAt && !restricted
             val patch = TaskPatch(
-                title = normalize(title).takeIf { it != o.title },
+                title = normalize(title).takeIf { it != o.title && !restricted },
                 notes = notes.trim().takeIf { it != o.notes },
-                priority = priority.takeIf { it != o.priority },
+                priority = priority.takeIf { it != o.priority && !restricted },
                 date = date.takeIf { it != o.date },
                 tagIds = tagIds.takeIf { tagsChanged && it.sorted() != o.tagIds.sorted() },
-                subtasks = steps.takeIf { stepsChanged && it != o.subtasks },
+                subtasks = steps.takeIf { stepsChanged && it != o.subtasks && !restricted },
+                dueAt = dueAt.takeIf { dueChanged },
+                clearDue = dueChanged && dueAt == null,
             )
             if (patch != TaskPatch()) store.updateTask(task.id, patch)
             applyImages(task.id)
@@ -149,9 +167,19 @@ fun TaskSheet(
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Text(if (task == null) "New task" else "Edit task", style = MaterialTheme.typography.titleLarge)
+            if (task?.teamId != null) {
+                val by = com.skienlabs.tasks.ui.teams.memberName(task.teamId, task.assignedBy)
+                Text(
+                    (access.team?.name?.let { "$it · " } ?: "") + if (restricted) {
+                        "Given to you${by?.let { " by $it" } ?: ""}. You can complete it, postpone it, tick its steps, and add notes, tags and images; its admins change the rest."
+                    } else "A team task. As an admin you can change everything; it stays in this person's list.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().background(LocalExtra.current.chip, androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(12.dp),
+                )
+            }
             OutlinedTextField(
                 value = title, onValueChange = { title = it.replace("\n", " ").take(500) },
-                label = { Text("Title") }, maxLines = 4,
+                label = { Text("Title") }, maxLines = 4, enabled = !restricted,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier.fillMaxWidth().focusRequester(focus),
             )
@@ -161,9 +189,20 @@ fun TaskSheet(
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier.fillMaxWidth(),
             )
-            StepsEditor(steps) {
-                stepsJson = encodeSteps(it)
-                stepsChanged = true
+            if (restricted) {
+                val liveSteps = live?.subtasks ?: emptyList()
+                if (liveSteps.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Steps", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        // Ticking here saves at once (members may tick steps, not change them).
+                        com.skienlabs.tasks.ui.day.StepsInline(liveSteps, enabled = live?.isCancelled != true) { store.toggleStep(task!!.id, it) }
+                    }
+                }
+            } else {
+                StepsEditor(steps) {
+                    stepsJson = encodeSteps(it)
+                    stepsChanged = true
+                }
             }
             val saved = (task?.attachments ?: emptyList()).filter { it.id !in removedImages && !it.uploading }
             ImagesEditor(
@@ -180,7 +219,7 @@ fun TaskSheet(
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     for (p in 1..4) {
                         SegmentedButton(
-                            selected = priority == p, onClick = { priority = p },
+                            selected = priority == p, onClick = { priority = p }, enabled = !restricted,
                             shape = SegmentedButtonDefaults.itemShape(p - 1, 4),
                             icon = { Icon(if (p == 4) Icons.Outlined.Flag else Icons.Filled.Flag, null, Modifier.size(18.dp), tint = Palette.priority(p, LocalExtra.current)) },
                         ) { Text(Palette.priorityLabel(p), maxLines = 1) }
@@ -190,8 +229,22 @@ fun TaskSheet(
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Tags", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    Text(
+                        if (task == null) "Tags *" else "Tags", style = MaterialTheme.typography.labelLarge,
+                        color = if (tagError) LocalExtra.current.overdue else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f),
+                    )
                     TextButton(onClick = onManageTags) { Text("New tag") }
+                }
+                if (tagError) {
+                    Text("Pick a tag for this task, or choose \"No tag\".", style = MaterialTheme.typography.bodyMedium, color = LocalExtra.current.overdue)
+                }
+                if (task == null) {
+                    FilterChip(
+                        selected = noTag,
+                        onClick = { noTag = !noTag; tagIds = emptyList(); tagsChanged = true; tagError = false },
+                        leadingIcon = { Icon(Icons.Outlined.LabelOff, null, Modifier.size(18.dp)) },
+                        label = { Text("No tag") },
+                    )
                 }
                 if (tags.isEmpty()) {
                     Text("Tag tasks by company or project.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -201,6 +254,8 @@ fun TaskSheet(
                             val on = tag.id in tagIds
                             TagChip(tag, selected = on, onClick = {
                                 tagsChanged = true
+                                noTag = false
+                                tagError = false
                                 tagIds = if (on) tagIds - tag.id else if (tagIds.size >= MAX_TAGS_PER_TASK) tagIds else tagIds + tag.id
                             })
                         }
@@ -223,8 +278,10 @@ fun TaskSheet(
                 }
             }
 
+            com.skienlabs.tasks.ui.teams.TimeLimitField(dueAt, { dueAt = it }, date, enabled = !restricted)
+
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                if (task != null) {
+                if (task != null && !restricted) {
                     TextButton(onClick = { store.deleteTask(task.id); close() }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
                 }
                 Spacer(Modifier.weight(1f))

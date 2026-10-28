@@ -33,6 +33,8 @@ import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Sell
+import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.TaskAlt
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -149,6 +151,16 @@ fun TaskDetails(task: Task, tags: List<Tag>, today: String, actions: RowActions,
             }
             Fact(if (task.priority < 4) Icons.Filled.Flag else Icons.Outlined.Flag, "Priority", if (task.priority < 4) Palette.priority(task.priority, LocalExtra.current) else null) {
                 Text(Palette.priorityLabel(task.priority), style = MaterialTheme.typography.bodyMedium)
+            }
+            if (task.dueAt != null) {
+                Fact(Icons.Outlined.Timer, "Time limit") { com.skienlabs.tasks.ui.teams.DueChip(task, large = true) }
+            }
+            if (task.teamId != null) {
+                val team = com.skienlabs.tasks.ui.teams.LocalTeams.current.team(task.teamId)
+                val by = com.skienlabs.tasks.ui.teams.memberName(task.teamId, task.assignedBy)
+                Fact(Icons.Outlined.Groups, "Team") {
+                    Text((team?.name ?: "Team task") + (by?.let { " · given by $it" } ?: ""), style = MaterialTheme.typography.bodyMedium)
+                }
             }
             Fact(Icons.Outlined.Sell, "Tags") {
                 if (taskTags.isEmpty()) Text("None", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -15,6 +15,8 @@ import { StepsInline, StepsProgress } from './Steps.jsx';
 import { ImageStrip, ImageViewer } from './Images.jsx';
 import { carriedLabel, isCarried, shortLabel } from '../lib/dates.js';
 import { completeTask, postponeTask, restoreTask, selectTaskTags, useStoreVersion } from '../lib/store.js';
+import { DueChip, TeamBadge } from './Due.jsx';
+import { taskAccess } from '../lib/store.js';
 
 function Meta({ icon, children, color = 'text.secondary' }) {
   return (
@@ -104,6 +106,8 @@ function TaskItem({ task, today, showOrigin, selected, onSelect, onEdit, onManag
   const carried = isCarried(task);
   const late = pending && (carried || showOrigin); // red outline while it's still open
   const label = postponeLabel(task, today);
+  // A team task its admins cancelled stays cancelled for the person it was given to.
+  const locked = cancelled && taskAccess(task).restricted;
 
   return (
     <Box
@@ -155,6 +159,7 @@ function TaskItem({ task, today, showOrigin, selected, onSelect, onEdit, onManag
       {tags.length > 0 && <TagSpine tags={tags} active={pending} />}
       <Tooltip title={pending ? 'Mark complete' : done ? 'Mark not done' : 'Restore'}>
         <IconButton
+          disabled={locked}
           aria-label={pending ? `Complete "${task.title}"` : `Restore "${task.title}"`}
           onClick={(e) => {
             e.stopPropagation();
@@ -195,9 +200,11 @@ function TaskItem({ task, today, showOrigin, selected, onSelect, onEdit, onManag
         >
           {task.title}
         </Typography>
-        {carried && (
-          <Box sx={{ display: 'flex', mt: 0.6 }}>
-            <CarriedBadge task={task} today={today} muted={!pending} tag={tags[0]} />
+        {(carried || task.dueAt || task.teamId) && (
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 0.6 }}>
+            {task.dueAt && <DueChip task={task} />}
+            {task.teamId && <TeamBadge task={task} />}
+            {carried && <CarriedBadge task={task} today={today} muted={!pending} tag={tags[0]} />}
           </Box>
         )}
         {steps.length > 0 && (

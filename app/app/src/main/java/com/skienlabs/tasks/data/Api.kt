@@ -62,6 +62,22 @@ interface TasksApi {
         throw ApiException(0, "Search needs a connection")
     /** Everything in the account (after carry-over), for the offline copy. */
     suspend fun sync(today: String): SyncResponse = throw ApiException(0, "You appear to be offline")
+
+    // Teams (online only; the server checks every permission).
+    suspend fun teams(): TeamsResponse = throw ApiException(0, "You appear to be offline")
+    suspend fun createTeam(body: JsonObject): Team = throw ApiException(0, "You appear to be offline")
+    suspend fun updateTeam(id: String, body: JsonObject): Team = throw ApiException(0, "You appear to be offline")
+    suspend fun deleteTeam(id: String): Unit = throw ApiException(0, "You appear to be offline")
+    suspend fun invite(teamId: String, emails: List<String>, role: String): InviteResult = throw ApiException(0, "You appear to be offline")
+    suspend fun cancelInvite(teamId: String, inviteId: String): Team = throw ApiException(0, "You appear to be offline")
+    suspend fun acceptInvite(id: String): AcceptResult = throw ApiException(0, "You appear to be offline")
+    suspend fun declineInvite(id: String): Unit = throw ApiException(0, "You appear to be offline")
+    suspend fun setRole(teamId: String, uid: String, role: String): Team = throw ApiException(0, "You appear to be offline")
+    suspend fun removeMember(teamId: String, uid: String): Unit = throw ApiException(0, "You appear to be offline")
+    suspend fun board(teamId: String, from: String, to: String): BoardResponse = throw ApiException(0, "You appear to be offline")
+    suspend fun assign(teamId: String, body: JsonObject): Task = throw ApiException(0, "You appear to be offline")
+    suspend fun updateTeamTask(teamId: String, taskId: String, patch: JsonObject): Task = throw ApiException(0, "You appear to be offline")
+    suspend fun deleteTeamTask(teamId: String, taskId: String): Unit = throw ApiException(0, "You appear to be offline")
 }
 
 /** Supplies the Firebase ID token; `force` asks Firebase for a fresh one. */
@@ -182,6 +198,26 @@ class HttpTasksApi(
     override suspend fun updateTag(id: String, patch: JsonObject) = req("PATCH", "/api/tags/$id", patch, Tag.serializer())
     override suspend fun deleteTag(id: String) { call("DELETE", "/api/tags/$id", null, null as KSerializer<Unit>?) }
 
+    private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
+    override suspend fun teams() = req("GET", "/api/teams", null, TeamsResponse.serializer())
+    override suspend fun createTeam(body: JsonObject) = req("POST", "/api/teams", body, Team.serializer())
+    override suspend fun updateTeam(id: String, body: JsonObject) = req("PATCH", "/api/teams/$id", body, Team.serializer())
+    override suspend fun deleteTeam(id: String) { call("DELETE", "/api/teams/$id", null, null as KSerializer<Unit>?) }
+    override suspend fun invite(teamId: String, emails: List<String>, role: String) = req("POST", "/api/teams/$teamId/invites", buildJsonObject {
+        putJsonArray("emails") { emails.forEach { add(JsonPrimitive(it)) } }
+        put("role", role)
+    }, InviteResult.serializer())
+    override suspend fun cancelInvite(teamId: String, inviteId: String) = req("DELETE", "/api/teams/$teamId/invites/$inviteId", null, Team.serializer())
+    override suspend fun acceptInvite(id: String) = req("POST", "/api/invites/$id/accept", null, AcceptResult.serializer())
+    override suspend fun declineInvite(id: String) { call("POST", "/api/invites/$id/decline", null, null as KSerializer<Unit>?) }
+    override suspend fun setRole(teamId: String, uid: String, role: String) =
+        req("PATCH", "/api/teams/$teamId/members/${enc(uid)}", buildJsonObject { put("role", role) }, Team.serializer())
+    override suspend fun removeMember(teamId: String, uid: String) { call("DELETE", "/api/teams/$teamId/members/${enc(uid)}", null, null as KSerializer<Unit>?) }
+    override suspend fun board(teamId: String, from: String, to: String) = req("GET", "/api/teams/$teamId/tasks?from=$from&to=$to", null, BoardResponse.serializer())
+    override suspend fun assign(teamId: String, body: JsonObject) = req("POST", "/api/teams/$teamId/tasks", body, Task.serializer())
+    override suspend fun updateTeamTask(teamId: String, taskId: String, patch: JsonObject) = req("PATCH", "/api/teams/$teamId/tasks/$taskId", patch, Task.serializer())
+    override suspend fun deleteTeamTask(teamId: String, taskId: String) { call("DELETE", "/api/teams/$teamId/tasks/$taskId", null, null as KSerializer<Unit>?) }
+
     // Uploads can be a couple of MB on a slow connection: give them more time.
     private val uploadClient by lazy {
         client.newBuilder().writeTimeout(90, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).callTimeout(180, TimeUnit.SECONDS).build()
@@ -250,6 +286,7 @@ fun taskBody(
     put("date", t.date)
     putJsonArray("tagIds") { t.tagIds.forEach { add(JsonPrimitive(it)) } }
     if (t.subtasks.isNotEmpty()) put("subtasks", subtasksJson(t.subtasks))
+    t.dueAt?.let { put("dueAt", it) }
     if (includeHistory) {
         put("status", t.status)
         put("originalDate", t.originalDate)
@@ -257,6 +294,8 @@ fun taskBody(
         put("createdAt", t.createdAt)
         t.completedAt?.let { put("completedAt", it) }
         t.carriedFrom?.let { put("carriedFrom", it) }
+        // A team task (only its admins can delete one) comes back as the same team task.
+        t.teamId?.let { put("teamId", it); t.assignedBy?.let { by -> put("assignedBy", by) } }
     }
 }
 

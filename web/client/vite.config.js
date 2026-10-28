@@ -34,7 +34,7 @@ export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(version) },
   server: {
     port: 5173,
-    proxy: { '/api': 'http://localhost:8080' },
+    proxy: { '/api': 'http://localhost:8080', '/download': 'http://localhost:8080' },
   },
   build: {
     outDir: 'dist',

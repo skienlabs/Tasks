@@ -21,10 +21,14 @@ import AccountCircleOutlined from '@mui/icons-material/AccountCircleOutlined';
 import SearchRounded from '@mui/icons-material/SearchRounded';
 import CloudOffRounded from '@mui/icons-material/CloudOffRounded';
 import SyncRounded from '@mui/icons-material/SyncRounded';
+import GroupsOutlined from '@mui/icons-material/GroupsOutlined';
+import GroupsRounded from '@mui/icons-material/GroupsRounded';
+import AndroidApp from './AndroidApp.jsx';
 import AccountDialog from './AccountDialog.jsx';
 import ThemePicker from './ThemePicker.jsx';
 
 const SummaryView = lazy(() => import('./SummaryView.jsx'));
+const TeamsView = lazy(() => import('./teams/TeamsView.jsx'));
 import Logo from './Logo.jsx';
 import MiniCalendar from './MiniCalendar.jsx';
 import DayView from './DayView.jsx';
@@ -35,8 +39,8 @@ import { TagAvatar } from './TagChip.jsx';
 import Toast from './Toast.jsx';
 import { addDays, formatDate, fromKey, isValidKey, monthGrid, startOfWeek, todayKey } from '../lib/dates.js';
 import {
-  areTagsLoaded, flush, isDayLoaded, lastSyncedAt, loadDay, loadSummary, loadTags, loadedDates, selectSummary, selectSync, selectTag, selectTags,
-  showToast, syncAll, useStoreVersion,
+  areTagsLoaded, flush, isDayLoaded, lastSyncedAt, loadBoard, loadDay, loadSummary, loadTags, loadTeams, loadedDates, selectBoard,
+  selectInvites, selectSummary, selectSync, selectTag, selectTags, showToast, syncAll, useStoreVersion,
 } from '../lib/store.js';
 import { startLive } from '../lib/live.js';
 import { api } from '../lib/api.js';
@@ -141,7 +145,9 @@ function SyncBadge() {
   );
 }
 
-function NavItem({ icon, label, active, onClick, color, count }) {
+const VIEWS = ['day', 'summary', 'teams'];
+
+function NavItem({ icon, label, active, onClick, color, count, badge }) {
   return (
     <ButtonBase
       onClick={onClick}
@@ -157,6 +163,11 @@ function NavItem({ icon, label, active, onClick, color, count }) {
       {icon}
       <Box component="span" sx={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</Box>
       {count > 0 && <Typography variant="caption" color="text.secondary">{count}</Typography>}
+      {badge > 0 && (
+        <Box component="span" sx={{ minWidth: 20, height: 20, px: 0.75, borderRadius: 999, bgcolor: 'error.main', color: 'error.contrastText', fontSize: 12, fontWeight: 700, display: 'grid', placeItems: 'center' }}>
+          {badge}
+        </Box>
+      )}
     </ButtonBase>
   );
 }
@@ -167,7 +178,9 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
   const large = useMediaQuery((t) => t.breakpoints.up('lg'));
   const today = useToday();
   const { canInstall, install } = useInstallPrompt();
-  const [view, setView] = useState(() => (params().get('v') === 'summary' ? 'summary' : 'day'));
+  const [view, setView] = useState(() => (VIEWS.includes(params().get('v')) ? params().get('v') : 'day'));
+  const [teamId, setTeamId] = useState(() => (params().get('v') === 'teams' ? params().get('team') : null));
+  const inviteCount = selectInvites().length;
   const [date, setDate] = useState(() => dateFromUrl(todayKey()));
   const [month, setMonth] = useState(() => {
     const d = fromKey(dateFromUrl(todayKey()));
@@ -233,12 +246,14 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
   useEffect(() => {
     const url = new URL(window.location.href);
     url.searchParams.delete('new');
-    if (view === 'summary') url.searchParams.set('v', 'summary');
+    if (view !== 'day') url.searchParams.set('v', view);
     else url.searchParams.delete('v');
-    if (date === today || view === 'summary') url.searchParams.delete('d');
+    if (view === 'teams' && teamId) url.searchParams.set('team', teamId);
+    else url.searchParams.delete('team');
+    if (date === today || view !== 'day') url.searchParams.delete('d');
     else url.searchParams.set('d', date);
     window.history.replaceState(null, '', url);
-  }, [date, today, view]);
+  }, [date, today, view, teamId]);
 
   // Errors from loads. Never signs out by itself: Firebase reports real sign-outs,
   // and a server or network hiccup must not log anyone out.
@@ -250,6 +265,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
 
   useEffect(() => {
     loadTags().catch(handleError);
+    loadTeams().catch(() => {}); // also shows invites waiting for this email
   }, [handleError]);
 
   const markFailed = useCallback((d, isFailed) => {
@@ -303,11 +319,17 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
   useEffect(() => {
     let pending = null;
     let timer = null;
-    const flush = () => {
+    let teamsDirty = false;
+    const boardsDirty = new Set();
+    let teamsTimer = null;
+    // (Not called `flush`: that's the store's "send waiting changes", used below.)
+    const applyPending = () => {
+      if (!pending) return;
       const { date: d, today: t, refreshDay: rd, refreshSummary: rs, onProfile: op } = liveRef.current;
       const p = pending;
       pending = null;
       if (p.all || p.tags) loadTags().catch(() => {});
+      if (p.all) loadTeams().catch(() => {});
       if (p.all || p.profile) api('GET', '/api/me').then(op).catch(() => {});
       if (p.all || p.tasks) {
         const days = new Set([d, t]);
@@ -324,13 +346,28 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
       Object.assign(pending, { ...patch, dates: pending.dates });
       for (const x of patch.dates || []) pending.dates.add(x);
       clearTimeout(timer);
-      timer = setTimeout(flush, 150); // one refresh for a burst of changes
+      timer = setTimeout(applyPending, 150); // one refresh for a burst of changes
     };
     const stop = startLive({
       onChange: (c) => {
         if (c.type === 'tasks') queue({ tasks: true, dates: c.dates || [] });
         else if (c.type === 'tags') queue({ tags: true, ...(c.tasks ? { tasks: true } : {}) });
         else if (c.type === 'profile') queue({ profile: true });
+        else if (c.type === 'invites' || c.type === 'teams') {
+          // A burst (several people working) becomes one reload of each.
+          if (c.type === 'invites' || !c.tasks) teamsDirty = true;
+          if (c.teamId && selectBoard(c.teamId)) boardsDirty.add(c.teamId);
+          clearTimeout(teamsTimer);
+          teamsTimer = setTimeout(() => {
+            if (teamsDirty) loadTeams().catch(() => {});
+            for (const id of boardsDirty) {
+              const b = selectBoard(id);
+              if (b) loadBoard(id, b.from, b.to).catch(() => {});
+            }
+            teamsDirty = false;
+            boardsDirty.clear();
+          }, 300);
+        }
       },
       onConnected: () => {
         // Back online: send what was changed offline, then refresh the whole offline copy.
@@ -340,6 +377,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
     });
     return () => {
       clearTimeout(timer);
+      clearTimeout(teamsTimer);
       stop();
     };
   }, []);
@@ -371,6 +409,12 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
     setTimeout(() => setSelectedId(task.id), 0);
   }, [selectDate, tagFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // From a team's list: open the task in its day.
+  const openFromTeam = useCallback((d, id) => {
+    selectDate(d);
+    setTimeout(() => setSelectedId(id), 0);
+  }, [selectDate]);
+
   // Ctrl/Cmd+K opens search from anywhere, even while typing.
   useEffect(() => {
     const onKey = (e) => {
@@ -398,6 +442,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
       else if (e.key === 'ArrowRight' && view === 'day') selectDate(addDays(date, 1));
       else if (e.key === 't' || e.key === 'T') selectDate(today);
       else if (e.key === 's' || e.key === 'S') goView('summary');
+      else if (e.key === 'g' || e.key === 'G') goView('teams');
       else if (e.key === 'n' || e.key === 'N') {
         e.preventDefault();
         if (view !== 'day') setView('day');
@@ -476,6 +521,13 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
           active={view === 'summary'}
           onClick={() => goView('summary')}
         />
+        <NavItem
+          icon={view === 'teams' ? <GroupsRounded fontSize="small" /> : <GroupsOutlined fontSize="small" />}
+          label="Teams"
+          active={view === 'teams'}
+          onClick={() => goView('teams')}
+          badge={inviteCount}
+        />
       </Box>
       <MiniCalendar month={month} onMonthChange={setMonth} selected={date} today={today} onSelect={selectDate} />
 
@@ -517,7 +569,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
         </Button>
       )}
       <Typography variant="caption" color="text.secondary" sx={{ px: 2, display: { xs: 'none', md: 'block' } }}>
-        Shortcuts: / or Ctrl K search · ← → day · T today · N new · S summary · Esc close
+        Shortcuts: / or Ctrl K search · ← → day · T today · N new · S summary · G teams · Esc close
       </Typography>
       <Box component="footer" sx={(t) => ({ mt: 'auto', mx: 1, pt: 1.5, borderTop: `1px solid ${t.palette.divider}` })}>
         <Typography sx={{ fontSize: 12, color: 'text.secondary', lineHeight: 1.6 }}>
@@ -743,6 +795,16 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
                 <ListItemText secondary={tags.length ? `${tags.length} tag${tags.length === 1 ? '' : 's'}` : 'One for each company'}>Manage tags</ListItemText>
                 <ChevronRightRounded fontSize="small" sx={{ color: 'text.secondary' }} />
               </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  setMenuEl(null);
+                  goView('teams');
+                }}
+              >
+                <ListItemIcon><GroupsOutlined fontSize="small" /></ListItemIcon>
+                <ListItemText secondary={inviteCount ? `${inviteCount} invite${inviteCount === 1 ? '' : 's'} waiting` : 'Work together, give out tasks'}>Teams</ListItemText>
+                <ChevronRightRounded fontSize="small" sx={{ color: 'text.secondary' }} />
+              </MenuItem>
               {canInstall && !isStandalone() && (
                 <MenuItem onClick={doInstall}>
                   <ListItemIcon><InstallDesktopOutlined fontSize="small" /></ListItemIcon>
@@ -750,6 +812,8 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
                 </MenuItem>
               )}
             </Box>
+
+            <AndroidApp sx={{ mt: 1 }} />
 
             {/* Leave */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, pt: 1.5, pb: 0.5 }}>
@@ -851,6 +915,10 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
             userName={user.displayName}
             wide={large}
           />
+        ) : view === 'teams' ? (
+          <Suspense fallback={null}>
+            <TeamsView today={today} selectedTeam={teamId} onSelectTeam={setTeamId} onOpenDay={openFromTeam} wide={desktop} />
+          </Suspense>
         ) : (
           <Suspense fallback={null}>
             <SummaryView today={today} onOpenDay={selectDate} />
@@ -860,14 +928,14 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
 
       {!desktop && (
         <>
-          <Fab
+          {view !== 'teams' && <Fab
             color="primary"
             aria-label="New task"
             onClick={() => setDialog({ date: view === 'day' && date >= today ? date : today })}
             sx={{ position: 'fixed', right: 16, bottom: 'calc(96px + env(safe-area-inset-bottom))', borderRadius: 4, width: 56, height: 56 }}
           >
             <Add />
-          </Fab>
+          </Fab>}
           <Paper
             elevation={0}
             sx={(t) => ({
@@ -881,7 +949,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
               onChange={(_, v) => (v === 'tags' ? openTags() : goView(v))}
               sx={(t) => ({
                 bgcolor: 'transparent', height: 72,
-                '& .MuiBottomNavigationAction-root': { gap: 0.5, color: 'text.secondary' },
+                '& .MuiBottomNavigationAction-root': { gap: 0.5, color: 'text.secondary', minWidth: 0, px: 0.5 },
                 '& .Mui-selected': { color: 'text.primary' },
                 '& .Mui-selected .nav-pill': { bgcolor: t.tokens.primaryContainer, color: t.tokens.onPrimaryContainer },
               })}
@@ -889,6 +957,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
               {[
                 { v: 'day', label: 'Tasks', on: <ViewDay />, off: <ViewDayOutlined /> },
                 { v: 'summary', label: 'Summary', on: <Insights />, off: <InsightsOutlined /> },
+                { v: 'teams', label: 'Teams', on: <GroupsRounded />, off: <GroupsOutlined />, badge: inviteCount },
                 { v: 'tags', label: 'Tags', on: <SellOutlined />, off: <SellOutlined /> },
               ].map((n) => (
                 <BottomNavigationAction
@@ -897,8 +966,13 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
                   label={n.label}
                   showLabel
                   icon={
-                    <Box className="nav-pill" sx={{ width: 64, height: 32, borderRadius: 999, display: 'grid', placeItems: 'center', transition: 'background-color 150ms' }}>
+                    <Box className="nav-pill" sx={{ position: 'relative', width: 64, height: 32, borderRadius: 999, display: 'grid', placeItems: 'center', transition: 'background-color 150ms' }}>
                       {view === n.v ? n.on : n.off}
+                      {n.badge > 0 && (
+                        <Box component="span" aria-label={`${n.badge} invite${n.badge === 1 ? '' : 's'}`} sx={{ position: 'absolute', top: -2, right: 10, minWidth: 18, height: 18, px: 0.5, borderRadius: 999, bgcolor: 'error.main', color: 'error.contrastText', fontSize: 11, fontWeight: 700, display: 'grid', placeItems: 'center' }}>
+                          {n.badge}
+                        </Box>
+                      )}
                     </Box>
                   }
                 />

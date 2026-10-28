@@ -44,6 +44,8 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.Sell
+import androidx.compose.material.icons.outlined.LabelOff
+import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -198,15 +200,22 @@ fun TagFilterRow(tags: List<Tag>, selected: String?, onSelect: (String?) -> Unit
 fun QuickAdd(
     tags: List<Tag>,
     defaultTagId: String?,
-    onAdd: (title: String, priority: Int, tagIds: List<String>) -> Deferred<Boolean>,
+    onAdd: (title: String, priority: Int, tagIds: List<String>, dueAt: String?) -> Deferred<Boolean>,
     onManageTags: () -> Unit,
     focusRequester: FocusRequester,
+    date: String = com.skienlabs.tasks.data.Dates.today(),
 ) {
     var text by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     var priority by remember { mutableStateOf(4) }
     // Tags stay selected between adds (handy when entering several tasks for one company).
     var tagIds by remember(defaultTagId) { mutableStateOf(listOfNotNull(defaultTagId)) }
+    // Every new task gets a tag, or "No tag" chosen on purpose (kept between adds too).
+    var noTag by remember(defaultTagId) { mutableStateOf(false) }
+    var tagWarning by remember { mutableStateOf(false) }
+    // Optional time limit for the next task.
+    var dueAt by remember { mutableStateOf<String?>(null) }
+    var dueDialog by remember { mutableStateOf(false) }
     var tagMenu by remember { mutableStateOf(false) }
     var prioMenu by remember { mutableStateOf(false) }
     val x = LocalExtra.current
@@ -215,10 +224,16 @@ fun QuickAdd(
     fun submit() {
         val t = text.trim()
         if (t.isEmpty()) return
-        val saved = onAdd(t, priority, selectedTags.map { it.id })
+        if (selectedTags.isEmpty() && !noTag) {
+            tagWarning = true
+            tagMenu = true
+            return
+        }
+        val saved = onAdd(t, priority, selectedTags.map { it.id }, dueAt)
         val p = priority
         text = ""
         priority = 4
+        dueAt = null
         // If the server refuses it, put the text back so nothing typed is lost.
         scope.launch { if (!saved.await() && text.isEmpty()) { text = t; priority = p } }
     }
@@ -231,13 +246,25 @@ fun QuickAdd(
         trailingIcon = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box {
-                    IconButton(onClick = { tagMenu = true }) {
-                        if (selectedTags.isEmpty()) Icon(Icons.Outlined.Sell, "Set tags")
-                        else Row(Modifier.semantics { contentDescription = "Tags: ${selectedTags.joinToString { it.name }}" }) {
-                            selectedTags.take(3).forEach { TagAvatar(it, 20.dp) }
+                    IconButton(onClick = { tagWarning = false; tagMenu = true }) {
+                        when {
+                            selectedTags.isNotEmpty() -> Row(Modifier.semantics { contentDescription = "Tags: ${selectedTags.joinToString { it.name }}" }) {
+                                selectedTags.take(3).forEach { TagAvatar(it, 20.dp) }
+                            }
+                            noTag -> Icon(Icons.Outlined.LabelOff, "Tags: No tag", tint = MaterialTheme.colorScheme.primary)
+                            else -> Icon(Icons.Outlined.Sell, "Set tags (required)")
                         }
                     }
-                    TagMenu(tagMenu, { tagMenu = false }, tags, tagIds, { tagIds = it }, onManageTags)
+                    TagMenu(
+                        tagMenu, { tagMenu = false }, tags, tagIds,
+                        { tagIds = it; if (it.isNotEmpty()) { noTag = false; tagWarning = false } }, onManageTags,
+                        noTag = noTag,
+                        onNoTag = { v -> noTag = v; if (v) { tagIds = emptyList(); tagWarning = false; tagMenu = false } },
+                        warning = if (tagWarning) "Pick a tag for this task, or choose \"No tag\"." else null,
+                    )
+                }
+                IconButton(onClick = { dueDialog = true }) {
+                    Icon(Icons.Outlined.Timer, if (dueAt != null) "Time limit set" else "Set a time limit", tint = if (dueAt != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Box {
                     IconButton(onClick = { prioMenu = true }) {
@@ -258,11 +285,43 @@ fun QuickAdd(
         ),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).glassPanel(RoundedCornerShape(28.dp)).focusRequester(focusRequester),
     )
+    if (dueDialog) {
+        var draft by remember { mutableStateOf(dueAt ?: com.skienlabs.tasks.data.Due.default(date)) }
+        var on by remember { mutableStateOf(true) }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { dueDialog = false },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { dueAt = if (on) draft else null; dueDialog = false }) { Text("Done") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { dueDialog = false }) { Text("Cancel") } },
+            title = { Text("Time limit") },
+            text = {
+                com.skienlabs.tasks.ui.teams.TimeLimitField(if (on) draft else null, { v -> on = v != null; if (v != null) draft = v }, date)
+            },
+        )
+    }
 }
 
 @Composable
-fun TagMenu(open: Boolean, onDismiss: () -> Unit, tags: List<Tag>, selected: List<String>, onChange: (List<String>) -> Unit, onManage: () -> Unit) {
+fun TagMenu(
+    open: Boolean, onDismiss: () -> Unit, tags: List<Tag>, selected: List<String>, onChange: (List<String>) -> Unit, onManage: () -> Unit,
+    /** New tasks: "No tag" is the explicit choice for a task without tags. */
+    noTag: Boolean = false, onNoTag: ((Boolean) -> Unit)? = null, warning: String? = null,
+) {
     DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
+        if (warning != null) {
+            Text(
+                warning, Modifier.padding(horizontal = 16.dp, vertical = 8.dp).width(240.dp),
+                style = MaterialTheme.typography.bodyMedium, color = LocalExtra.current.overdue, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+            )
+        }
+        if (onNoTag != null) {
+            DropdownMenuItem(
+                text = { Column { Text("No tag"); Text("Add it without a tag", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                leadingIcon = { Icon(Icons.Outlined.LabelOff, null) },
+                trailingIcon = { Checkbox(checked = noTag, onCheckedChange = null) },
+                onClick = { onNoTag(!noTag) },
+            )
+            HorizontalDivider()
+        }
         if (tags.isEmpty()) {
             Text("No tags yet. Create one per company or project.", Modifier.padding(16.dp).width(240.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -423,8 +482,10 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
                     color = if (task.isPending) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (task.isCancelled) 0.7f else 1f),
                     textDecoration = if (task.isPending) null else TextDecoration.LineThrough,
                 )
-                if (rowTags.isNotEmpty() || task.isCarried) {
+                if (rowTags.isNotEmpty() || task.isCarried || task.dueAt != null || task.teamId != null) {
                     FlowRow(Modifier.padding(top = 5.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (task.dueAt != null) com.skienlabs.tasks.ui.teams.DueChip(task)
+                        if (task.teamId != null) com.skienlabs.tasks.ui.teams.TeamBadge(task)
                         if (task.isCarried) CarriedBadge(task, today, muted = !task.isPending, tag = rowTags.firstOrNull())
                         rowTags.forEach { TagChip(it, dense = true) }
                     }
@@ -485,10 +546,12 @@ private fun CheckCircle(task: Task, onClick: () -> Unit) {
 @Composable
 internal fun TaskMenu(open: Boolean, onDismiss: () -> Unit, task: Task, today: String, postponeLabel: String, a: RowActions, openTags: () -> Unit) {
     val dark = LocalExtra.current.dark
+    // Team tasks: the person works on it; priority, cancel and delete are for the team's admins.
+    val restricted = com.skienlabs.tasks.ui.teams.accessOf(task).restricted
     DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
         DropdownMenuItem(text = { Text("Edit") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { onDismiss(); a.open(task) })
         DropdownMenuItem(text = { Text("Tags") }, leadingIcon = { Icon(Icons.Outlined.Sell, null) }, onClick = { onDismiss(); openTags() })
-        if (!task.isPending) {
+        if (!task.isPending && !(restricted && task.isCancelled)) {
             DropdownMenuItem(text = { Text("Mark as pending") }, leadingIcon = { Icon(Icons.Outlined.Replay, null) }, onClick = { onDismiss(); a.toggle(task) })
         }
         if (task.isPending && task.date != today) {
@@ -496,6 +559,8 @@ internal fun TaskMenu(open: Boolean, onDismiss: () -> Unit, task: Task, today: S
         }
         if (task.isPending) {
             DropdownMenuItem(text = { Text(postponeLabel) }, leadingIcon = { Icon(Icons.Outlined.EventRepeat, null) }, onClick = { onDismiss(); a.postpone(task) })
+        }
+        if (task.isPending && !restricted) {
             Text("Priority", Modifier.padding(start = 16.dp, top = 8.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(Modifier.padding(horizontal = 8.dp)) {
                 for (p in 1..4) {
@@ -511,15 +576,17 @@ internal fun TaskMenu(open: Boolean, onDismiss: () -> Unit, task: Task, today: S
                 }
             }
         }
-        HorizontalDivider()
-        if (task.isPending) {
-            DropdownMenuItem(text = { Text("Cancel task") }, leadingIcon = { Icon(Icons.Filled.Block, null) }, onClick = { onDismiss(); a.cancel(task) })
+        if (!restricted) {
+            HorizontalDivider()
+            if (task.isPending) {
+                DropdownMenuItem(text = { Text("Cancel task") }, leadingIcon = { Icon(Icons.Filled.Block, null) }, onClick = { onDismiss(); a.cancel(task) })
+            }
+            DropdownMenuItem(
+                text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) },
+                onClick = { onDismiss(); a.delete(task) },
+            )
         }
-        DropdownMenuItem(
-            text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
-            leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) },
-            onClick = { onDismiss(); a.delete(task) },
-        )
     }
 }
 

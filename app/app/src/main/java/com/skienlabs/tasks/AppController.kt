@@ -83,6 +83,7 @@ class AppController(context: Context) {
             return
         }
         watchWidgets()
+        watchDeadlines()
         watchNetwork()
         live = LiveSync(BuildConfig.API_URL, api, scope, ::onLiveChange) { refreshAll(quiet = true) }
         userJob = scope.launch { auth.user.collect { onUser(it) } }
@@ -202,6 +203,10 @@ class AppController(context: Context) {
         scope.launch { runCatching { store.loadTags() }.onFailure { handleLoadError(it, quiet = true) } }
     }
 
+    fun refreshTeams() {
+        scope.launch { runCatching { store.loadTeams() } }
+    }
+
     fun refreshAll(quiet: Boolean) {
         if (_session.value !is Session.Ready) return
         val date = visibleDate.value
@@ -210,6 +215,7 @@ class AppController(context: Context) {
         if (today != date) scope.launch { refreshDay(today, prefetch = true) }
         refreshSummary()
         refreshTags()
+        refreshTeams()
         currentUser()?.let { loadProfile(it) }
         _statsVersion.value++
         // Send what was changed offline, and keep the offline copy fresh (at most every 2 minutes).
@@ -249,6 +255,13 @@ class AppController(context: Context) {
                 if (c.tasks) pendingTasks = true
             }
             "profile" -> pendingProfile = true
+            "invites" -> refreshTeams()
+            "teams" -> {
+                refreshTeams()
+                // An admin's view of the team's tasks follows along (someone completed one).
+                val b = c.teamId?.let { store.teams.value.boards[it] }
+                if (b != null) scope.launch { runCatching { store.loadBoard(c.teamId, b.from, b.to) } }
+            }
         }
         pendingDates += c.dates
         flushJob?.cancel()
@@ -294,6 +307,25 @@ class AppController(context: Context) {
                             com.skienlabs.tasks.widget.WidgetRepo.markLocal(appContext)
                             com.skienlabs.tasks.widget.Widgets.updateAll(appContext)
                         }
+                    }
+                }
+        }
+    }
+
+    /** Keeps the time limit reminders in step with the tasks (set, moved, done, signed out). */
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private fun watchDeadlines() {
+        scope.launch {
+            kotlinx.coroutines.flow.combine(session, store.state) { s, st ->
+                if (s !is Session.Ready) emptyList()
+                else st.tasks.values.filter { it.isPending && it.dueAt != null }.map { Triple(it.id, it.title, it.dueAt) }.sortedBy { it.first }
+            }
+                .distinctUntilChanged()
+                .debounce(1000)
+                .collect { list ->
+                    runCatching {
+                        if (list.isEmpty()) com.skienlabs.tasks.notify.DueReminders.cancel(appContext)
+                        else com.skienlabs.tasks.notify.DueReminders.schedule(appContext, store.state.value.tasks.values)
                     }
                 }
         }

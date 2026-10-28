@@ -31,6 +31,12 @@ data class Task(
     val attachments: List<Attachment> = emptyList(),
     /** Set when the server moved this unfinished task here from an earlier day: the day it was first due. */
     val carriedFrom: String? = null,
+    /** Optional time limit: local date and time, "2026-10-30T17:00". */
+    val dueAt: String? = null,
+    /** A task given out in a team: who it's for ([assignee], its owner) and who gave it. */
+    val teamId: String? = null,
+    val assignee: String? = null,
+    val assignedBy: String? = null,
 ) {
     val isCarried get() = carriedFrom != null && carriedFrom < date
     val isPending get() = status == Status.PENDING
@@ -149,8 +155,80 @@ data class SyncResponse(
     val tasks: List<Task> = emptyList(),
     val tags: List<Tag> = emptyList(),
     val misses: List<MissCount> = emptyList(),
+    /** Null from a server older than teams. */
+    val teams: List<Team>? = null,
+    val invites: List<Invite> = emptyList(),
     val serverTime: Long = 0,
 )
+
+object Role {
+    const val OWNER = "owner"
+    const val ADMIN = "admin"
+    const val MEMBER = "member"
+    fun label(role: String) = when (role) { OWNER -> "Owner"; ADMIN -> "Admin"; else -> "Member" }
+}
+
+@Immutable
+@Serializable
+data class Member(
+    val uid: String,
+    val role: String = Role.MEMBER,
+    val name: String = "",
+    val email: String? = null,
+    val photo: String? = null,
+    val joinedAt: Long = 0,
+)
+
+/** Someone invited to a team who hasn't joined yet (only admins see these). */
+@Immutable
+@Serializable
+data class TeamInvite(
+    val id: String,
+    val email: String,
+    val role: String = Role.MEMBER,
+    val invitedBy: String? = null,
+    val invitedByName: String = "",
+    val createdAt: Long = 0,
+)
+
+/** A team as I see it: [role] is mine. */
+@Immutable
+@Serializable
+data class Team(
+    val id: String,
+    val name: String,
+    val color: String = "blue",
+    val createdBy: String? = null,
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
+    val role: String = Role.MEMBER,
+    val members: List<Member> = emptyList(),
+    val invites: List<TeamInvite> = emptyList(),
+) {
+    val isAdmin get() = role == Role.OWNER || role == Role.ADMIN
+    fun member(uid: String?) = members.firstOrNull { it.uid == uid }
+}
+
+/** An invite waiting for me. */
+@Immutable
+@Serializable
+data class Invite(
+    val id: String,
+    val teamId: String,
+    val teamName: String,
+    val teamColor: String = "blue",
+    val role: String = Role.MEMBER,
+    val email: String = "",
+    val invitedBy: String? = null,
+    val invitedByName: String = "",
+    val memberCount: Int = 0,
+    val createdAt: Long = 0,
+)
+
+@Serializable data class TeamsResponse(val teams: List<Team> = emptyList(), val invites: List<Invite> = emptyList())
+@Serializable data class InviteResult(val team: Team, val invited: List<String> = emptyList(), val alreadyMembers: List<String> = emptyList())
+@Serializable data class AcceptResult(val team: Team)
+@Serializable data class BoardResponse(val tasks: List<Task> = emptyList())
 
 /** Why a search result matched when it wasn't the title: a step, or a bit of the notes. */
 @Immutable @Serializable data class SearchMatch(val field: String, val text: String)
@@ -183,6 +261,7 @@ data class Change(
     val type: String,
     val dates: List<String> = emptyList(),
     val tasks: Boolean = false,
+    val teamId: String? = null,
     val source: String? = null,
 )
 

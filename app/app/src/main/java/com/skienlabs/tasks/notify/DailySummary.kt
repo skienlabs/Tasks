@@ -357,6 +357,11 @@ class RescheduleReceiver : BroadcastReceiver() {
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 DailySummary.reschedule(app)
+                // Time limit reminders, from the phone's saved copy.
+                runCatching {
+                    val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+                    if (uid != null) DueReminders.schedule(app, RoomCache.get(app).loadAll(uid).tasks)
+                }
                 com.skienlabs.tasks.widget.Widgets.updateAll(app) // the date may have changed
             } catch (e: Exception) {
                 // ignore

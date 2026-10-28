@@ -307,7 +307,7 @@ test('migration v6 backfills missed days from carried_from', async () => {
   const path = await import('node:path');
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tasks-mig6-')), 'tasks.db');
   let db = openDb(file);
-  db.exec(`DROP TABLE task_misses; PRAGMA user_version = 5;`);
+  db.exec(`DROP INDEX idx_tasks_team_date; ALTER TABLE tasks DROP COLUMN team_id; ALTER TABLE tasks DROP COLUMN assigned_by; ALTER TABLE tasks DROP COLUMN due_at; DROP TABLE team_invites; DROP TABLE team_members; DROP TABLE teams; DROP TABLE task_misses; PRAGMA user_version = 5;`);
   db.prepare(`INSERT INTO tasks (id, uid, title, date, original_date, created_at, updated_at, carried_from)
     VALUES ('carried-task-1', 'u', 'Late', '2026-10-17', '2026-10-14', 1, 1, '2026-10-14')`).run();
   db.close();
@@ -315,7 +315,7 @@ test('migration v6 backfills missed days from carried_from', async () => {
   const days = db.prepare("SELECT date FROM task_misses WHERE task_id = 'carried-task-1' ORDER BY date").all().map((r) => r.date);
   assert.deepEqual(days, ['2026-10-14', '2026-10-15', '2026-10-16']);
   // A task carried for a long time keeps its most recent 92 days (the ones the summary shows).
-  db.exec(`DROP TABLE task_misses; PRAGMA user_version = 5;`);
+  db.exec(`DROP INDEX idx_tasks_team_date; ALTER TABLE tasks DROP COLUMN team_id; ALTER TABLE tasks DROP COLUMN assigned_by; ALTER TABLE tasks DROP COLUMN due_at; DROP TABLE team_invites; DROP TABLE team_members; DROP TABLE teams; DROP TABLE task_misses; PRAGMA user_version = 5;`);
   db.prepare(`INSERT INTO tasks (id, uid, title, date, original_date, created_at, updated_at, carried_from)
     VALUES ('carried-task-2', 'u', 'Very late', '2026-10-17', '2026-01-01', 1, 1, '2026-01-01')`).run();
   db.close();
@@ -560,14 +560,14 @@ test('migration from v2 to the latest keeps users and tasks', async () => {
   let db = openDb(file);
   db.prepare("INSERT INTO users (uid, email, name, photo, created_at, last_seen) VALUES ('u', 'u@x.com', 'U', null, 1, 1)").run();
   // Back to the v2 schema, with a v2-era task.
-  db.exec(`DROP TABLE task_misses; DROP INDEX idx_tasks_pending; ALTER TABLE tasks DROP COLUMN carried_from;
+  db.exec(`DROP INDEX idx_tasks_team_date; ALTER TABLE tasks DROP COLUMN team_id; ALTER TABLE tasks DROP COLUMN assigned_by; ALTER TABLE tasks DROP COLUMN due_at; DROP TABLE team_invites; DROP TABLE team_members; DROP TABLE teams; DROP TABLE task_misses; DROP INDEX idx_tasks_pending; ALTER TABLE tasks DROP COLUMN carried_from;
     DROP TABLE attachments; ALTER TABLE tasks DROP COLUMN subtasks;
     ALTER TABLE users DROP COLUMN display_name; ALTER TABLE users DROP COLUMN onboarded_at; PRAGMA user_version = 2;`);
   db.prepare(`INSERT INTO tasks (id, uid, title, date, original_date, created_at, updated_at)
     VALUES ('old-task-1', 'u', 'Old', '2026-01-01', '2026-01-01', 1, 1)`).run();
   db.close();
   db = openDb(file);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 7);
   const { createRepo } = await import('../src/db.js');
   const repo = createRepo(db);
   assert.deepEqual(repo.getProfile('u'), { uid: 'u', email: 'u@x.com', name: 'U', photo: null, createdAt: 1, onboarded: false });

@@ -53,7 +53,7 @@
       Tasks
     </a>
     <h1>Privacy Policy</h1>
-    <p>Effective October 17, 2026 · updated October 23, 2026 · applies to the Tasks app for Android and the web app at tasks.skienlab.com</p>
+    <p>Effective October 17, 2026 · updated October 28, 2026 · applies to the Tasks app for Android and the web app at tasks.skienlab.com</p>
   </div>
 </header>
 
@@ -63,7 +63,7 @@
       <strong>The short version</strong>
       <ul>
         <li>We keep what you put into Tasks (tasks, steps, notes, tags, images) so it can sync between your devices. That's all it's used for.</li>
-        <li>No ads, no analytics, no tracking, and we never sell or share your data.</li>
+        <li>No ads, no analytics, no tracking, and we never sell your data. Only people you choose to work with in a team see what you share there.</li>
         <li>You can delete anything at any time, including your whole account.</li>
       </ul>
     </div>
@@ -84,6 +84,8 @@
       <li><strong>Tasks</strong>: title, notes, date, priority, status (open, done, cancelled), how often it was postponed, and when it was created, changed or completed.</li>
       <li><strong>Steps</strong> (sub-tasks) and whether each one is ticked.</li>
       <li><strong>Tags</strong>: name, colour and an optional logo image you choose.</li>
+      <li><strong>Time limits</strong> you set on tasks (a date and time).</li>
+      <li><strong>Teams</strong>, if you use them: the team's name and colour, who is in it and their role (owner, admin, member), the email addresses invited and who invited them, and which tasks were given to whom and by whom.</li>
       <li><strong>Images</strong> you attach to tasks. Before upload, the app shrinks each picture and saves it again as a new image file. That step drops the photo's hidden details (EXIF data), such as where it was taken.</li>
     </ul>
 
@@ -119,16 +121,24 @@
       <table>
         <tr><th>Permission</th><th>Why</th></tr>
         <tr><td>Internet</td><td>To sync your tasks with the server.</td></tr>
-        <tr><td>Notifications</td><td>For the end-of-day summary. Optional.</td></tr>
-        <tr><td>Run at startup</td><td>To set the end-of-day reminder again after the phone restarts or the time zone changes.</td></tr>
+        <tr><td>Notifications</td><td>For the end-of-day summary and time limit reminders. Optional.</td></tr>
+        <tr><td>Run at startup</td><td>To set the end-of-day and time limit reminders again after the phone restarts or the time zone changes.</td></tr>
         <tr><td>Network state, keep awake, background service</td><td>Added by Android libraries the app is built with. They let the widgets and the reminder update briefly in the background.</td></tr>
         <tr><td>Biometric, Google services</td><td>Added by Google's sign-in libraries. Tasks never asks for your fingerprint or face.</td></tr>
       </table>
     </div>
     <p class="sub">Taking a photo uses your phone's own camera app, and choosing one uses Android's photo picker, so Tasks doesn't need camera or storage permissions.</p>
 
+    <h2 id="teams">Teams: what teammates see</h2>
+    <ul>
+      <li>Everyone in a team sees its name, and the name, email address, profile photo and role of the other people in it.</li>
+      <li>A team's owner and admins see the email addresses invited to it, and the tasks the team gave out: their title, notes, steps, images, day, time limit and status (who completed what, and when). They don't see your own tasks, or the tags you put on a team task.</li>
+      <li>When you invite someone, we keep their email address so the invite can wait for them in the app. We don't email them; you send them the message yourself. They can decline, and an admin can cancel the invite.</li>
+      <li>If you leave a team, are removed, or the team is deleted, the tasks it gave you stay yours and the team's admins no longer see them.</li>
+    </ul>
+
     <h2 id="share">Who we share it with</h2>
-    <p>We don't sell, rent or trade your data, and we don't share it for advertising. Only these services handle it, solely to run Tasks:</p>
+    <p>We don't sell, rent or trade your data, and we don't share it for advertising. Apart from teammates (see above), only these services handle it, solely to run Tasks:</p>
     <ul>
       <li><strong>Google Firebase Authentication</strong>: signs you in. <a href="https://firebase.google.com/support/privacy" rel="noopener">Firebase privacy information</a>.</li>
       <li><strong>Google Cloud</strong>: hosts our server, where your data is stored.</li>

@@ -104,6 +104,42 @@ const MIGRATIONS = [
   )
   INSERT OR IGNORE INTO task_misses (task_id, uid, date) SELECT task_id, uid, day FROM d;
   `,
+  // v7: teams. A team has members (owner / admin / member) and invites by email. A team task
+  // is a normal task owned by the person it's assigned to (uid), marked with its team and who
+  // assigned it, so it shows (and works offline) in their own list. Also: a deadline (due_at,
+  // the device's local date and time, "YYYY-MM-DDTHH:MM") for any task.
+  `
+  CREATE TABLE teams (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    color      TEXT NOT NULL DEFAULT 'blue',
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE team_members (
+    team_id   TEXT NOT NULL REFERENCES teams (id) ON DELETE CASCADE,
+    uid       TEXT NOT NULL,
+    role      TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'member')),
+    joined_at INTEGER NOT NULL,
+    PRIMARY KEY (team_id, uid)
+  );
+  CREATE INDEX idx_team_members_uid ON team_members (uid);
+  CREATE TABLE team_invites (
+    id         TEXT PRIMARY KEY,
+    team_id    TEXT NOT NULL REFERENCES teams (id) ON DELETE CASCADE,
+    email      TEXT NOT NULL,
+    role       TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+    invited_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE (team_id, email)
+  );
+  CREATE INDEX idx_team_invites_email ON team_invites (email);
+  ALTER TABLE tasks ADD COLUMN team_id TEXT;
+  ALTER TABLE tasks ADD COLUMN assigned_by TEXT;
+  ALTER TABLE tasks ADD COLUMN due_at TEXT;
+  CREATE INDEX idx_tasks_team_date ON tasks (team_id, date);
+  `,
 ];
 
 export function openDb(file) {
@@ -155,8 +191,8 @@ function migrate(db) {
   }
 }
 
-const COLUMNS = `id, title, notes, priority, date, status, original_date, postponed,
-  created_at, updated_at, completed_at, subtasks, carried_from,
+export const COLUMNS = `id, uid, title, notes, priority, date, status, original_date, postponed,
+  created_at, updated_at, completed_at, subtasks, carried_from, team_id, assigned_by, due_at,
   (SELECT json_group_array(tag_id) FROM task_tags WHERE task_id = tasks.id) AS tag_ids,
   (SELECT json_group_array(json_object('id', a.id, 'type', a.type, 'width', a.width, 'height', a.height,
       'size', a.size, 'createdAt', a.created_at))
@@ -179,6 +215,11 @@ export function toTask(row) {
     tagIds: row.tag_ids ? JSON.parse(row.tag_ids).sort() : [],
     subtasks: row.subtasks ? JSON.parse(row.subtasks) : [],
     attachments: row.attachments ? JSON.parse(row.attachments) : [],
+    dueAt: row.due_at ?? null,
+    // Team tasks: the team, who it's assigned to (owner of the row) and who assigned it.
+    teamId: row.team_id ?? null,
+    assignee: row.team_id ? row.uid : null,
+    assignedBy: row.assigned_by ?? null,
   };
 }
 
@@ -219,11 +260,11 @@ export function createRepo(db) {
     exists: db.prepare('SELECT uid FROM tasks WHERE id = ?'),
     insert: db.prepare(`INSERT INTO tasks
       (id, uid, title, notes, priority, date, status, original_date, postponed,
-       created_at, updated_at, completed_at, subtasks, carried_from)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+       created_at, updated_at, completed_at, subtasks, carried_from, team_id, assigned_by, due_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
     update: db.prepare(`UPDATE tasks SET
       title = ?, notes = ?, priority = ?, date = ?, status = ?, postponed = ?,
-      updated_at = ?, completed_at = ?, subtasks = ?, carried_from = ?
+      updated_at = ?, completed_at = ?, subtasks = ?, carried_from = ?, due_at = ?
       WHERE uid = ? AND id = ?`),
     carryRows: db.prepare(`SELECT id, date FROM tasks WHERE uid = ? AND status = 'pending' AND date < ?`),
     addMiss: db.prepare('INSERT OR IGNORE INTO task_misses (task_id, uid, date) VALUES (?, ?, ?)'),
@@ -293,6 +334,8 @@ export function createRepo(db) {
   const counts = (r) => ({ pending: Number(r.pending), done: Number(r.done), cancelled: Number(r.cancelled) });
 
   function tx(fn) {
+    // Re-entrant: a transaction inside another one just joins it.
+    if (db.isTransaction) return fn();
     db.exec('BEGIN');
     try {
       const out = fn();
@@ -386,7 +429,7 @@ export function createRepo(db) {
         stmts.insert.run(
           t.id, uid, t.title, t.notes, t.priority, t.date, t.status, t.originalDate,
           t.postponed, t.createdAt, t.updatedAt, t.completedAt ?? null, JSON.stringify(t.subtasks ?? []),
-          t.carriedFrom ?? null,
+          t.carriedFrom ?? null, t.teamId ?? null, t.teamId ? (t.assignedBy ?? null) : null, t.dueAt ?? null,
         );
         writeTaskTags(t.id, t.tagIds ?? []);
         stmts.adoptAttachments.run(uid, t.id); // re-created by "Undo": its images come back
@@ -399,7 +442,7 @@ export function createRepo(db) {
       tx(() => {
         stmts.update.run(
           t.title, t.notes, t.priority, t.date, t.status, t.postponed,
-          t.updatedAt, t.completedAt ?? null, JSON.stringify(t.subtasks ?? []), t.carriedFrom ?? null, uid, t.id,
+          t.updatedAt, t.completedAt ?? null, JSON.stringify(t.subtasks ?? []), t.carriedFrom ?? null, t.dueAt ?? null, uid, t.id,
         );
         if (t.tagIds !== undefined) writeTaskTags(t.id, t.tagIds);
       });

@@ -152,7 +152,7 @@ class ScreensTest {
                 TagFilterRow(s.tags, filter, {}, {})
                 DayPage(
                     date, today, s, filter, failed = false, onRetry = {}, actions = actions,
-                    onAdd = { _, _, _ -> CompletableDeferred(true) }, onMoveAllToToday = {},
+                    onAdd = { _, _, _, _ -> CompletableDeferred(true) }, onMoveAllToToday = {},
                     quickAddFocus = remember { FocusRequester() }, bottomPadding = 0.dp,
                 )
             }

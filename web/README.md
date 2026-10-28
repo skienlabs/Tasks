@@ -86,8 +86,11 @@ Then run the workflow. Put the app behind your HTTPS reverse proxy; Google sign-
 | `FIREBASE_CONFIG_PATH` | `/config/firebase-config.json` | Firebase web config file |
 | `FIREBASE_API_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_APP_ID` | | Alternative to the file |
 | `LOG_LEVEL` | `info` | `warn`, `error`, `debug` |
+| `ANDROID_APK_PATH` | `/app/downloads/Tasks.apk` (from `web/server/downloads/`) | The Android APK the web app offers ("Get the Android app", served at `/download/android`). Leave it out and no download shows. |
 
-Each Google account sees only its own tasks.
+Each account sees only its own tasks, plus, in a team, the tasks its admins give it. Team admins see the tasks they gave out (with their notes, steps and images, not the person's own tags).
+
+**Android download**: the release APK lives at `web/server/downloads/Tasks.apk` (committed, replaced on every Android release) and goes into the image. The sign-in page and the account menu offer it, and invite messages link to it. `ANDROID_APK_PATH` serves one from elsewhere.
 
 **Data volume permissions**: the app runs as uid 1000. A named volume (as in `docker-compose.yml`) just works. If you bind-mount a host folder instead, run `sudo chown -R 1000:1000 <folder>` first.
 
@@ -109,6 +112,8 @@ cd web/server && npm install && npm run dev
 cd web/client && npm install && npm run dev
 ```
 
+To try teams with several people locally, open a second browser profile and set `localStorage['tasks.devAs'] = 'ann'` (signs in as `ann@localhost`); API calls can use `Authorization: Bearer dev:ann`.
+
 To try real sign-up / sign-in locally, run the Firebase Auth emulator (`npx firebase-tools emulators:start --only auth --project demo-tasks`) and start the server with `NODE_ENV=development FIREBASE_AUTH_EMULATOR=http://127.0.0.1:9099` and a config whose `projectId` is `demo-tasks`. Both this and the fake dev user only work when `NODE_ENV=development` exactly; they are ignored otherwise (the Docker image always runs with `NODE_ENV=production`).
 
 Tests: `cd web/server && npm test`. Build the image locally: `docker build -t tasks web`.
@@ -128,11 +133,11 @@ All endpoints except `/api/health` and `/api/config` need `Authorization: Bearer
 | GET | `/api/me` | Profile (creates it on first call): `name, email, provider, emailVerified, onboarded` |
 | PATCH | `/api/me` | `{ name?, onboarded?: true }` |
 | GET | `/api/tasks?date=YYYY-MM-DD&today=YYYY-MM-DD` | Tasks for a day. With `today` (within a day of the server's date), unfinished tasks from earlier days first move to `today`, keeping `carriedFrom` (the day they were first due). `overdue` stays for older apps and is normally empty |
-| GET | `/api/sync?today=` | The whole account for the apps' offline copy (after carry-over): `{ tasks, tags, misses: [{date, missed}], serverTime }` |
+| GET | `/api/sync?today=` | The whole account for the apps' offline copy (after carry-over): `{ tasks, tags, misses: [{date, missed}], teams, invites, serverTime }` |
 | GET | `/api/summary?from=&to=` | Per-day counts for the calendar (max 92 days): `pending, done, cancelled`, and `missed` (tasks that were on the day unfinished and moved on) |
 | GET | `/api/search?q=&today=&limit=` | Ranked search over all tasks (`limit` 1–100, default 30). Words, "phrases", `#tag`/`tag:`, `is:open\|done\|cancelled\|late`, `p:high\|medium\|low\|none`, `date:today\|tomorrow\|yesterday\|week\|month\|YYYY-MM-DD`, `before:`, `after:`, `has:steps\|images\|notes`. Returns `{ results (tasks, each with an optional match {field, text}), total, fuzzy, terms, suggestions }` |
-| POST | `/api/tasks` | `{ title, date, priority?, notes?, id? }` (client `id` makes retries safe) |
-| PATCH | `/api/tasks/:id` | Any of `title, notes, priority, date, status, postponed, tagIds, subtasks` |
+| POST | `/api/tasks` | `{ title, date, priority?, notes?, id?, dueAt? }` (client `id` makes retries safe; `dueAt` is a time limit, local `YYYY-MM-DDTHH:MM`) |
+| PATCH | `/api/tasks/:id` | Any of `title, notes, priority, date, status, postponed, tagIds, subtasks, dueAt` (`dueAt: null` removes it). On a team task, someone who isn't its team's admin may change `status` (not to cancelled), `date`, `postponed`, `notes`, their own `tagIds` and tick `subtasks`; anything else is 403, and so is deleting it |
 | POST | `/api/tasks/:id/postpone` | `{ today, from? }` moves to the day after today (or after its own date, if later). With `from` (the day it was on), a repeat finds it already moved and leaves it |
 | DELETE | `/api/tasks/:id` | Its images are kept for a day so Undo can bring them back |
 | POST | `/api/tasks/:id/attachments` | `{ id, image, thumb, width, height }` (JPEG/PNG/WebP data URLs, resized on the device; max 6 MB, 20 per task). Returns the task |
@@ -143,7 +148,29 @@ All endpoints except `/api/health` and `/api/config` need `Authorization: Bearer
 | PATCH | `/api/tags/:id` | Any of `name, color, logo, position` |
 | DELETE | `/api/tags/:id` | Also removes it from tasks |
 | GET | `/api/stats?from=&to=&today=` | Month summary: per day (with `missed`), per tag, per priority, overdue, postponed |
-| GET | `/api/events` | Live sync (Server-Sent Events): `ready`, then `change` `{type: tasks\|tags\|profile, dates, source}` whenever another device changes something. Send `X-Client-Id` on writes so a device can skip its own changes. |
+| GET | `/api/events` | Live sync (Server-Sent Events): `ready`, then `change` `{type: tasks\|tags\|profile\|teams\|invites, dates, teamId, source}` whenever something changes for you (on another device, or a teammate). Send `X-Client-Id` on writes so a device can skip its own changes. |
+| GET | `/download/android` | The Android APK, when the server has one (public; `GET /api/config` says `android: { size, updatedAt }` or `null`) |
+
+### Teams
+
+A team has one **owner**, **admins** and **members**. Admins invite people by email; the invite waits in the app until that person signs in with that (verified) email and accepts it (the server sends no email: the app gives a message to share). Admins give out tasks: a team task belongs to the person it's for (it's in their list, carries over, works offline) and carries `teamId`, `assignee`, `assignedBy`. Leaving or being removed, or the team being deleted, turns its tasks into the person's own.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/teams` | `{ teams, invites }`: my teams (`role` is mine; `members`; `invites` for admins only) and invites waiting for my email |
+| POST | `/api/teams` | `{ name, color?, id? }`: I become the owner |
+| PATCH | `/api/teams/:id` | Admins: `{ name?, color? }` |
+| DELETE | `/api/teams/:id` | Owner only |
+| POST | `/api/teams/:id/invites` | Admins: `{ emails: [..] (up to 50), role?: member\|admin }` returns `{ team, invited, alreadyMembers }` |
+| DELETE | `/api/teams/:id/invites/:inviteId` | Admins: cancel an invite |
+| GET | `/api/invites` | Invites for my email |
+| POST | `/api/invites/:id/accept` | Join (the email must be verified); `/decline` turns it down |
+| PATCH | `/api/teams/:id/members/:uid` | `{ role }`: admins make members admins; the owner also makes admins members, or hands the team over (`owner`) |
+| DELETE | `/api/teams/:id/members/:uid` | Leave (my own uid; not the owner) or remove someone (admins remove members; the owner anyone) |
+| GET | `/api/teams/:id/tasks?from=&to=` | Admins: the team's tasks on those days (max 92) plus every open one; tags left out |
+| POST | `/api/teams/:id/tasks` | Admins: `{ assignee, title, date, notes?, priority?, subtasks?, dueAt?, id?, today? }` |
+| PATCH | `/api/teams/:id/tasks/:taskId` | Admins: any of `assignee` (moves it, with its images; the person's tags stay behind), `title, notes, priority, date, status, subtasks, dueAt` |
+| DELETE | `/api/teams/:id/tasks/:taskId` | Admins |
 
 Tasks carry `tagIds: []`; send `tagIds` on create/update to set them (max 10, must be your own tags).
 

@@ -27,6 +27,8 @@ WORKDIR /app
 COPY --from=server-deps /app/node_modules ./node_modules
 COPY server/package.json ./
 COPY server/src ./src
+# The Android APK offered on the web, when one was put in server/downloads/Tasks.apk.
+COPY server/downloads ./downloads
 COPY --from=client /client/dist ./public
 
 RUN mkdir -p /data /config && chown node:node /data

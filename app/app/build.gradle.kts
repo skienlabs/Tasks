@@ -33,8 +33,8 @@ android {
         applicationId = "com.skienlabs.tasks"
         minSdk = 28
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.8.0"
+        versionCode = 13
+        versionName = "1.9.0"
         buildConfigField("String", "API_URL", "\"${apiUrl.trimEnd('/')}\"")
         buildConfigField("boolean", "FIREBASE_CONFIGURED", hasFirebaseConfig.toString())
     }

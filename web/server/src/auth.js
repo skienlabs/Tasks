@@ -86,11 +86,23 @@ function isAllowed(email, verified, allowList) {
   return allowList.includes(email) || allowList.includes(domain);
 }
 
-/** Local development only: any request is "dev@localhost". Never enabled in production. */
+/**
+ * Local development only: any request is "dev@localhost". A token "dev:<name>" signs in as
+ * a second person, <name>@localhost (for trying teams with several people). Never enabled in
+ * production.
+ */
 export function createDevVerifier() {
-  return async () => ({
-    uid: 'dev-user', email: 'dev@localhost', name: 'Developer', photo: null, provider: 'password', emailVerified: true,
-  });
+  return async (token) => {
+    const m = /^dev:([a-z0-9]{1,20})$/.exec(token || '');
+    if (m && m[1] !== 'dev') {
+      const name = m[1];
+      return {
+        uid: `dev-${name}`, email: `${name}@localhost`, name: name[0].toUpperCase() + name.slice(1),
+        photo: null, provider: 'password', emailVerified: true,
+      };
+    }
+    return { uid: 'dev-user', email: 'dev@localhost', name: 'Developer', photo: null, provider: 'password', emailVerified: true };
+  };
 }
 
 /**

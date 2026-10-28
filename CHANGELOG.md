@@ -4,6 +4,22 @@ One version number for the web app and the Android app. Bug fixes bump the last 
 
 Where it lives: `web/client/package.json` (`version`) and `app/app/build.gradle.kts` (`versionName`, plus `versionCode` +1 for every Android release).
 
+## 1.9.0 · 28 Oct 2026
+
+- **Teams** (web and Android). Make a team for your company, invite people by their email (Gmail or any other), and give them tasks.
+  - **Invites** wait in the app: when someone signs in with the invited email (Google or email and password), the invite is on the Teams screen to accept or decline (a red badge shows on Teams). Tasks doesn't send emails itself, so after inviting you get a ready message to send them (copy, or share on WhatsApp, email, Slack…) with the app download link, the email to sign in with, and where to accept.
+  - **Roles**: the owner, admins and members. Admins give out tasks, see everyone's progress and manage people; they can make other members admins. The owner can also make an admin a member again, hand the team over, or delete it. Anyone can leave.
+  - **Giving out tasks**: pick the person, the task, details, steps, priority, day and an optional time limit. It shows up in their own Tasks list (and their phone's widgets and end-of-day summary), works offline, and carries over like their own tasks, with a "Team · from Boss" badge. Admins can edit, reassign (with its images), cancel, reopen or delete it.
+  - **Members work on it, admins change it**: the person can complete it, postpone it, tick its steps, and add notes, images and their own tags. Only the team's admins change its title, priority, time limit or steps, cancel it or delete it.
+  - **See who completed what**: Overview has this week / last 7 / last 30 days: done, open, late and due within a day, each person's progress, and recently completed tasks with who finished them and when. Tasks lists every team task by person and status. Updates live as people work.
+  - If someone leaves or is removed, or the team is deleted, its tasks stay in each person's list as their own.
+- **Time limits** (web and Android): an optional "Time limit" switch when adding or editing a task (off by default; the quick add box has a timer button). Pick a date and time; the task shows a countdown ("Fri 5:00 PM · 2d left"), amber within a day and red once it has passed, and "on time" or "finished 30m late" once done. Android reminds you an hour before and when the time is up, also offline.
+- **A tag is required for new tasks**: pick one or more tags, or choose the new "No tag" option. Adding a task without either shows a warning (quick add opens the tag menu). Editing existing tasks is unchanged.
+- **Get the Android app from the web**: the sign-in page and the account menu offer the APK download (Tasks.apk, with its size) when the server has one.
+- **Web on phones**: the sign-in page now fits the screen. The animated scene scales to the phone's width (narrow phones and large text sizes drew it off-centre), is hidden on short screens, and the form (Google, email, password, Sign in) is in view without scrolling. Teams pages fit phones too.
+- Fixed (web): live sync since 1.8.0. Changes made on another device or by a teammate showed only after switching back to the tab; now they show within a second again.
+- API: teams (`/api/teams`, `/api/invites`, team tasks), `dueAt` on tasks, `teamId` / `assignee` / `assignedBy` on team tasks, `teams` and `invites` in `/api/sync`, `teams` / `invites` live events, `GET /download/android`, `android` in `/api/config`. Database v7.
+
 ## 1.8.0 · 23 Oct 2026
 
 - **Works offline** (web and Android). The app opens and works with no connection: every day, search, the summary, adding, completing, editing, postponing, moving, deleting tasks, steps, images and tags. Changes are saved on the device and sent, in order, as soon as it's back online; a badge in the top bar shows "Offline · 3 waiting" and then "Syncing". The device keeps a full copy of your account (refreshed from the server whenever it's online), so even days you never opened are there.

@@ -23,7 +23,10 @@ import { CarriedBadge } from './TaskItem.jsx';
 import { StepsInline } from './Steps.jsx';
 import { ImageViewer, Thumb } from './Images.jsx';
 import { formatDate, isCarried, relativeLabel, shortLabel } from '../lib/dates.js';
-import { completeTask, postponeTask, restoreTask, selectTaskTags } from '../lib/store.js';
+import { completeTask, memberName, postponeTask, restoreTask, selectTaskTags, selectTeam } from '../lib/store.js';
+import TimerOutlined from '@mui/icons-material/TimerOutlined';
+import GroupsRounded from '@mui/icons-material/GroupsRounded';
+import { DueChip } from './Due.jsx';
 import { progress } from '../lib/subtasks.js';
 
 const STATUS = {
@@ -141,6 +144,19 @@ export default function TaskDetails({ task, today, onClose, onEdit, onManageTags
         >
           {prio.label}
         </Row>
+        {task.dueAt && (
+          <Row icon={<TimerOutlined sx={{ fontSize: 18 }} />} label="Time limit">
+            <DueChip task={task} size="medium" />
+          </Row>
+        )}
+        {task.teamId && (
+          <Row icon={<GroupsRounded sx={{ fontSize: 18 }} />} label="Team">
+            {selectTeam(task.teamId)?.name ?? 'Team task'}
+            {memberName(task.teamId, task.assignedBy) && (
+              <Typography component="span" variant="body2" color="text.secondary"> · given by {memberName(task.teamId, task.assignedBy)}</Typography>
+            )}
+          </Row>
+        )}
         <Row icon={<SellOutlined sx={{ fontSize: 18 }} />} label="Tags">
           {tags.length ? (
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{tags.map((tag) => <TagChip key={tag.id} tag={tag} dense />)}</Box>

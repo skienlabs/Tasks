@@ -93,7 +93,7 @@ fun DayPage(
     failed: Boolean,
     onRetry: () -> Unit,
     actions: RowActions,
-    onAdd: (title: String, priority: Int, tagIds: List<String>) -> kotlinx.coroutines.Deferred<Boolean>,
+    onAdd: (title: String, priority: Int, tagIds: List<String>, dueAt: String?) -> kotlinx.coroutines.Deferred<Boolean>,
     onMoveAllToToday: (List<Task>) -> Unit,
     quickAddFocus: FocusRequester,
     bottomPadding: androidx.compose.ui.unit.Dp,
@@ -118,7 +118,7 @@ fun DayPage(
             Box(Modifier.padding(top = 4.dp, bottom = 8.dp)) {
                 // Past days take no new tasks: they go on today or later.
                 if (date < today) PastDayNote(onGoToday)
-                else QuickAdd(tags, filter, onAdd, actions.manageTags, quickAddFocus)
+                else QuickAdd(tags, filter, onAdd, actions.manageTags, quickAddFocus, date)
             }
         }
 

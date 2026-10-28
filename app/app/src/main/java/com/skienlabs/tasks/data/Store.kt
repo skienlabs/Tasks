@@ -52,6 +52,25 @@ data class StoreState(
 
 data class Toast(val id: Long, val message: String, val actionLabel: String? = null, val action: (() -> Unit)? = null)
 
+/** The teams I'm in and the invites waiting for me (kept on the phone for offline use). */
+@Immutable
+data class TeamsState(
+    val teams: List<Team> = emptyList(),
+    val invites: List<Invite> = emptyList(),
+    /** A fresh copy came from the server in this session. */
+    val loaded: Boolean = false,
+    /** Admins' view of each team's tasks, as last loaded. */
+    val boards: Map<String, Board> = emptyMap(),
+) {
+    fun team(id: String?) = teams.firstOrNull { it.id == id }
+}
+
+@Immutable
+data class Board(val tasks: List<Task>, val from: String, val to: String)
+
+/** What I may do with a task: team tasks are worked on by their person, changed by the team's admins. */
+data class TaskAccess(val team: Team?, val restricted: Boolean)
+
 /** For the offline badge: can the server be reached, and how many changes are waiting. */
 @Immutable
 data class SyncStatus(val online: Boolean = true, val pending: Int = 0, val syncing: Boolean = false)
@@ -117,6 +136,9 @@ data class TaskPatch(
     val subtasks: List<Subtask>? = null,
     /** Only for Undo of a move/postpone: brings back the "from earlier" mark. */
     val carriedFrom: String? = null,
+    /** A new time limit; [clearDue] removes it. */
+    val dueAt: String? = null,
+    val clearDue: Boolean = false,
 ) {
     fun toJson(): JsonObject = buildJsonObject {
         title?.let { put("title", it) }
@@ -128,6 +150,7 @@ data class TaskPatch(
         tagIds?.let { ids -> putJsonArray("tagIds") { ids.forEach { add(JsonPrimitive(it)) } } }
         subtasks?.let { put("subtasks", subtasksJson(it)) }
         carriedFrom?.let { put("carriedFrom", it) }
+        if (clearDue) put("dueAt", kotlinx.serialization.json.JsonNull) else dueAt?.let { put("dueAt", it) }
     }
 }
 
@@ -170,6 +193,9 @@ class Store(
 
     private val _sync = MutableStateFlow(SyncStatus())
     val sync: StateFlow<SyncStatus> = _sync.asStateFlow()
+
+    private val _teams = MutableStateFlow(TeamsState())
+    val teams: StateFlow<TeamsState> = _teams.asStateFlow()
 
     private var uid: String? = null
     private var epoch = 0
@@ -227,7 +253,7 @@ class Store(
         val ep = epoch
         val snap = runCatching { withContext(io) { cache.loadAll(newUid) } }.getOrDefault(CacheSnapshot())
         val meta = runCatching {
-            withContext(io) { listOf("knownAll", "lastSync", "misses").associateWith { cache.loadMeta(newUid, it) } }
+            withContext(io) { listOf("knownAll", "lastSync", "misses", "teams", "invites").associateWith { cache.loadMeta(newUid, it) } }
         }.getOrDefault(emptyMap())
         val ops = runCatching { withContext(io) { cache.loadOps(newUid) } }.getOrDefault(emptyList())
             .mapNotNull { runCatching { AppJson.decodeFromString(OutboxOp.serializer(), it) }.getOrNull() }
@@ -239,6 +265,9 @@ class Store(
                 .getOrNull()?.forEach { misses[it.date] = it.missed }
         }
         lastSync = meta["lastSync"]?.toLongOrNull() ?: 0L
+        val savedTeams = meta["teams"]?.let { runCatching { AppJson.decodeFromString(kotlinx.serialization.builtins.ListSerializer(Team.serializer()), it) }.getOrNull() }
+        val savedInvites = meta["invites"]?.let { runCatching { AppJson.decodeFromString(kotlinx.serialization.builtins.ListSerializer(Invite.serializer()), it) }.getOrNull() }
+        if (savedTeams != null && !_teams.value.loaded) _teams.value = TeamsState(savedTeams, savedInvites ?: emptyList())
         _state.value = StoreState(
             tasks = snap.tasks.associateBy { it.id },
             summary = snap.summary,
@@ -291,6 +320,7 @@ class Store(
         persistJob?.cancel()
         persistJob = null
         _state.value = StoreState()
+        _teams.value = TeamsState()
         publishSync()
     }
 
@@ -358,6 +388,8 @@ class Store(
                     "knownAll" to if (s.knownAll) "1" else "0",
                     "lastSync" to lastSync.toString(),
                     "misses" to AppJson.encodeToString(kotlinx.serialization.builtins.ListSerializer(MissCount.serializer()), misses.map { (d, n) -> MissCount(d, n) }),
+                    "teams" to AppJson.encodeToString(kotlinx.serialization.builtins.ListSerializer(Team.serializer()), _teams.value.teams),
+                    "invites" to AppJson.encodeToString(kotlinx.serialization.builtins.ListSerializer(Invite.serializer()), _teams.value.invites),
                 )
             } else null
             runCatching {
@@ -780,6 +812,7 @@ class Store(
             }
             recountAll()
         }
+        res.teams?.let { setTeams(it, res.invites) }
         var s = _state.value.copy(knownAll = true)
         if (tagsTouched == startTags && outbox.none { it.op.tagId != null }) {
             s = s.copy(tags = res.tags.sortedWith(compareBy({ it.position }, { it.createdAt })), tagsLoaded = true)
@@ -850,7 +883,7 @@ class Store(
     /** Adds a task; [Pair.second] completes with true once the server has it, false if refused. */
     fun createTask(
         title: String, date: String, priority: Int = 4, notes: String = "", tagIds: List<String> = emptyList(),
-        subtasks: List<Subtask> = emptyList(),
+        subtasks: List<Subtask> = emptyList(), dueAt: String? = null,
     ): Pair<Task, Deferred<Boolean>> {
         val t = now()
         val steps = Steps.normalize(subtasks)
@@ -862,6 +895,7 @@ class Store(
             id = UUID.randomUUID().toString(), title = normalizeTitle(title), notes = notes.trim(), priority = priority,
             date = day, status = status, originalDate = day, postponed = 0, createdAt = t, updatedAt = t,
             completedAt = if (status == Status.DONE) t else null, tagIds = cleanTagIds(tagIds), subtasks = steps,
+            dueAt = dueAt?.takeIf { Due.isValid(it) },
         )
         return task to mutate(task.id, task, "Couldn't add task", op("createTask", JsonObject(taskBody(task) + ("today" to JsonPrimitive(today)))))
     }
@@ -880,6 +914,7 @@ class Store(
             postponed = p.postponed ?: old.postponed,
             tagIds = p.tagIds ?: old.tagIds,
             subtasks = p.subtasks ?: old.subtasks,
+            dueAt = if (p.clearDue) null else p.dueAt ?: old.dueAt,
             // Same rule as the server: moving a task on purpose clears its "from earlier" mark.
             carriedFrom = when {
                 p.carriedFrom != null -> p.carriedFrom.takeIf { it < (p.date ?: old.date) }
@@ -982,6 +1017,147 @@ class Store(
             val restored = old.copy(tagIds = cleanTagIds(old.tagIds), attachments = old.attachments.filter { !it.uploading })
             mutate(id, restored, "Couldn't restore", op("restoreTask", taskBody(restored, includeHistory = true)))
         }
+    }
+
+    // ---- Teams ----------------------------------------------------------------------
+    // Managed online (the server checks every permission); the latest copy stays on the phone so
+    // names, roles and badges show offline too.
+
+    private fun setTeams(list: List<Team>, invites: List<Invite>) {
+        val boards = _teams.value.boards.filterKeys { id -> list.any { it.id == id } }
+        _teams.value = TeamsState(list, invites, loaded = true, boards = boards)
+        metaDirty = true
+        schedulePersist()
+    }
+
+    private fun putTeam(team: Team) {
+        val cur = _teams.value
+        val list = if (cur.teams.any { it.id == team.id }) cur.teams.map { if (it.id == team.id) team else it } else cur.teams + team
+        setTeams(list.sortedBy { it.name.lowercase() }, cur.invites)
+    }
+
+    fun access(task: Task?): TaskAccess {
+        if (task?.teamId == null) return TaskAccess(null, false)
+        val team = _teams.value.team(task.teamId)
+        return TaskAccess(team, team?.isAdmin != true)
+    }
+
+    /** A teammate's name ("you" for me), or null when they're no longer in the team. */
+    fun memberName(teamId: String?, memberUid: String?): String? {
+        if (memberUid == null) return null
+        if (memberUid == uid) return "you"
+        return _teams.value.team(teamId)?.member(memberUid)?.name
+    }
+
+    private fun needOnline() {
+        if (!online) throw ApiException(0, "Teams need a connection. Try again when you're back online.")
+    }
+
+    private suspend fun <T> teamCall(block: suspend () -> T): T {
+        needOnline()
+        try {
+            return block().also { setOnline(true) }
+        } catch (e: ApiException) {
+            if (e.status == 0) setOnline(false)
+            throw e
+        }
+    }
+
+    suspend fun loadTeams() {
+        val ep = epoch
+        val res = api.teams()
+        if (ep != epoch) return
+        setOnline(true)
+        setTeams(res.teams, res.invites)
+    }
+
+    suspend fun createTeam(name: String, color: String): Team = teamCall {
+        api.createTeam(buildJsonObject { put("id", UUID.randomUUID().toString()); put("name", name.trim()); put("color", color) })
+    }.also { putTeam(it) }
+
+    suspend fun updateTeam(id: String, name: String, color: String): Team = teamCall {
+        api.updateTeam(id, buildJsonObject { put("name", name.trim()); put("color", color) })
+    }.also { putTeam(it) }
+
+    /** The team's tasks stay with their people as their own: refresh mine. */
+    private suspend fun afterTeamGone() {
+        runCatching { loadTeams() }
+        runCatching { syncAll(todayFn()) }
+    }
+
+    suspend fun deleteTeam(id: String) {
+        teamCall { api.deleteTeam(id) }
+        afterTeamGone()
+    }
+
+    suspend fun invite(teamId: String, emails: List<String>, role: String): InviteResult =
+        teamCall { api.invite(teamId, emails, role) }.also { putTeam(it.team) }
+
+    suspend fun cancelInvite(teamId: String, inviteId: String) = putTeam(teamCall { api.cancelInvite(teamId, inviteId) })
+
+    suspend fun acceptInvite(id: String): Team {
+        val res = teamCall { api.acceptInvite(id) }
+        runCatching { loadTeams() }.onFailure {
+            val cur = _teams.value
+            putTeam(res.team)
+            _teams.value = _teams.value.copy(invites = cur.invites.filter { it.id != id })
+        }
+        return res.team
+    }
+
+    suspend fun declineInvite(id: String) {
+        teamCall { api.declineInvite(id) }
+        val cur = _teams.value
+        setTeams(cur.teams, cur.invites.filter { it.id != id })
+    }
+
+    suspend fun setRole(teamId: String, memberUid: String, role: String) = putTeam(teamCall { api.setRole(teamId, memberUid, role) })
+
+    /** Removes someone, or with my own uid leaves the team. */
+    suspend fun removeMember(teamId: String, memberUid: String) {
+        teamCall { api.removeMember(teamId, memberUid) }
+        if (memberUid == uid) afterTeamGone() else runCatching { loadTeams() }
+    }
+
+    suspend fun loadBoard(teamId: String, from: String, to: String): Board {
+        val ep = epoch
+        val res = teamCall { api.board(teamId, from, to) }
+        val board = Board(res.tasks, from, to)
+        if (ep == epoch) _teams.value = _teams.value.let { it.copy(boards = it.boards + (teamId to board)) }
+        return board
+    }
+
+    private fun patchBoard(teamId: String, task: Task, removed: Boolean = false) {
+        val cur = _teams.value
+        val b = cur.boards[teamId] ?: return
+        val rest = b.tasks.filter { it.id != task.id }
+        _teams.value = cur.copy(boards = cur.boards + (teamId to b.copy(tasks = if (removed) rest else rest + task)))
+    }
+
+    /** A team task given to me shows up in my own list (the server doesn't echo my own change back). */
+    private fun refreshMineIf(mine: Boolean) {
+        if (mine) scope.launch { runCatching { syncAll(todayFn()) } }
+    }
+
+    suspend fun assignTask(teamId: String, body: JsonObject): Task {
+        val full = JsonObject(body + ("id" to JsonPrimitive(UUID.randomUUID().toString())) + ("today" to JsonPrimitive(todayFn())))
+        val task = teamCall { api.assign(teamId, full) }
+        patchBoard(teamId, task)
+        refreshMineIf(task.assignee == uid)
+        return task
+    }
+
+    suspend fun updateTeamTask(teamId: String, current: Task, patch: JsonObject): Task {
+        val task = teamCall { api.updateTeamTask(teamId, current.id, patch) }
+        patchBoard(teamId, task)
+        refreshMineIf(task.assignee == uid || current.assignee == uid)
+        return task
+    }
+
+    suspend fun deleteTeamTask(teamId: String, current: Task) {
+        teamCall { api.deleteTeamTask(teamId, current.id) }
+        patchBoard(teamId, current, removed = true)
+        refreshMineIf(current.assignee == uid)
     }
 
     // ---- Tags -----------------------------------------------------------------------

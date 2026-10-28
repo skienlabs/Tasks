@@ -294,6 +294,26 @@ function useReducedMotion() {
   return reduced;
 }
 
+/**
+ * Scale for a 340 x 290 scene so it fits the width it is given (phones differ a lot: narrow
+ * screens, and larger text settings that leave less room), never above `max`.
+ */
+function useFit(max) {
+  const ref = useRef(null);
+  const [scale, setScale] = useState(max);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(([entry]) => {
+      const w = entry.contentRect.width;
+      if (w > 0) setScale(Math.min(max, w / 340));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [max]);
+  return [ref, scale];
+}
+
 /** The art panel. `compact` is the short band shown above the form on phones. */
 export default function WelcomeArt({ compact = false }) {
   const [i, setI] = useState(0);
@@ -307,6 +327,7 @@ export default function WelcomeArt({ compact = false }) {
   }, [i, paused, reduced]);
   const scene = SCENES[i];
   const View = VIEWS[scene.key];
+  const [fitRef, fit] = useFit(0.5);
 
   return (
     <Box
@@ -318,7 +339,9 @@ export default function WelcomeArt({ compact = false }) {
       sx={{
         position: 'relative', overflow: 'hidden', bgcolor: INK, color: PAPER, colorScheme: 'dark',
         display: 'flex', flexDirection: 'column',
-        px: { xs: 3, md: 7 }, py: { xs: 3, md: 6 },
+        px: { xs: 2.5, md: 7 }, py: { xs: 2, md: 6 },
+        // Installed on a phone, the band reaches up under the status bar.
+        pt: { xs: 'max(16px, env(safe-area-inset-top, 0px))', md: 6 },
         minHeight: compact ? 0 : '100%',
         // Faint dot grid: the page of a planner.
         backgroundImage: 'radial-gradient(rgba(255,255,255,0.07) 1px, transparent 1.2px)',
@@ -332,33 +355,61 @@ export default function WelcomeArt({ compact = false }) {
         <Typography sx={{ fontSize: compact ? 20 : 22, fontWeight: 500, color: PAPER }}>Tasks</Typography>
       </Box>
 
-      <Box sx={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', py: compact ? 2 : 4, minHeight: compact ? 0 : 420 }}>
-        <Box
-          key={scene.key}
-          aria-hidden
-          sx={{
-            display: 'flex', justifyContent: 'center',
-            height: compact ? 210 : { md: 340, lg: 430 }, alignItems: 'center',
-            '& .wa-stage': compact
-              ? { transform: 'scale(0.72)', transformOrigin: 'center' }
-              : { transform: { md: 'scale(1.1)', lg: 'scale(1.32)' }, transformOrigin: 'center' },
-            animation: reduced ? 'none' : 'wa-scene .45s ease-out',
-          }}
-        >
-          <View />
-        </Box>
-        <Box sx={{ maxWidth: 480, mt: compact ? 0 : 3, textAlign: 'center', mx: 'auto' }} aria-live="polite">
+      <Box sx={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', py: compact ? 1 : 4, minHeight: compact ? 0 : 420 }}>
+        {compact ? (
+          // Phones: the scene is drawn at a size that fits the screen's width, and left out on
+          // short screens so the sign-in form stays in view without scrolling.
+          <Box ref={fitRef} aria-hidden sx={{ width: '100%', '@media (max-height: 680px)': { display: 'none' } }}>
+            <Box
+              key={scene.key}
+              sx={{
+                position: 'relative', height: 290 * fit, overflow: 'hidden',
+                animation: reduced ? 'none' : 'wa-scene .45s ease-out',
+              }}
+            >
+              <Box sx={{ position: 'absolute', left: '50%', top: 0, width: 340, height: 290, transform: `translateX(-50%) scale(${fit})`, transformOrigin: 'top center' }}>
+                <View />
+              </Box>
+            </Box>
+          </Box>
+        ) : (
+          <Box
+            key={scene.key}
+            aria-hidden
+            sx={{
+              display: 'flex', justifyContent: 'center',
+              height: { md: 340, lg: 430 }, alignItems: 'center',
+              '& .wa-stage': { transform: { md: 'scale(1.1)', lg: 'scale(1.32)' }, transformOrigin: 'center' },
+              animation: reduced ? 'none' : 'wa-scene .45s ease-out',
+            }}
+          >
+            <View />
+          </Box>
+        )}
+        <Box sx={{ maxWidth: 480, mt: compact ? 1 : 3, textAlign: 'center', mx: 'auto' }} aria-live="polite">
           <Typography
             component="h2"
-            sx={{ fontSize: compact ? 22 : { md: 40, lg: 46 }, lineHeight: 1.1, fontWeight: 500, letterSpacing: '-0.02em', color: PAPER, textWrap: 'balance' }}
+            sx={{ fontSize: compact ? 19 : { md: 40, lg: 46 }, lineHeight: 1.15, fontWeight: 500, letterSpacing: '-0.02em', color: PAPER, textWrap: 'balance' }}
           >
             {scene.title}
           </Typography>
-          <Typography sx={{ mt: 1.25, color: MUTED, fontSize: compact ? 14 : 17, lineHeight: 1.5 }}>{scene.text}</Typography>
+          <Typography
+            sx={{
+              mt: compact ? 0.5 : 1.25, color: MUTED, fontSize: compact ? 13.5 : 17, lineHeight: 1.45,
+              // Phones keep the line to two rows, so the band's height doesn't jump between scenes.
+              ...(compact && {
+                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', minHeight: '2.9em',
+                // Shorter phones: the headline alone, so the form fits on the screen.
+                '@media (max-height: 820px)': { display: 'none' },
+              }),
+            }}
+          >
+            {scene.text}
+          </Typography>
         </Box>
       </Box>
 
-      <Box sx={{ position: 'relative', display: 'flex', gap: 1, justifyContent: 'center' }} role="tablist" aria-label="Features">
+      <Box sx={{ position: 'relative', display: 'flex', gap: 1, justifyContent: 'center', mt: compact ? 1 : 0 }} role="tablist" aria-label="Features">
         {SCENES.map((s, n) => (
           <ButtonBase
             key={s.key}

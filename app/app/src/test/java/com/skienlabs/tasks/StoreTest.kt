@@ -68,7 +68,8 @@ class FakeApi : TasksApi {
         tasks.replaceAll { _, t -> if (t.isPending && t.date < today) t.copy(carriedFrom = t.carriedFrom ?: t.date, date = today) else t }
         return com.skienlabs.tasks.data.SyncResponse(
             tasks.values.toList(), tags.values.toList(),
-            summaryDays.filter { it.missed > 0 }.map { com.skienlabs.tasks.data.MissCount(it.date, it.missed) }, clock,
+            summaryDays.filter { it.missed > 0 }.map { com.skienlabs.tasks.data.MissCount(it.date, it.missed) },
+            teams = teamList, invites = inviteList, serverTime = clock,
         )
     }
 
@@ -101,6 +102,8 @@ class FakeApi : TasksApi {
             tagIds = body["tagIds"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList(),
             createdAt = body["createdAt"]?.jsonPrimitive?.content?.toLong() ?: clock++, updatedAt = clock++,
             subtasks = body["subtasks"]?.let { com.skienlabs.tasks.data.AppJson.decodeFromJsonElement(kotlinx.serialization.builtins.ListSerializer(Subtask.serializer()), it) } ?: emptyList(),
+            dueAt = (body["dueAt"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content,
+            teamId = (body["teamId"] as? kotlinx.serialization.json.JsonPrimitive)?.content,
         )
         tasks[id] = t
         return t
@@ -114,6 +117,7 @@ class FakeApi : TasksApi {
         patch["carriedFrom"]?.let { n = n.copy(carriedFrom = it.jsonPrimitive.content.takeIf { c -> c < n.date }) }
         patch["status"]?.let { n = n.copy(status = it.jsonPrimitive.content) }
         patch["priority"]?.let { n = n.copy(priority = it.jsonPrimitive.intOrNull!!) }
+        patch["dueAt"]?.let { d -> n = n.copy(dueAt = (d as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content) }
         patch["tagIds"]?.let { a -> n = n.copy(tagIds = a.jsonArray.map { it.jsonPrimitive.content }) }
         patch["subtasks"]?.let { a ->
             val steps = Steps.normalize(com.skienlabs.tasks.data.AppJson.decodeFromJsonElement(kotlinx.serialization.builtins.ListSerializer(Subtask.serializer()), a))
@@ -163,6 +167,28 @@ class FakeApi : TasksApi {
     override suspend fun deleteTag(id: String) {
         tags.remove(id)
         tasks.replaceAll { _, t -> t.copy(tagIds = t.tagIds - id) }
+    }
+
+    // Teams: a list served as is (permissions are the server's job; see web/server tests).
+    var teamList = emptyList<com.skienlabs.tasks.data.Team>()
+    var inviteList = emptyList<com.skienlabs.tasks.data.Invite>()
+    override suspend fun teams(): com.skienlabs.tasks.data.TeamsResponse {
+        calls += "teams"
+        if (offline) throw ApiException(0, "You appear to be offline")
+        return com.skienlabs.tasks.data.TeamsResponse(teamList, inviteList)
+    }
+    override suspend fun board(teamId: String, from: String, to: String): com.skienlabs.tasks.data.BoardResponse {
+        calls += "board"
+        if (offline) throw ApiException(0, "You appear to be offline")
+        return com.skienlabs.tasks.data.BoardResponse(tasks.values.filter { it.teamId == teamId })
+    }
+    override suspend fun acceptInvite(id: String): com.skienlabs.tasks.data.AcceptResult {
+        calls += "accept"; fail()
+        val inv = inviteList.first { it.id == id }
+        val team = com.skienlabs.tasks.data.Team(inv.teamId, inv.teamName, role = inv.role)
+        teamList = teamList + team
+        inviteList = inviteList - inv
+        return com.skienlabs.tasks.data.AcceptResult(team)
     }
 }
 

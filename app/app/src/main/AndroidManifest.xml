@@ -31,6 +31,7 @@
         </activity>
 
         <receiver android:name=".notify.SummaryReceiver" android:exported="false" />
+        <receiver android:name=".notify.DueReceiver" android:exported="false" />
         <receiver android:name=".notify.RescheduleReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

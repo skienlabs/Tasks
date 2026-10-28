@@ -1,18 +1,21 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
-  Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, TextField,
+  Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, TextField,
   ToggleButton, ToggleButtonGroup, Typography, useMediaQuery,
 } from '@mui/material';
 import Close from '@mui/icons-material/Close';
+import LabelOffOutlined from '@mui/icons-material/LabelOffOutlined';
 import Flag from '@mui/icons-material/Flag';
 import FlagOutlined from '@mui/icons-material/FlagOutlined';
 import { PRIORITIES, priorityColor } from '../theme.js';
 import { MAX_DATE, MIN_DATE, addDays, isValidKey } from '../lib/dates.js';
 import {
-  MAX_TAGS_PER_TASK, createTask, deleteTask, getTask, selectTags, showToast, updateTask, useStoreVersion,
+  MAX_TAGS_PER_TASK, createTask, deleteTask, getTask, memberName, selectTags, showToast, taskAccess, updateTask, useStoreVersion,
 } from '../lib/store.js';
+import { TimeLimitField } from './Due.jsx';
+import { isValidDue } from '../lib/due.js';
 import TagChip from './TagChip.jsx';
-import { StepsEditor } from './Steps.jsx';
+import { StepsEditor, StepsInline } from './Steps.jsx';
 import { ImageViewer, ImagesEditor, MAX_IMAGES } from './Images.jsx';
 import { prepareImage } from '../lib/images.js';
 import { addAttachment, removeAttachment } from '../lib/store.js';
@@ -30,6 +33,10 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
   const dateOk = isValidKey(date) && (date >= today || (task && date === task.date));
   const [steps, setSteps] = useState(task?.subtasks ?? []);
   const [stepsChanged, setStepsChanged] = useState(false);
+  const [dueAt, setDueAt] = useState(task?.dueAt ?? null);
+  // A task from a team: you work on it; what it is (title, priority, time limit, steps) is the admins' call.
+  const { team, restricted } = taskAccess(task);
+  const live = task ? getTask(task.id) ?? task : null; // ticking steps here applies at once
   // Images: saved ones (minus any removed here) plus new ones, uploaded on Save.
   const [removed, setRemoved] = useState(() => new Set());
   const [pending, setPending] = useState([]);
@@ -41,7 +48,7 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
     ...saved.map((a) => ({ key: a.id, attachment: a })),
     ...pending.map((p) => ({ key: p.id, pending: p })),
   ];
-  const valid = title.trim().length > 0 && dateOk;
+  const valid = title.trim().length > 0 && dateOk && (dueAt === null || isValidDue(dueAt));
 
   const addFiles = async (files) => {
     setImgError('');
@@ -74,13 +81,23 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
   };
 
   const [tagsChanged, setTagsChanged] = useState(false);
+  // A new task needs a tag, or "No tag" chosen on purpose.
+  const [noTag, setNoTag] = useState(false);
+  const [tagError, setTagError] = useState(false);
+  const tagsOk = Boolean(task) || noTag || tagIds.some((id) => allTags.some((t) => t.id === id));
+  const tagsRef = useRef(null);
 
   const save = () => {
     if (!valid) return;
+    if (!tagsOk) {
+      setTagError(true);
+      tagsRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
     if (task) {
       if (!getTask(task.id)) {
         // Deleted (e.g. on another device) while this was open: don't lose the edits.
-        const draft = { title, notes, priority, date, tagIds, subtasks: steps };
+        const draft = { title, notes, priority, date, tagIds, subtasks: steps, dueAt };
         showToast('This task was deleted, so changes weren’t saved', () => createTask(draft), 'Add as new');
         onClose();
         return;
@@ -93,10 +110,12 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
       if (date !== task.date) patch.date = date;
       if (tagsChanged) patch.tagIds = tagIds;
       if (stepsChanged && JSON.stringify(steps) !== JSON.stringify(task.subtasks ?? [])) patch.subtasks = steps;
+      if (dueAt !== (task.dueAt ?? null)) patch.dueAt = dueAt;
+      if (restricted) for (const k of ['title', 'priority', 'subtasks', 'dueAt']) delete patch[k];
       if (Object.keys(patch).length) updateTask(task.id, patch);
       uploadImages(task.id);
     } else {
-      const { task: created } = createTask({ title, notes, priority, date, tagIds, subtasks: steps });
+      const { task: created } = createTask({ title, notes, priority, date, tagIds, subtasks: steps, dueAt });
       uploadImages(created.id);
     }
     onClose();
@@ -104,6 +123,8 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
 
   const toggleTag = (id) => {
     setTagsChanged(true);
+    setNoTag(false);
+    setTagError(false);
     setTagIds((ids) => {
       if (ids.includes(id)) return ids.filter((x) => x !== id);
       return ids.length >= MAX_TAGS_PER_TASK ? ids : [...ids, id];
@@ -135,11 +156,20 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
           }
         }}
       >
+        {task?.teamId && (
+          <Alert severity="info" icon={false} sx={{ borderRadius: 3 }}>
+            {team ? <><b>{team.name}</b> · </> : null}
+            {restricted
+              ? `Given to you${memberName(task.teamId, task.assignedBy) ? ` by ${memberName(task.teamId, task.assignedBy)}` : ''}. You can complete it, postpone it, tick its steps, and add notes, tags and images; its admins change the rest.`
+              : 'A team task. As an admin you can change everything; it stays in this person’s list.'}
+          </Alert>
+        )}
         <TextField
           label="Title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           autoFocus={!task}
+          disabled={restricted}
           required
           fullWidth
           multiline
@@ -163,13 +193,22 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
           maxRows={10}
           slotProps={{ htmlInput: { maxLength: 5000 } }}
         />
-        <StepsEditor
-          value={steps}
-          onChange={(v) => {
-            setSteps(v);
-            setStepsChanged(true);
-          }}
-        />
+        {restricted ? (
+          (live?.subtasks?.length ?? 0) > 0 && (
+            <Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>Steps</Typography>
+              <StepsInline task={live} disabled={live.status === 'cancelled'} />
+            </Box>
+          )
+        ) : (
+          <StepsEditor
+            value={steps}
+            onChange={(v) => {
+              setSteps(v);
+              setStepsChanged(true);
+            }}
+          />
+        )}
         <ImagesEditor
           items={imageItems}
           onAdd={addFiles}
@@ -184,6 +223,7 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
             exclusive
             value={priority}
             onChange={(_, v) => v && setPriority(v)}
+            disabled={restricted}
             size="small"
             sx={{ flexWrap: 'wrap', gap: 1, '& .MuiToggleButtonGroup-grouped': { border: 1, borderColor: 'divider', borderRadius: '999px !important', px: 1.75, ml: '0 !important' } }}
           >
@@ -197,11 +237,31 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
             ))}
           </ToggleButtonGroup>
         </Box>
-        <Box>
+        <Box ref={tagsRef}>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-            <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>Tags</Typography>
+            <Typography variant="body2" color={tagError ? 'error' : 'text.secondary'} sx={{ flex: 1 }}>
+              Tags{task ? '' : ' *'}
+            </Typography>
             <Button size="small" onClick={onManageTags}>{allTags.length ? 'Manage' : 'Create tag'}</Button>
           </Box>
+          {tagError && (
+            <Alert severity="warning" sx={{ mb: 1.25, borderRadius: 3 }}>Pick a tag for this task, or choose “No tag”.</Alert>
+          )}
+          {!task && (
+            <Chip
+              icon={<LabelOffOutlined />}
+              label="No tag"
+              onClick={() => {
+                setNoTag((v) => !v);
+                setTagIds([]);
+                setTagsChanged(true);
+                setTagError(false);
+              }}
+              color={noTag ? 'primary' : 'default'}
+              variant={noTag ? 'filled' : 'outlined'}
+              sx={{ mb: allTags.length ? 1 : 0 }}
+            />
+          )}
           {allTags.length > 0 ? (
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
               {allTags.map((tag) => (
@@ -214,7 +274,7 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
               ))}
             </Box>
           ) : (
-            <Typography variant="body2" color="text.secondary">Tag tasks by company or project.</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: task ? 0 : 1 }}>Tag tasks by company or project.</Typography>
           )}
         </Box>
         <Box>
@@ -245,9 +305,10 @@ function Form({ task, defaultDate, defaultTagId, today, onClose, onManageTags, f
             ))}
           </Box>
         </Box>
+        <TimeLimitField value={dueAt} onChange={setDueAt} date={date} disabled={restricted} />
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2.5, pt: 1, mt: fullScreen ? 'auto' : 0 }}>
-        {task && (
+        {task && !restricted && (
           <Button
             color="error"
             onClick={() => {

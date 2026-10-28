@@ -14,7 +14,7 @@ import { PRIORITIES, priorityColor } from '../theme.js';
 import TagPicker from './TagPicker.jsx';
 import { shortLabel } from '../lib/dates.js';
 import {
-  cancelTask, deleteTask, moveTasks, postponeTarget, postponeTask, restoreTask, updateTask,
+  cancelTask, deleteTask, moveTasks, postponeTarget, postponeTask, restoreTask, taskAccess, updateTask,
 } from '../lib/store.js';
 
 export function postponeLabel(task, today) {
@@ -31,6 +31,8 @@ export default function TaskMenu({ task, today, onEdit, onManageTags, onDeleted,
   const [tagEl, setTagEl] = useState(null);
   const pending = task.status === 'pending';
   const label = postponeLabel(task, today);
+  // Team tasks: the person works on it; priority, cancel and delete are for the team's admins.
+  const { restricted } = taskAccess(task);
   const close = () => setMenuEl(null);
   const act = (fn) => () => {
     close();
@@ -78,7 +80,7 @@ export default function TaskMenu({ task, today, onEdit, onManageTags, onDeleted,
           <ListItemIcon><SellOutlined fontSize="small" /></ListItemIcon>
           <ListItemText>Tags</ListItemText>
         </MenuItem>
-        {!pending && (
+        {!pending && !(restricted && task.status === 'cancelled') && (
           <MenuItem onClick={act(() => restoreTask(task.id))}>
             <ListItemIcon><Replay fontSize="small" /></ListItemIcon>
             <ListItemText>Mark as pending</ListItemText>
@@ -96,7 +98,7 @@ export default function TaskMenu({ task, today, onEdit, onManageTags, onDeleted,
             <ListItemText>{label}</ListItemText>
           </MenuItem>
         )}
-        {pending && (
+        {pending && !restricted && (
           <Box sx={{ px: 2, py: 1 }}>
             <Typography variant="caption" color="text.secondary">Priority</Typography>
             <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5 }}>
@@ -119,23 +121,25 @@ export default function TaskMenu({ task, today, onEdit, onManageTags, onDeleted,
             </Box>
           </Box>
         )}
-        <Divider />
-        {pending && (
+        {!restricted && <Divider />}
+        {pending && !restricted && (
           <MenuItem onClick={act(() => cancelTask(task.id))}>
             <ListItemIcon><BlockOutlined fontSize="small" /></ListItemIcon>
             <ListItemText>Cancel task</ListItemText>
           </MenuItem>
         )}
-        <MenuItem
-          onClick={act(() => {
-            deleteTask(task.id);
-            onDeleted?.();
-          })}
-          sx={{ color: 'error.main' }}
-        >
-          <ListItemIcon><DeleteOutlined fontSize="small" color="error" /></ListItemIcon>
-          <ListItemText>Delete</ListItemText>
-        </MenuItem>
+        {!restricted && (
+          <MenuItem
+            onClick={act(() => {
+              deleteTask(task.id);
+              onDeleted?.();
+            })}
+            sx={{ color: 'error.main' }}
+          >
+            <ListItemIcon><DeleteOutlined fontSize="small" color="error" /></ListItemIcon>
+            <ListItemText>Delete</ListItemText>
+          </MenuItem>
+        )}
       </Menu>
       <TagPicker
         anchorEl={tagEl}

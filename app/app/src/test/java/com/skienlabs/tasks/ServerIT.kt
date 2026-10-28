@@ -155,4 +155,45 @@ class ServerIT {
         }
         scope.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
     }
+
+    /** Teams with two people (dev sign-in "dev:<name>"), through the phone's API client. */
+    @Test
+    fun teamsAgainstServer() = runBlocking {
+        assumeTrue(url != null)
+        val boss = HttpTasksApi(url!!, { "dev:itboss" })
+        val ann = HttpTasksApi(url, { "dev:itann" })
+        val today = Dates.today()
+        boss.me(); ann.me() // both have used the app
+        val team = boss.createTeam(kotlinx.serialization.json.buildJsonObject { put("name", kotlinx.serialization.json.JsonPrimitive("IT Team")) })
+        assertEquals(com.skienlabs.tasks.data.Role.OWNER, team.role)
+        val inv = boss.invite(team.id, listOf("ITANN@localhost"), "member")
+        assertEquals(listOf("itann@localhost"), inv.invited)
+        val waiting = ann.teams().invites.single { it.teamId == team.id }
+        assertEquals("IT Team", waiting.teamName)
+        assertEquals(com.skienlabs.tasks.data.Role.MEMBER, ann.acceptInvite(waiting.id).team.role)
+
+        val given = boss.assign(team.id, kotlinx.serialization.json.buildJsonObject {
+            put("assignee", kotlinx.serialization.json.JsonPrimitive("dev-itann"))
+            put("title", kotlinx.serialization.json.JsonPrimitive("Quarterly report"))
+            put("date", kotlinx.serialization.json.JsonPrimitive(today))
+            put("today", kotlinx.serialization.json.JsonPrimitive(today))
+            put("dueAt", kotlinx.serialization.json.JsonPrimitive("${today}T23:59"))
+        })
+        val mine = ann.day(today, today).tasks.single { it.id == given.id }
+        assertEquals(team.id, mine.teamId)
+        assertEquals("dev-itboss", mine.assignedBy)
+        assertEquals("${today}T23:59", mine.dueAt)
+        // Members work on it, they don't change it.
+        val refused = runCatching { ann.updateTask(given.id, kotlinx.serialization.json.buildJsonObject { put("title", kotlinx.serialization.json.JsonPrimitive("Easier")) }) }
+        assertEquals(403, (refused.exceptionOrNull() as com.skienlabs.tasks.data.ApiException).status)
+        val done = ann.updateTask(given.id, kotlinx.serialization.json.buildJsonObject { put("status", kotlinx.serialization.json.JsonPrimitive(Status.DONE)) })
+        assertEquals(Status.DONE, done.status)
+        val board = boss.board(team.id, today, today).tasks.single { it.id == given.id }
+        assertEquals(Status.DONE, board.status)
+        assertEquals("dev-itann", board.assignee)
+        // Sync carries the teams for the offline copy.
+        assertEquals(listOf("IT Team"), ann.sync(today).teams!!.map { it.name })
+        boss.deleteTeam(team.id)
+        assertNull(ann.day(today, today).tasks.single { it.id == given.id }.teamId)
+    }
 }

@@ -52,7 +52,8 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/__/')) return;
+  // The API, Firebase's sign-in pages and the Android app download go straight to the network.
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/__/') || url.pathname.startsWith('/download/')) return;
 
   if (req.mode === 'navigate') {
     // Only real app pages become the offline copy (not a JSON/JS/image file opened in a tab).
