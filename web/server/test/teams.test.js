@@ -245,7 +245,8 @@ test('team tasks: admins give them out, the person works on them, admins follow 
   assert.equal((await ann('PATCH', '/api/teams/team-acme-1/tasks/team-task-1', { title: 'x' })).statusCode, 403);
 
   // Admins see the team's tasks (without Ann's personal tags) and the images on them.
-  assert.equal((await ann('GET', `/api/teams/team-acme-1/tasks?from=${TODAY}&to=${TODAY}`)).statusCode, 403);
+  // Members see only the ones they have or gave (2.0).
+  assert.deepEqual((await ann('GET', `/api/teams/team-acme-1/tasks?from=${TODAY}&to=${TODAY}`)).json().tasks.map((x) => x.id), ['team-task-1']);
   assert.equal((await eve('GET', `/api/teams/team-acme-1/tasks?from=${TODAY}&to=${TODAY}`)).statusCode, 404);
   let board = (await bob('GET', `/api/teams/team-acme-1/tasks?from=${TODAY}&to=${TODAY}`)).json().tasks;
   assert.equal(board.length, 1);
@@ -408,4 +409,23 @@ test('review fixes: verified invites only, cancelled stays cancelled, honest "gi
   t = (await boss('PATCH', '/api/teams/team-acme-1/tasks/team-task-r', { assignee: 'bob', title: 'R2' })).json();
   assert.equal(t.assignee, 'bob');
   assert.equal(t.title, 'R2');
+});
+
+test('team logo: set, kept, replaced, removed; must be a real image', async () => {
+  const ctx = await setup();
+  const boss = await ctx.as('boss');
+  const png = `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==`;
+  let res = await boss('POST', '/api/teams', { id: 'team-logo-1', name: 'Logo Co', logo: png });
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.json().logo, png);
+  res = await boss('PATCH', '/api/teams/team-logo-1', { name: 'Logo Co 2' });
+  assert.equal(res.json().logo, png); // other edits keep it
+  assert.equal((await boss('PATCH', '/api/teams/team-logo-1', { logo: 'data:image/png;base64,AAAA' })).statusCode, 400);
+  assert.equal((await boss('PATCH', '/api/teams/team-logo-1', { logo: 'data:image/svg+xml;base64,AAAA' })).statusCode, 400);
+  res = await boss('PATCH', '/api/teams/team-logo-1', { logo: null });
+  assert.equal(res.json().logo, null);
+  await boss('PATCH', '/api/teams/team-logo-1', { logo: png });
+  await boss('POST', '/api/teams/team-logo-1/invites', { emails: ['ann@example.com'] });
+  const ann = await ctx.as('ann');
+  assert.equal((await ann('GET', '/api/invites')).json().invites[0].teamLogo, png);
 });

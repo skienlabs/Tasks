@@ -202,6 +202,7 @@ fun TaskDetails(task: Task, tags: List<Tag>, today: String, actions: RowActions,
                     }
                 }
             }
+            com.skienlabs.tasks.ui.teams.TaskTeamSection(task)
         }
     }
 }

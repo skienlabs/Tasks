@@ -190,6 +190,24 @@ class FakeApi : TasksApi {
         inviteList = inviteList - inv
         return com.skienlabs.tasks.data.AcceptResult(team)
     }
+
+    // Teams 2.0 calls: answered by [jsonReplies] (path -> JSON), recorded in [jsonCalls].
+    val jsonCalls = mutableListOf<Triple<String, String, kotlinx.serialization.json.JsonElement?>>()
+    val jsonReplies = LinkedHashMap<String, String>()
+    override suspend fun json(method: String, path: String, body: kotlinx.serialization.json.JsonElement?): kotlinx.serialization.json.JsonElement? {
+        jsonCalls += Triple(method, path, body)
+        if (offline) throw ApiException(0, "You appear to be offline")
+        val key = jsonReplies.keys.firstOrNull { "$method $path".startsWith(it) } ?: return when {
+            path.startsWith("/api/notifications") -> com.skienlabs.tasks.data.AppJson.parseToJsonElement("{\"notifications\":[],\"unread\":0}")
+            path.endsWith("/comments") -> com.skienlabs.tasks.data.AppJson.parseToJsonElement("{\"comments\":[]}")
+            path.endsWith("/templates") -> com.skienlabs.tasks.data.AppJson.parseToJsonElement("{\"templates\":[]}")
+            path.endsWith("/recurring") -> com.skienlabs.tasks.data.AppJson.parseToJsonElement("{\"recurring\":[]}")
+            path.endsWith("/link") -> com.skienlabs.tasks.data.AppJson.parseToJsonElement("{\"link\":null}")
+            path.contains("/activity") -> com.skienlabs.tasks.data.AppJson.parseToJsonElement("{\"activity\":[]}")
+            else -> null
+        }
+        return com.skienlabs.tasks.data.AppJson.parseToJsonElement(jsonReplies.getValue(key))
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)

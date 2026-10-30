@@ -1,5 +1,15 @@
 package com.skienlabs.tasks.ui.day
 
+import androidx.compose.ui.input.pointer.pointerInput
+
+import androidx.compose.foundation.layout.offset
+
+import androidx.compose.runtime.derivedStateOf
+
+import androidx.compose.runtime.snapshotFlow
+
+import androidx.compose.runtime.LaunchedEffect
+
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
@@ -113,49 +123,132 @@ import com.skienlabs.tasks.ui.theme.Palette
 
 // ---- Week strip ------------------------------------------------------------------
 
+private val STRIP_DAYS = (Dates.between(Dates.MIN, Dates.MAX) + 1).toInt()
+private fun stripIndex(date: String) = Dates.between(Dates.MIN, date).toInt()
+private fun stripDate(index: Int) = Dates.addDays(Dates.MIN, index.toLong())
+
+/**
+ * The days as a scroll wheel: seven at a time, the selected day in the middle. Flick it and it
+ * keeps going (fast flicks travel weeks), ticking on every day it passes, and settles on a day,
+ * which becomes the selected one. Tap a day to pick it directly. The month shows while scrolling.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun WeekStrip(date: String, today: String, summary: (String) -> Counts?, onSelect: (String) -> Unit) {
     val x = LocalExtra.current
-    val start = Dates.startOfWeek(date)
-    val letters = remember { Dates.weekdayLetters() }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        for (i in 0 until 7) {
-            val d = Dates.addDays(start, i.toLong())
-            val selected = d == date
-            val isToday = d == today
-            val c = summary(d)
-            val bg by animateColorAsState(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent, label = "day")
-            Column(
-                Modifier.weight(1f).clip(RoundedCornerShape(20.dp)).background(bg)
-                    .clickable(role = Role.Tab) { onSelect(d) }
-                    .semantics { contentDescription = Dates.fullLabel(d) }
-                    .padding(vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+    val haptics = LocalHapticFeedback.current
+    val selectedIndex = stripIndex(date)
+    val list = androidx.compose.foundation.lazy.rememberLazyListState(initialFirstVisibleItemIndex = (selectedIndex - 3).coerceAtLeast(0))
+    val fling = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(list, androidx.compose.foundation.gestures.snapping.SnapPosition.Start)
+    val current by rememberUpdatedState(date)
+    val select by rememberUpdatedState(onSelect)
+    var dragging by remember { mutableStateOf(false) }
+
+    // Scrolls the user starts (a drag, and the fling after it) tick and select; the app's own don't.
+    LaunchedEffect(list) {
+        list.interactionSource.interactions.collect { if (it is androidx.compose.foundation.interaction.DragInteraction.Start) dragging = true }
+    }
+    // A tick for every day that passes under the finger (not while the app moves the strip itself).
+    LaunchedEffect(list) {
+        var last = list.firstVisibleItemIndex
+        snapshotFlow { list.firstVisibleItemIndex }.collect { i ->
+            if (i != last && dragging) haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+            last = i
+        }
+    }
+    // When a scroll the user started comes to rest, the day in the middle is the selected one.
+    LaunchedEffect(list) {
+        snapshotFlow { list.isScrollInProgress }.collect { moving ->
+            if (moving) return@collect
+            if (dragging) {
+                dragging = false
+                val middle = stripDate((list.firstVisibleItemIndex + 3).coerceIn(0, STRIP_DAYS - 1))
+                if (middle != current) {
+                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                    select(middle)
+                }
+            }
+        }
+    }
+    // A day picked elsewhere (tap, calendar, Today): bring it to the middle.
+    LaunchedEffect(selectedIndex) {
+        val target = (selectedIndex - 3).coerceAtLeast(0)
+        if (list.isScrollInProgress && dragging) return@LaunchedEffect
+        val diff = target - list.firstVisibleItemIndex
+        if (diff == 0 && list.firstVisibleItemScrollOffset == 0) return@LaunchedEffect
+        if (kotlin.math.abs(diff) <= 14) list.animateScrollToItem(target) else list.scrollToItem(target)
+    }
+    // Which month the wheel is on, shown while it moves.
+    val middleDate by remember { derivedStateOf { stripDate((list.firstVisibleItemIndex + 3).coerceIn(0, STRIP_DAYS - 1)) } }
+    val monthAlpha by animateFloatAsState(if (list.isScrollInProgress && dragging) 1f else 0f, label = "month")
+
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+        val itemWidth = maxWidth / 7
+        androidx.compose.foundation.lazy.LazyRow(
+            state = list,
+            flingBehavior = fling,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            items(STRIP_DAYS, key = { it }) { i ->
+                val d = stripDate(i)
+                StripDay(d, d == date, d == today, summary(d), itemWidth) { select(d) }
+            }
+        }
+        if (monthAlpha > 0f) {
+            val label = remember(middleDate) {
+                java.time.LocalDate.parse(middleDate).format(java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy", java.util.Locale.getDefault()))
+            }
+            Box(
+                Modifier.align(Alignment.TopCenter).offset(y = (-2).dp).graphicsLayer { alpha = monthAlpha }
+                    .clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.inverseSurface).padding(horizontal = 12.dp, vertical = 4.dp),
             ) {
-                Text(letters[i], style = MaterialTheme.typography.labelSmall, color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                Box(
-                    Modifier.padding(top = 2.dp).size(32.dp).clip(CircleShape).background(if (isToday) MaterialTheme.colorScheme.primary else Color.Transparent),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        d.takeLast(2).trimStart('0'),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = if (isToday || selected) FontWeight.Bold else FontWeight.Normal,
-                        color = if (isToday) MaterialTheme.colorScheme.onPrimary else if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-                // Progress line: green = done, blue = left, red = not finished on a past day
-                // (left there, or moved on to the next day by itself).
-                Box(Modifier.padding(top = 4.dp).width(22.dp).height(4.dp)) {
-                    if (c != null && c.planned > 0) {
-                        val done = c.done.toFloat() / c.planned
-                        val leftColor = if (d < today) x.overdue else x.pending
-                        Box(Modifier.fillMaxSize().clip(RoundedCornerShape(50)).drawBehind {
-                            drawRect(x.done, size = Size(size.width * done, size.height))
-                            drawRect(leftColor, topLeft = Offset(size.width * done, 0f), size = Size(size.width * (1 - done), size.height))
-                        })
-                    }
-                }
+                Text(label, color = MaterialTheme.colorScheme.inverseOnSurface, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StripDay(d: String, selected: Boolean, isToday: Boolean, c: Counts?, width: androidx.compose.ui.unit.Dp, onClick: () -> Unit) {
+    val x = LocalExtra.current
+    val today = Dates.today()
+    val bg by animateColorAsState(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent, label = "day")
+    val day = java.time.LocalDate.parse(d)
+    Column(
+        Modifier.width(width).padding(horizontal = 1.dp).clip(RoundedCornerShape(20.dp)).background(bg)
+            .clickable(role = Role.Tab, onClick = onClick)
+            .semantics { contentDescription = Dates.fullLabel(d) }
+            .padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            if (day.dayOfMonth == 1) day.month.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault())
+            else day.dayOfWeek.getDisplayName(java.time.format.TextStyle.NARROW, java.util.Locale.getDefault()),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = if (day.dayOfMonth == 1) FontWeight.Bold else FontWeight.Normal,
+            color = if (isToday || day.dayOfMonth == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Box(
+            Modifier.padding(top = 2.dp).size(32.dp).clip(CircleShape).background(if (isToday) MaterialTheme.colorScheme.primary else Color.Transparent),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                day.dayOfMonth.toString(),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = if (isToday || selected) FontWeight.Bold else FontWeight.Normal,
+                color = if (isToday) MaterialTheme.colorScheme.onPrimary else if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        // Progress line: green = done, blue = left, red = not finished on a past day
+        // (left there, or moved on to the next day by itself).
+        Box(Modifier.padding(top = 4.dp).width(22.dp).height(4.dp)) {
+            if (c != null && c.planned > 0) {
+                val done = c.done.toFloat() / c.planned
+                val leftColor = if (d < today) x.overdue else x.pending
+                Box(Modifier.fillMaxSize().clip(RoundedCornerShape(50)).drawBehind {
+                    drawRect(x.done, size = Size(size.width * done, size.height))
+                    drawRect(leftColor, topLeft = Offset(size.width * done, 0f), size = Size(size.width * (1 - done), size.height))
+                })
             }
         }
     }
@@ -394,18 +487,23 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
     val rowTags = remember(task.tagIds, tags) { tags.filter { it.id in task.tagIds } }
     val target = Dates.postponeTarget(task.date, today)
     val postponeLabel = Dates.shortLabel(target, today).let { if (it == "Tomorrow") "Postpone to tomorrow" else "Postpone to $it" }
+    // A swipe asks first, on the card itself (an accidental swipe is then just a "No").
+    var ask by remember(task.id) { mutableStateOf<SwipeToDismissBoxValue?>(null) }
+    LaunchedEffect(ask) {
+        if (ask != null) {
+            kotlinx.coroutines.delay(6000) // no answer: leave it as it was
+            ask = null
+        }
+    }
+    LaunchedEffect(task.isPending) { if (!task.isPending) ask = null }
 
     SwipeToDismissBox(
         state = state,
-        enableDismissFromStartToEnd = task.isPending,
-        enableDismissFromEndToStart = task.isPending,
+        enableDismissFromStartToEnd = task.isPending && ask == null,
+        enableDismissFromEndToStart = task.isPending && ask == null,
         onDismiss = { direction ->
-            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-            when (direction) {
-                SwipeToDismissBoxValue.StartToEnd -> actions.toggle(current)
-                SwipeToDismissBoxValue.EndToStart -> actions.postpone(current)
-                else -> Unit
-            }
+            haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+            if (direction == SwipeToDismissBoxValue.StartToEnd || direction == SwipeToDismissBoxValue.EndToStart) ask = direction
             scope.launch { state.snapTo(SwipeToDismissBoxValue.Settled) }
         },
         backgroundContent = {
@@ -433,6 +531,23 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
             }
         },
     ) {
+        ask?.let { dir ->
+            val complete = dir == SwipeToDismissBoxValue.StartToEnd
+            SwipeConfirm(
+                title = task.title,
+                question = if (complete) "Mark as done?" else "$postponeLabel?",
+                color = if (complete) x.done else x.postponed,
+                icon = if (complete) Icons.Filled.CheckCircle else Icons.Outlined.EventRepeat,
+                yes = if (complete) "Done" else "Postpone",
+                onNo = { ask = null },
+                onYes = {
+                    ask = null
+                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                    if (complete) actions.toggle(current) else actions.postpone(current)
+                },
+            )
+            return@SwipeToDismissBox
+        }
         val spine = rowTags.take(4).map { tagColor(it.color) }
         // From an earlier day and still open: a soft outline in its tag's colour (red if high priority).
         val late = task.isPending && (task.isCarried || showOrigin)
@@ -523,6 +638,39 @@ fun TaskRow(task: Task, tags: List<Tag>, today: String, showOrigin: Boolean, act
                 TagMenu(tagMenu, { tagMenu = false }, tags, task.tagIds, { actions.setTags(task, it) }, actions.manageTags)
             }
         }
+    }
+}
+
+/** The card after a swipe: tinted in the action's colour, asking before it happens. */
+@Composable
+private fun SwipeConfirm(
+    title: String, question: String, color: Color, icon: androidx.compose.ui.graphics.vector.ImageVector, yes: String,
+    onNo: () -> Unit, onYes: () -> Unit,
+) {
+    val x = LocalExtra.current
+    val shape = RoundedCornerShape(16.dp)
+    val appear = remember { androidx.compose.animation.core.Animatable(0.94f) }
+    LaunchedEffect(Unit) { appear.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 600f)) }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+            .graphicsLayer { scaleX = appear.value; scaleY = appear.value }
+            .clip(shape).background(x.card).background(color.copy(alpha = if (x.dark) 0.22f else 0.14f))
+            .border(1.5.dp, color, shape)
+            .semantics(mergeDescendants = false) { contentDescription = "$question $title" }
+            .padding(start = 14.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = color, modifier = Modifier.size(26.dp))
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+            Text(question, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            Text(title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        androidx.compose.material3.TextButton(onClick = onNo) { Text("No") }
+        androidx.compose.material3.Button(
+            onClick = onYes,
+            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = color, contentColor = if (x.dark) Color.Black else Color.White),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+        ) { Text(yes, fontWeight = FontWeight.SemiBold) }
     }
 }
 

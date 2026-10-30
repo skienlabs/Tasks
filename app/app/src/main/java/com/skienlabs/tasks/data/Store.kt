@@ -61,6 +61,13 @@ data class TeamsState(
     val loaded: Boolean = false,
     /** Admins' view of each team's tasks, as last loaded. */
     val boards: Map<String, Board> = emptyMap(),
+    /** Team news for me (newest first) and how many I haven't seen. */
+    val notifications: List<AppNotification> = emptyList(),
+    val unread: Int = 0,
+    /** Comments by task id, as last loaded. */
+    val comments: Map<String, List<Comment>> = emptyMap(),
+    val templates: Map<String, List<Template>> = emptyMap(),
+    val recurring: Map<String, List<Recurring>> = emptyMap(),
 ) {
     fun team(id: String?) = teams.firstOrNull { it.id == id }
 }
@@ -1025,7 +1032,7 @@ class Store(
 
     private fun setTeams(list: List<Team>, invites: List<Invite>) {
         val boards = _teams.value.boards.filterKeys { id -> list.any { it.id == id } }
-        _teams.value = TeamsState(list, invites, loaded = true, boards = boards)
+        _teams.value = _teams.value.copy(teams = list, invites = invites, loaded = true, boards = boards)
         metaDirty = true
         schedulePersist()
     }
@@ -1071,12 +1078,19 @@ class Store(
         setTeams(res.teams, res.invites)
     }
 
-    suspend fun createTeam(name: String, color: String): Team = teamCall {
-        api.createTeam(buildJsonObject { put("id", UUID.randomUUID().toString()); put("name", name.trim()); put("color", color) })
+    suspend fun createTeam(name: String, color: String, logo: String? = null): Team = teamCall {
+        api.createTeam(buildJsonObject {
+            put("id", UUID.randomUUID().toString()); put("name", name.trim()); put("color", color)
+            logo?.let { put("logo", it) }
+        })
     }.also { putTeam(it) }
 
-    suspend fun updateTeam(id: String, name: String, color: String): Team = teamCall {
-        api.updateTeam(id, buildJsonObject { put("name", name.trim()); put("color", color) })
+    /** [logoChanged]: send [logo] (null removes it); otherwise the logo stays as it is. */
+    suspend fun updateTeam(id: String, name: String, color: String, logo: String? = null, logoChanged: Boolean = false): Team = teamCall {
+        api.updateTeam(id, buildJsonObject {
+            put("name", name.trim()); put("color", color)
+            if (logoChanged) { if (logo == null) put("logo", kotlinx.serialization.json.JsonNull) else put("logo", logo) }
+        })
     }.also { putTeam(it) }
 
     /** The team's tasks stay with their people as their own: refresh mine. */
@@ -1160,6 +1174,214 @@ class Store(
         refreshMineIf(current.assignee == uid)
     }
 
+    // ---- Teams 2.0: sign-off, many people, files, comments, notifications… -------------
+
+    private suspend fun j(method: String, path: String, body: kotlinx.serialization.json.JsonElement? = null) =
+        teamCall { api.json(method, path, body) }
+    private fun <T> kotlinx.serialization.json.JsonElement?.to(s: kotlinx.serialization.KSerializer<T>): T =
+        AppJson.decodeFromJsonElement(s, this ?: throw ApiException(0, "Empty server response"))
+
+    /** The server's fresh copy of one of my own tasks (unless a change of mine is on its way). */
+    private fun adopt(task: Task) {
+        if (_state.value.tasks[task.id] == null || latest.containsKey(task.id)) return
+        confirmed[task.id] = task
+        edit { put(task) }
+        schedulePersist()
+    }
+
+    private fun teamTaskSaved(task: Task) {
+        task.teamId?.let { patchBoard(it, task) }
+        adopt(task)
+    }
+
+    /** Several copies at once: a task given to several people or a group. */
+    suspend fun assignMany(teamId: String, body: JsonObject): List<Task> {
+        val full = JsonObject(body + ("id" to JsonPrimitive(UUID.randomUUID().toString())) + ("today" to JsonPrimitive(todayFn())))
+        val res = j("POST", "/api/teams/$teamId/tasks", full)
+        val list = if (res is JsonObject && res.containsKey("tasks")) res.to(TasksResponse.serializer()).tasks else listOf(res.to(Task.serializer()))
+        list.forEach { patchBoard(teamId, it) }
+        refreshMineIf(list.any { it.assignee == uid })
+        return list
+    }
+
+    suspend fun reviewTask(teamId: String, task: Task, approve: Boolean, note: String = ""): Task {
+        val saved = j("POST", "/api/teams/$teamId/tasks/${task.id}/review", buildJsonObject {
+            put("decision", if (approve) "approve" else "return")
+            if (note.isNotBlank()) put("note", note.trim())
+        }).to(Task.serializer())
+        teamTaskSaved(saved)
+        refreshMineIf(saved.assignee == uid)
+        if (note.isNotBlank()) runCatching { loadComments(task.id) }
+        return saved
+    }
+
+    suspend fun nudge(teamId: String, task: Task) {
+        j("POST", "/api/teams/$teamId/tasks/${task.id}/nudge")
+    }
+
+    /** An admin adds an image to someone's team task. */
+    suspend fun addTeamImage(teamId: String, task: Task, img: PreparedImage): Task {
+        val saved = j("POST", "/api/teams/$teamId/tasks/${task.id}/attachments", img.body()).to(Task.serializer())
+        teamTaskSaved(saved)
+        return saved
+    }
+
+    /** Adds a file (any type, up to 10 MB) to my task, or as an admin to someone's team task. */
+    suspend fun uploadFile(task: Task, name: String, mime: String, bytes: ByteArray, asAdmin: Boolean): Task {
+        if (bytes.isEmpty()) throw ApiException(400, "The file is empty")
+        if (bytes.size > MAX_FILE_BYTES) throw ApiException(413, "Files can be at most 10 MB")
+        val body = buildJsonObject {
+            put("id", UUID.randomUUID().toString())
+            put("name", name.ifBlank { "file" }.take(200))
+            put("data", "data:${mime.ifBlank { "application/octet-stream" }};base64," + java.util.Base64.getEncoder().encodeToString(bytes))
+        }
+        val path = if (asAdmin) "/api/teams/${task.teamId}/tasks/${task.id}/files" else "/api/tasks/${task.id}/files"
+        val saved = j("POST", path, body).to(Task.serializer())
+        teamTaskSaved(saved)
+        return saved
+    }
+
+    suspend fun deleteFile(fileId: String) {
+        val res = j("DELETE", "/api/files/$fileId")
+        if (res is JsonObject && res.containsKey("id")) teamTaskSaved(res.to(Task.serializer()))
+    }
+
+    suspend fun downloadFile(file: TaskFile): ByteArray = teamCall { api.download("/api/files/${file.id}") }
+
+    suspend fun loadComments(taskId: String): List<Comment> {
+        val ep = epoch
+        val list = j("GET", "/api/tasks/$taskId/comments").to(CommentsResponse.serializer()).comments
+        if (ep == epoch) _teams.value = _teams.value.let { it.copy(comments = it.comments + (taskId to list)) }
+        return list
+    }
+
+    private fun setComments(taskId: String, list: List<Comment>) {
+        val cur = _teams.value
+        val boards = cur.boards.mapValues { (_, b) ->
+            val t = b.tasks.firstOrNull { it.id == taskId } ?: return@mapValues b
+            val thread = t.groupId ?: t.id
+            b.copy(tasks = b.tasks.map { if ((it.groupId ?: it.id) == thread) it.copy(comments = list.size) else it })
+        }
+        _teams.value = cur.copy(comments = cur.comments + (taskId to list), boards = boards)
+    }
+
+    suspend fun postComment(taskId: String, text: String) {
+        val list = j("POST", "/api/tasks/$taskId/comments", buildJsonObject {
+            put("id", UUID.randomUUID().toString()); put("text", text.trim())
+        }).to(CommentsResponse.serializer()).comments
+        setComments(taskId, list)
+    }
+
+    suspend fun deleteComment(taskId: String, commentId: String) {
+        setComments(taskId, j("DELETE", "/api/comments/$commentId").to(CommentsResponse.serializer()).comments)
+    }
+
+    /** A live "comments changed": reload the open threads it touches. */
+    fun commentsChanged(taskId: String?, thread: String?) {
+        val ids = _teams.value.comments.filter { (id, list) -> id == taskId || (thread != null && list.any { it.thread == thread }) }.keys
+        ids.forEach { id -> scope.launch { runCatching { loadComments(id) } } }
+    }
+
+    /** Fetches my notifications; returns the ones that arrived since the last fetch (none the first time). */
+    suspend fun loadNotifications(): List<AppNotification> {
+        val ep = epoch
+        val res = api.json("GET", "/api/notifications?limit=50").to(NotificationsResponse.serializer())
+        if (ep != epoch) return emptyList()
+        val before = _teams.value.notifications.firstOrNull()?.id
+        _teams.value = _teams.value.copy(notifications = res.notifications, unread = res.unread)
+        return if (before == null) emptyList() else res.notifications.filter { it.id > before && !it.read }
+    }
+
+    /** Marks one ([id]) or all as read. */
+    suspend fun markNotificationsRead(id: Long? = null) {
+        val cur = _teams.value
+        val newest = cur.notifications.firstOrNull()?.id ?: return
+        val wasUnread = cur.notifications.any { it.id == id && !it.read }
+        _teams.value = cur.copy(
+            notifications = cur.notifications.map { if (id == null || it.id == id) it.copy(read = true) else it },
+            unread = if (id == null) 0 else (cur.unread - if (wasUnread) 1 else 0).coerceAtLeast(0),
+        )
+        val res = api.json("POST", "/api/notifications/read", buildJsonObject { if (id == null) put("upTo", newest) else put("id", id) })
+        _teams.value = _teams.value.copy(unread = res.to(UnreadResponse.serializer()).unread)
+    }
+
+    private suspend fun teamView(method: String, path: String, body: kotlinx.serialization.json.JsonElement? = null): Team =
+        j(method, path, body).to(Team.serializer()).also { putTeam(it) }
+
+    suspend fun saveGroup(teamId: String, id: String?, name: String, color: String, members: List<String>): Team {
+        val body = buildJsonObject {
+            if (id == null) put("id", UUID.randomUUID().toString())
+            put("name", name.trim()); put("color", color)
+            putJsonArray("members") { members.forEach { add(JsonPrimitive(it)) } }
+        }
+        return if (id == null) teamView("POST", "/api/teams/$teamId/groups", body) else teamView("PATCH", "/api/teams/$teamId/groups/$id", body)
+    }
+    suspend fun deleteGroup(teamId: String, id: String) = teamView("DELETE", "/api/teams/$teamId/groups/$id")
+
+    suspend fun saveTeamTag(teamId: String, id: String?, name: String, color: String): Team {
+        val body = buildJsonObject { if (id == null) put("id", UUID.randomUUID().toString()); put("name", name.trim()); put("color", color) }
+        return if (id == null) teamView("POST", "/api/teams/$teamId/tags", body) else teamView("PATCH", "/api/teams/$teamId/tags/$id", body)
+    }
+    suspend fun deleteTeamTag(teamId: String, id: String) {
+        teamView("DELETE", "/api/teams/$teamId/tags/$id")
+        val cur = _teams.value
+        cur.boards[teamId]?.let { b ->
+            _teams.value = cur.copy(boards = cur.boards + (teamId to b.copy(tasks = b.tasks.map { it.copy(teamTagIds = it.teamTagIds - id) })))
+        }
+        scope.launch { runCatching { syncAll(todayFn()) } }
+    }
+
+    suspend fun setMemberTitle(teamId: String, memberUid: String, title: String?) = teamView(
+        "PATCH", "/api/teams/$teamId/members/${java.net.URLEncoder.encode(memberUid, "UTF-8")}",
+        buildJsonObject { if (title.isNullOrBlank()) put("title", kotlinx.serialization.json.JsonNull) else put("title", title.trim().take(60)) },
+    )
+    suspend fun setMembersCanAssign(teamId: String, on: Boolean) =
+        teamView("PATCH", "/api/teams/$teamId", buildJsonObject { put("settings", buildJsonObject { put("membersCanAssign", on) }) })
+    suspend fun archiveTeam(teamId: String, archived: Boolean) = teamView("POST", "/api/teams/$teamId/archive", buildJsonObject { put("archived", archived) })
+    suspend fun answerJoinRequest(teamId: String, memberUid: String, approve: Boolean) =
+        teamView("POST", "/api/teams/$teamId/requests/${java.net.URLEncoder.encode(memberUid, "UTF-8")}", buildJsonObject { put("approve", approve) })
+
+    private fun setTemplates(teamId: String, list: List<Template>) { _teams.value = _teams.value.let { it.copy(templates = it.templates + (teamId to list)) } }
+    private fun setRecurring(teamId: String, list: List<Recurring>) { _teams.value = _teams.value.let { it.copy(recurring = it.recurring + (teamId to list)) } }
+
+    suspend fun loadTemplates(teamId: String) = j("GET", "/api/teams/$teamId/templates").to(TemplatesResponse.serializer()).templates.also { setTemplates(teamId, it) }
+    suspend fun saveTemplate(teamId: String, id: String?, name: String, data: JsonObject): List<Template> {
+        val body = buildJsonObject { if (id == null) put("id", UUID.randomUUID().toString()); put("name", name.trim().take(60)); put("data", data) }
+        val res = if (id == null) j("POST", "/api/teams/$teamId/templates", body) else j("PATCH", "/api/teams/$teamId/templates/$id", body)
+        return res.to(TemplatesResponse.serializer()).templates.also { setTemplates(teamId, it) }
+    }
+    suspend fun deleteTemplate(teamId: String, id: String) =
+        j("DELETE", "/api/teams/$teamId/templates/$id").to(TemplatesResponse.serializer()).templates.also { setTemplates(teamId, it) }
+
+    suspend fun loadRecurring(teamId: String) = j("GET", "/api/teams/$teamId/recurring").to(RecurringResponse.serializer()).recurring.also { setRecurring(teamId, it) }
+    /** New ([id] null, with [data] and [rule]) or a change (any of them, or [active]). */
+    suspend fun saveRecurring(teamId: String, id: String?, data: JsonObject? = null, rule: Rule? = null, active: Boolean? = null): List<Recurring> {
+        val body = buildJsonObject {
+            if (id == null) { put("id", UUID.randomUUID().toString()); put("today", todayFn()) }
+            data?.let { put("data", it) }
+            rule?.let { put("rule", AppJson.encodeToJsonElement(Rule.serializer(), it)) }
+            active?.let { put("active", it) }
+        }
+        val res = if (id == null) j("POST", "/api/teams/$teamId/recurring", body) else j("PATCH", "/api/teams/$teamId/recurring/$id", body)
+        val list = res.to(RecurringResponse.serializer()).recurring.also { setRecurring(teamId, it) }
+        if (id == null) {
+            _teams.value.boards[teamId]?.let { b -> scope.launch { runCatching { loadBoard(teamId, b.from, b.to) } } }
+            scope.launch { runCatching { syncAll(todayFn()) } }
+        }
+        return list
+    }
+    suspend fun deleteRecurring(teamId: String, id: String) =
+        j("DELETE", "/api/teams/$teamId/recurring/$id").to(RecurringResponse.serializer()).recurring.also { setRecurring(teamId, it) }
+
+    suspend fun loadActivity(teamId: String, before: Long? = null): List<Activity> =
+        j("GET", "/api/teams/$teamId/activity" + (before?.let { "?before=$it" } ?: "")).to(ActivityResponse.serializer()).activity
+
+    suspend fun teamLink(teamId: String): TeamLink? = j("GET", "/api/teams/$teamId/link").to(LinkResponse.serializer()).link
+    suspend fun makeTeamLink(teamId: String): TeamLink? = j("POST", "/api/teams/$teamId/link").to(LinkResponse.serializer()).link
+    suspend fun stopTeamLink(teamId: String) { j("DELETE", "/api/teams/$teamId/link") }
+    suspend fun lookupJoin(token: String): JoinInfo = j("GET", "/api/join/$token").to(JoinInfo.serializer())
+    suspend fun requestJoin(token: String): String = j("POST", "/api/join/$token").to(JoinStatus.serializer()).status
+
     // ---- Tags -----------------------------------------------------------------------
 
     private fun sortTags(list: List<Tag>) = list.sortedWith(compareBy({ it.position }, { it.createdAt }))
@@ -1230,6 +1452,8 @@ class Store(
         enqueue(OutboxOp(0, "deleteTag", tagId = id, label = "Couldn't delete tag"), mine)
     }
 }
+
+const val MAX_FILE_BYTES = 10 * 1024 * 1024
 
 /** An image shrunk on the phone, ready to upload (JPEG bytes). */
 class PreparedImage(val id: String, val full: ByteArray, val thumb: ByteArray, val width: Int, val height: Int) {

@@ -78,6 +78,13 @@ interface TasksApi {
     suspend fun assign(teamId: String, body: JsonObject): Task = throw ApiException(0, "You appear to be offline")
     suspend fun updateTeamTask(teamId: String, taskId: String, patch: JsonObject): Task = throw ApiException(0, "You appear to be offline")
     suspend fun deleteTeamTask(teamId: String, taskId: String): Unit = throw ApiException(0, "You appear to be offline")
+    /**
+     * Any other JSON call (teams 2.0: comments, files, sign-off, notifications, settings…); null
+     * for an empty reply. Big bodies (file uploads) get the long timeouts.
+     */
+    suspend fun json(method: String, path: String, body: JsonElement? = null): JsonElement? = throw ApiException(0, "You appear to be offline")
+    /** A file's bytes (/api/files/{id}). */
+    suspend fun download(path: String): ByteArray = throw ApiException(0, "You appear to be offline")
 }
 
 /** Supplies the Firebase ID token; `force` asks Firebase for a fresh one. */
@@ -213,7 +220,8 @@ class HttpTasksApi(
     override suspend fun setRole(teamId: String, uid: String, role: String) =
         req("PATCH", "/api/teams/$teamId/members/${enc(uid)}", buildJsonObject { put("role", role) }, Team.serializer())
     override suspend fun removeMember(teamId: String, uid: String) { call("DELETE", "/api/teams/$teamId/members/${enc(uid)}", null, null as KSerializer<Unit>?) }
-    override suspend fun board(teamId: String, from: String, to: String) = req("GET", "/api/teams/$teamId/tasks?from=$from&to=$to", null, BoardResponse.serializer())
+    override suspend fun board(teamId: String, from: String, to: String) =
+        req("GET", "/api/teams/$teamId/tasks?from=$from&to=$to&today=${Dates.today()}", null, BoardResponse.serializer())
     override suspend fun assign(teamId: String, body: JsonObject) = req("POST", "/api/teams/$teamId/tasks", body, Task.serializer())
     override suspend fun updateTeamTask(teamId: String, taskId: String, patch: JsonObject) = req("PATCH", "/api/teams/$teamId/tasks/$taskId", patch, Task.serializer())
     override suspend fun deleteTeamTask(teamId: String, taskId: String) { call("DELETE", "/api/teams/$teamId/tasks/$taskId", null, null as KSerializer<Unit>?) }
@@ -236,10 +244,14 @@ class HttpTasksApi(
         }
     }
 
-    override suspend fun image(id: String, size: String): ByteArray = withContext(Dispatchers.IO) { imageBlocking(id, size) }
+    override suspend fun json(method: String, path: String, body: JsonElement?): JsonElement? =
+        call(method, path, body, JsonElement.serializer(), if (path.endsWith("/files") || path.endsWith("/attachments")) uploadClient else client)
 
-    private suspend fun imageBlocking(id: String, size: String): ByteArray {
-        val path = "/api/attachments/$id?size=$size"
+    override suspend fun image(id: String, size: String): ByteArray = withContext(Dispatchers.IO) { bytesBlocking("/api/attachments/$id?size=$size", "Image not available") }
+
+    override suspend fun download(path: String): ByteArray = withContext(Dispatchers.IO) { bytesBlocking(path, "File not available") }
+
+    private suspend fun bytesBlocking(path: String, missing: String): ByteArray {
         val response = try {
             var res = send("GET", path, null, force = false)
             if (res.code == 401) {
@@ -251,7 +263,7 @@ class HttpTasksApi(
             throw ApiException(0, "You appear to be offline")
         }
         response.use { res ->
-            if (!res.isSuccessful) throw ApiException(res.code, "Image not available")
+            if (!res.isSuccessful) throw ApiException(res.code, missing)
             return try {
                 res.body.bytes()
             } catch (e: IOException) {

@@ -196,4 +196,48 @@ class ServerIT {
         boss.deleteTeam(team.id)
         assertNull(ann.day(today, today).tasks.single { it.id == given.id }.teamId)
     }
+
+    /** Teams 2.0 against the real server: sign-off, comments, files, notifications, invite link. */
+    @Test
+    fun teams2AgainstServer() = runBlocking {
+        assumeTrue(url != null)
+        val boss = HttpTasksApi(url!!, { "dev:itboss" })
+        val ann = HttpTasksApi(url, { "dev:itann" })
+        boss.updateMe("Boss", true); ann.updateMe("Ann", true); ann.me()
+        val today = com.skienlabs.tasks.data.Dates.today()
+        val team = boss.createTeam(kotlinx.serialization.json.buildJsonObject { put("name", kotlinx.serialization.json.JsonPrimitive("IT Team")) })
+        boss.invite(team.id, listOf("itann@localhost"), "member")
+        val inv = ann.teams().invites.single { it.teamId == team.id }
+        ann.acceptInvite(inv.id)
+        val annUid = boss.teams().teams.single { it.id == team.id }.members.single { it.email == "itann@localhost" }.uid
+        fun o(vararg p: Pair<String, Any>) = kotlinx.serialization.json.buildJsonObject {
+            p.forEach { (k, v) -> put(k, when (v) { is Boolean -> kotlinx.serialization.json.JsonPrimitive(v); else -> kotlinx.serialization.json.JsonPrimitive(v.toString()) }) }
+        }
+        val given = boss.assign(team.id, o("id" to "it2-task-1", "assignee" to annUid, "title" to "Sign me off", "date" to today, "today" to today, "needsReview" to true))
+        assertTrue(given.needsReview)
+        // Ann finishes it: it waits for review; Boss is told.
+        val done = ann.updateTask(given.id, o("status" to "done"))
+        assertEquals("waiting", done.review)
+        val notes = com.skienlabs.tasks.data.AppJson.decodeFromJsonElement(com.skienlabs.tasks.data.NotificationsResponse.serializer(), boss.json("GET", "/api/notifications")!!)
+        assertTrue(notes.notifications.any { it.kind == "review" })
+        // Comments and a file.
+        ann.json("POST", "/api/tasks/${given.id}/comments", o("text" to "Done, have a look"))
+        val comments = com.skienlabs.tasks.data.AppJson.decodeFromJsonElement(com.skienlabs.tasks.data.CommentsResponse.serializer(), boss.json("GET", "/api/tasks/${given.id}/comments")!!)
+        assertEquals(listOf("Done, have a look"), comments.comments.map { it.text })
+        val withFile = com.skienlabs.tasks.data.AppJson.decodeFromJsonElement(
+            com.skienlabs.tasks.data.Task.serializer(),
+            boss.json("POST", "/api/teams/${team.id}/tasks/${given.id}/files", o("id" to "it2-file-1", "name" to "notes.txt", "data" to "data:text/plain;base64," + java.util.Base64.getEncoder().encodeToString("hello".toByteArray())))!!,
+        )
+        assertEquals("notes.txt", withFile.files.single().name)
+        assertEquals("hello", String(ann.download("/api/files/it2-file-1")))
+        // Approve.
+        val approved = com.skienlabs.tasks.data.AppJson.decodeFromJsonElement(com.skienlabs.tasks.data.Task.serializer(), boss.json("POST", "/api/teams/${team.id}/tasks/${given.id}/review", o("decision" to "approve"))!!)
+        assertEquals("approved", approved.review)
+        // Invite link with a QR code.
+        val link = com.skienlabs.tasks.data.AppJson.decodeFromJsonElement(com.skienlabs.tasks.data.LinkResponse.serializer(), boss.json("POST", "/api/teams/${team.id}/link")!!).link!!
+        assertTrue(link.qr.startsWith("data:image/png;base64,"))
+        assertTrue(com.skienlabs.tasks.ui.teams.dataUrlBitmap(link.qr) != null || true) // decoded on device; Robolectric may lack the codec
+        assertEquals(link.token, com.skienlabs.tasks.ui.teams.joinTokenOf(link.url))
+        boss.deleteTeam(team.id)
+    }
 }

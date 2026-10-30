@@ -28,10 +28,18 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- A team's invite link (or its QR code) opens the app to ask to join. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="${apiHost}" android:pathPrefix="/join/" />
+            </intent-filter>
         </activity>
 
         <receiver android:name=".notify.SummaryReceiver" android:exported="false" />
         <receiver android:name=".notify.DueReceiver" android:exported="false" />
+        <receiver android:name=".notify.TeamNoticesReceiver" android:exported="false" />
         <receiver android:name=".notify.RescheduleReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

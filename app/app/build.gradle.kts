@@ -33,9 +33,11 @@ android {
         applicationId = "com.skienlabs.tasks"
         minSdk = 28
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.9.0"
+        versionCode = 14
+        versionName = "2.0.0"
         buildConfigField("String", "API_URL", "\"${apiUrl.trimEnd('/')}\"")
+        // Invite links (https://<server>/join/...) open the app.
+        manifestPlaceholders["apiHost"] = Regex("^https?://([^/:]+)").find(apiUrl)?.groupValues?.get(1) ?: "tasks.example.com"
         buildConfigField("boolean", "FIREBASE_CONFIGURED", hasFirebaseConfig.toString())
     }
 

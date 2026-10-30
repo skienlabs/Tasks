@@ -90,6 +90,10 @@ export function loadConfig(env = process.env, log = (m) => console.warn(`[config
     staticDir: path.resolve(env.STATIC_DIR || path.join(here, '../public')),
     // The Android app offered for download on the web (see web/downloads/README.md).
     apkPath: path.resolve(env.ANDROID_APK_PATH || path.join(here, '../downloads/Tasks.apk')),
+    // The address people open the app at (for invite links). Default: taken from each request.
+    publicUrl: env.PUBLIC_URL || null,
+    // Admins' morning summary goes out after this hour (UTC); 3 = 08:30 in India, 04:00 in Central Europe.
+    digestHourUtc: Number.isInteger(Number(env.DIGEST_HOUR_UTC)) && env.DIGEST_HOUR_UTC !== undefined ? Number(env.DIGEST_HOUR_UTC) : 3,
     firebase: loadFirebase(env, log),
     allowList: parseAllowList(env.ALLOWED_EMAILS),
     devAuth,

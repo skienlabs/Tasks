@@ -233,7 +233,7 @@ class ScreensTest {
             Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(16.dp),
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(18.dp),
         ) {
-            com.skienlabs.tasks.ui.account.ProfileHero(profile, Counts(pending = 7, done = 12))
+            com.skienlabs.tasks.ui.account.ProfileHero(profile, Counts(pending = 7, done = 12), onEditName = {})
             com.skienlabs.tasks.ui.account.Section("Profile") {
                 com.skienlabs.tasks.ui.account.SettingRow(Icons.Outlined.Sell, "Change password", "We'll email you a reset link") {}
             }

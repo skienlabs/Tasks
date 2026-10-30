@@ -16,7 +16,7 @@
 //   so one account's late responses can never land in another account.
 
 import { useSyncExternalStore } from 'react';
-import { ApiError, api, newId } from './api.js';
+import { ApiError, api, authHeaders, newId } from './api.js';
 import * as idb from './idb.js';
 import { addDays, shortLabel, todayKey } from './dates.js';
 import { tagsOf, taskComparator } from './order.js';
@@ -42,6 +42,8 @@ let teams = []; // the teams I'm in, as I see them (members, my role, invites if
 let invites = []; // invites waiting for me
 let teamsLoaded = false;
 const boards = new Map(); // teamId -> { tasks, from, to } last loaded (admins' view of the team's tasks)
+let notes = { list: [], unread: 0, loaded: false }; // notifications (team events)
+const threads = new Map(); // taskId -> { thread, comments } (comments on team tasks)
 let seq = 0;
 let epoch = 0;
 let version = 0;
@@ -234,6 +236,8 @@ export function clearStore() {
   invites = [];
   teamsLoaded = false;
   boards.clear();
+  notes = { list: [], unread: 0, loaded: false };
+  threads.clear();
   toldOffline = false;
   toast = null;
   clearImages();
@@ -1067,9 +1071,9 @@ const teamsOnline = () => {
   if (!online) throw new ApiError(0, 'Teams need a connection. Try again when you are back online.');
 };
 
-export async function createTeam(name, color = 'blue') {
+export async function createTeam(name, color = 'blue', logo = null) {
   teamsOnline();
-  const view = await api('POST', '/api/teams', { id: newId(), name, color });
+  const view = await api('POST', '/api/teams', { id: newId(), name, color, ...(logo ? { logo } : {}) });
   putTeam(view);
   return view;
 }
@@ -1138,7 +1142,7 @@ export function selectBoard(teamId) {
 /** The team's tasks on days from..to plus every open one (admins only). */
 export async function loadBoard(teamId, from, to) {
   const ep = epoch;
-  const res = await api('GET', `/api/teams/${teamId}/tasks?from=${from}&to=${to}`);
+  const res = await api('GET', `/api/teams/${teamId}/tasks?from=${from}&to=${to}&today=${todayKey()}`);
   if (ep !== epoch) return null;
   const board = { tasks: res.tasks, from, to, at: Date.now() };
   boards.set(teamId, board);
@@ -1180,4 +1184,287 @@ export async function deleteTeamTask(teamId, current) {
   await api('DELETE', `/api/teams/${teamId}/tasks/${current.id}`);
   patchBoard(teamId, current, true);
   refreshMine(current);
+}
+
+/** Puts the server's fresh copy of one of my tasks in place (unless a change of mine is still on its way). */
+function adopt(task) {
+  if (!task?.id || !byId.has(task.id) || latest.has(task.id)) return;
+  confirmed.set(task.id, task);
+  put(task);
+  schedulePersist();
+  emit();
+}
+
+/** A team task changed on the server: the board shows it, and so does my own list if it's mine. */
+function teamTaskSaved(task) {
+  if (!task) return;
+  if (task.teamId) patchBoard(task.teamId, task);
+  if (byId.has(task.id)) adopt(task);
+}
+
+// ---- Teams 2.0: sign-off, nudges, files, comments ------------------------------------
+
+export async function reviewTask(teamId, task, decision, note = '') {
+  teamsOnline();
+  const saved = await api('POST', `/api/teams/${teamId}/tasks/${task.id}/review`, { decision, ...(note.trim() ? { note } : {}) });
+  teamTaskSaved(saved);
+  refreshMine(saved);
+  if (note.trim()) loadComments(task.id).catch(() => {});
+  return saved;
+}
+
+export async function nudgeTask(teamId, task) {
+  teamsOnline();
+  await api('POST', `/api/teams/${teamId}/tasks/${task.id}/nudge`);
+}
+
+/** Many people's copies at once (one task given to several people, a sub-group). */
+export async function assignTasks(teamId, data) {
+  teamsOnline();
+  const res = await api('POST', `/api/teams/${teamId}/tasks`, { id: newId(), today: todayKey(), ...data });
+  const list = res.tasks ?? [res];
+  for (const t of list) patchBoard(teamId, t);
+  refreshMine(...list);
+  return list;
+}
+
+export const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+function readDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(new Error("Couldn't read the file"));
+    r.readAsDataURL(file);
+  });
+}
+
+/** Adds a file (PDF, document, sheet…) to a task: my own, or (admins) a team task. Online only. */
+export async function uploadFile(task, file, { asAdmin = false } = {}) {
+  if (!online) throw new ApiError(0, 'Files need a connection. Try again when you are back online.');
+  if (file.size > MAX_FILE_BYTES) throw new ApiError(413, `Files can be at most ${MAX_FILE_BYTES / 1024 / 1024} MB`);
+  if (!file.size) throw new ApiError(400, 'The file is empty');
+  let data = await readDataUrl(file);
+  // Some files come without a type ("data:;base64,…").
+  if (data.startsWith('data:;')) data = `data:application/octet-stream;${data.slice(6)}`;
+  const body = { id: newId(), name: file.name || 'file', data };
+  const url = asAdmin ? `/api/teams/${task.teamId}/tasks/${task.id}/files` : `/api/tasks/${task.id}/files`;
+  const saved = await api('POST', url, body);
+  teamTaskSaved(saved);
+  if (!saved.teamId) adopt(saved);
+  return saved;
+}
+
+export async function deleteFile(task, fileId) {
+  teamsOnline();
+  const saved = await api('DELETE', `/api/files/${fileId}`);
+  if (saved?.id) {
+    teamTaskSaved(saved);
+    if (!saved.teamId) adopt(saved);
+  }
+}
+
+/** Downloads a file (with sign-in) and hands it to the browser to save. */
+export async function downloadFile(file) {
+  const res = await fetch(`/api/files/${file.id}`, { headers: await authHeaders(), cache: 'no-store' });
+  if (!res.ok) throw new ApiError(res.status, res.status === 404 ? 'File not found' : 'Download failed');
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = file.name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+export function selectComments(taskId) {
+  return threads.get(taskId) ?? null;
+}
+
+export async function loadComments(taskId) {
+  const ep = epoch;
+  const res = await api('GET', `/api/tasks/${taskId}/comments`);
+  if (ep !== epoch) return null;
+  const thread = res.comments[0]?.thread ?? threads.get(taskId)?.thread ?? null;
+  threads.set(taskId, { thread, comments: res.comments });
+  emit();
+  return res.comments;
+}
+
+export async function postComment(taskId, text) {
+  teamsOnline();
+  const res = await api('POST', `/api/tasks/${taskId}/comments`, { id: newId(), text });
+  threads.set(taskId, { thread: res.comments[0]?.thread ?? null, comments: res.comments });
+  bumpCommentCount(taskId, res.comments.length);
+  emit();
+}
+
+export async function deleteComment(taskId, commentId) {
+  teamsOnline();
+  const res = await api('DELETE', `/api/comments/${commentId}`);
+  threads.set(taskId, { thread: threads.get(taskId)?.thread ?? null, comments: res.comments });
+  bumpCommentCount(taskId, res.comments.length);
+  emit();
+}
+
+function bumpCommentCount(taskId, n) {
+  for (const [id, b] of boards) {
+    if (b.tasks.some((t) => t.id === taskId)) {
+      const thread = b.tasks.find((t) => t.id === taskId).groupId ?? taskId;
+      boards.set(id, { ...b, tasks: b.tasks.map((t) => ((t.groupId ?? t.id) === thread ? { ...t, comments: n } : t)) });
+    }
+  }
+}
+
+/** A live "comments changed" event: reload the threads that are open. */
+export function commentsChanged(change) {
+  for (const [taskId, th] of threads) {
+    if (taskId === change.taskId || (th.thread && th.thread === change.thread)) loadComments(taskId).catch(() => {});
+  }
+}
+
+// ---- Notifications ------------------------------------------------------------------
+
+export function selectNotifications() {
+  return notes;
+}
+
+export async function loadNotifications() {
+  const ep = epoch;
+  const res = await api('GET', '/api/notifications?limit=50');
+  if (ep !== epoch) return null;
+  const before = notes.list[0]?.id ?? null;
+  notes = { list: res.notifications, unread: res.unread, loaded: true };
+  emit();
+  // New ones since last time (not on the first load): what the caller may show as a toast.
+  return before == null ? [] : res.notifications.filter((n) => n.id > before && !n.read);
+}
+
+export async function markNotificationsRead(id) {
+  const newest = notes.list[0]?.id;
+  if (newest == null) return;
+  notes = {
+    ...notes,
+    list: notes.list.map((n) => (id == null || n.id === id ? { ...n, read: true } : n)),
+    unread: id == null ? 0 : Math.max(0, notes.unread - (notes.list.some((n) => n.id === id && !n.read) ? 1 : 0)),
+  };
+  emit();
+  const res = await api('POST', '/api/notifications/read', id == null ? { upTo: newest } : { id });
+  notes = { ...notes, unread: res.unread };
+  emit();
+}
+
+// ---- Teams 2.0: the team's own things ----------------------------------------------
+
+/** A team change that returns the team's fresh view (groups, tags, titles, settings…). */
+async function teamCall(method, url, body) {
+  teamsOnline();
+  const view = await api(method, url, body);
+  putTeam(view);
+  return view;
+}
+
+export const saveGroup = (teamId, group) => (group.id && selectTeam(teamId)?.groups?.some((g) => g.id === group.id)
+  ? teamCall('PATCH', `/api/teams/${teamId}/groups/${group.id}`, { name: group.name, color: group.color, members: group.members })
+  : teamCall('POST', `/api/teams/${teamId}/groups`, { id: newId(), name: group.name, color: group.color, members: group.members }));
+export const deleteGroup = (teamId, id) => teamCall('DELETE', `/api/teams/${teamId}/groups/${id}`);
+
+export const saveTeamTag = (teamId, tag) => (tag.id
+  ? teamCall('PATCH', `/api/teams/${teamId}/tags/${tag.id}`, { name: tag.name, color: tag.color })
+  : teamCall('POST', `/api/teams/${teamId}/tags`, { id: newId(), name: tag.name, color: tag.color }));
+export async function deleteTeamTag(teamId, id) {
+  await teamCall('DELETE', `/api/teams/${teamId}/tags/${id}`);
+  const b = boards.get(teamId);
+  if (b) boards.set(teamId, { ...b, tasks: b.tasks.map((t) => ({ ...t, teamTagIds: (t.teamTagIds ?? []).filter((x) => x !== id) })) });
+  syncAll().catch(() => {});
+}
+
+export const setMemberTitle = (teamId, memberUid, title) => teamCall('PATCH', `/api/teams/${teamId}/members/${encodeURIComponent(memberUid)}`, { title: title?.trim() ? title.trim() : null });
+export const setTeamSettings = (teamId, settings) => teamCall('PATCH', `/api/teams/${teamId}`, { settings });
+export const archiveTeam = (teamId, archived) => teamCall('POST', `/api/teams/${teamId}/archive`, { archived });
+export async function answerJoinRequest(teamId, memberUid, approve) {
+  await teamCall('POST', `/api/teams/${teamId}/requests/${encodeURIComponent(memberUid)}`, { approve });
+}
+
+/** Templates: { templates } lists, kept per team while the app is open. */
+const teamLists = new Map(); // `${kind}:${teamId}` -> list
+export function selectTeamList(kind, teamId) {
+  return teamLists.get(`${kind}:${teamId}`) ?? null;
+}
+function setTeamList(kind, teamId, list) {
+  teamLists.set(`${kind}:${teamId}`, list);
+  emit();
+  return list;
+}
+export async function loadTemplates(teamId) {
+  return setTeamList('templates', teamId, (await api('GET', `/api/teams/${teamId}/templates`)).templates);
+}
+export async function saveTemplate(teamId, t) {
+  teamsOnline();
+  const res = t.id
+    ? await api('PATCH', `/api/teams/${teamId}/templates/${t.id}`, { name: t.name, data: t.data })
+    : await api('POST', `/api/teams/${teamId}/templates`, { id: newId(), name: t.name, data: t.data });
+  return setTeamList('templates', teamId, res.templates);
+}
+export async function deleteTemplate(teamId, id) {
+  teamsOnline();
+  return setTeamList('templates', teamId, (await api('DELETE', `/api/teams/${teamId}/templates/${id}`)).templates);
+}
+export async function loadRecurring(teamId) {
+  return setTeamList('recurring', teamId, (await api('GET', `/api/teams/${teamId}/recurring`)).recurring);
+}
+export async function saveRecurring(teamId, r) {
+  teamsOnline();
+  const res = r.id
+    ? await api('PATCH', `/api/teams/${teamId}/recurring/${r.id}`, { ...(r.data ? { data: r.data } : {}), ...(r.rule ? { rule: r.rule } : {}), ...(r.active !== undefined ? { active: r.active } : {}) })
+    : await api('POST', `/api/teams/${teamId}/recurring`, { id: newId(), data: r.data, rule: r.rule, today: todayKey() });
+  setTeamList('recurring', teamId, res.recurring);
+  if (!r.id) {
+    // Today's copy may have been given right away.
+    const b = boards.get(teamId);
+    if (b) loadBoard(teamId, b.from, b.to).catch(() => {});
+    syncAll().catch(() => {});
+  }
+  return res.recurring;
+}
+export async function deleteRecurring(teamId, id) {
+  teamsOnline();
+  return setTeamList('recurring', teamId, (await api('DELETE', `/api/teams/${teamId}/recurring/${id}`)).recurring);
+}
+export async function loadActivity(teamId, before) {
+  const res = await api('GET', `/api/teams/${teamId}/activity${before ? `?before=${before}` : ''}`);
+  return res.activity;
+}
+
+// Invite link (and its QR code) and joining by link.
+export async function loadTeamLink(teamId) {
+  return (await api('GET', `/api/teams/${teamId}/link`)).link;
+}
+export async function makeTeamLink(teamId) {
+  teamsOnline();
+  return (await api('POST', `/api/teams/${teamId}/link`)).link;
+}
+export async function stopTeamLink(teamId) {
+  teamsOnline();
+  await api('DELETE', `/api/teams/${teamId}/link`);
+}
+export async function lookupJoin(token) {
+  return api('GET', `/api/join/${encodeURIComponent(token)}`);
+}
+export async function requestJoin(token) {
+  teamsOnline();
+  return api('POST', `/api/join/${encodeURIComponent(token)}`);
+}
+
+/** An admin adds an image (lib/images.js prepareImage) to someone's team task. Online only. */
+export async function addTeamImage(teamId, task, img) {
+  teamsOnline();
+  seedImage(img.id, 'thumb', img.previewUrl);
+  const saved = await api('POST', `/api/teams/${teamId}/tasks/${task.id}/attachments`, {
+    id: img.id, image: img.image, thumb: img.thumb, width: img.width, height: img.height,
+  });
+  teamTaskSaved(saved);
+  return saved;
 }

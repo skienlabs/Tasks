@@ -523,3 +523,15 @@ object Palette {
     fun priority(p: Int, dark: Boolean): Color = priorities[(p - 1).coerceIn(0, 3)].let { if (dark) it.dark else it.light }
     fun priorityLabel(p: Int) = priorities[(p - 1).coerceIn(0, 3)].label
 }
+
+/**
+ * Floating buttons: the theme's own container, except in Glass themes, where containers are
+ * see-through and a floating button over the list would let the cards show through it. There it
+ * is solid and raised.
+ */
+@androidx.compose.runtime.Composable
+fun fabColors(): Pair<Color, Color> {
+    val glass = LocalExtra.current.glass != null
+    val cs = androidx.compose.material3.MaterialTheme.colorScheme
+    return if (glass) cs.primary to cs.onPrimary else cs.primaryContainer to cs.onPrimaryContainer
+}

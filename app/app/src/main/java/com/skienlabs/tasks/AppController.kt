@@ -74,6 +74,23 @@ class AppController(context: Context) {
 
     /** Set when the app is opened from the widget's "+" button. */
     val newTaskRequest = MutableStateFlow(false)
+    /** A team to open (from a notification), and an invite link's token to join with. */
+    val openTeamRequest = MutableStateFlow<String?>(null)
+    val joinRequest = MutableStateFlow<String?>(null)
+    /** One of my tasks to show (from a notification). */
+    val openTaskRequest = MutableStateFlow<String?>(null)
+
+    /** A tapped team notification: my task in its day, or else its team. */
+    fun openNotice(taskId: String?, teamId: String?) {
+        scope.launch {
+            // The task may only just have been given: fetch the latest copy first.
+            if (taskId != null && store.state.value.tasks[taskId] == null) runCatching { store.syncAll(_today.value) }
+            when {
+                taskId != null && store.state.value.tasks[taskId] != null -> openTaskRequest.value = taskId
+                teamId != null -> openTeamRequest.value = teamId
+            }
+        }
+    }
 
     private val appContext = context.applicationContext
 
@@ -207,6 +224,19 @@ class AppController(context: Context) {
         scope.launch { runCatching { store.loadTeams() } }
     }
 
+    /**
+     * Team news: refreshes the bell. New ones while the app is open show as a message; the
+     * background check (TeamNotices) won't post them again.
+     */
+    fun refreshNotifications(announce: Boolean = false) {
+        if (_session.value !is Session.Ready) return
+        scope.launch {
+            val fresh = runCatching { store.loadNotifications() }.getOrNull() ?: return@launch
+            store.teams.value.notifications.firstOrNull()?.let { com.skienlabs.tasks.notify.TeamNotices.markSeen(appContext, store.currentUid, it.id) }
+            if (announce && fresh.isNotEmpty()) store.toast(if (fresh.size == 1) fresh[0].title else "${fresh.size} new notifications")
+        }
+    }
+
     fun refreshAll(quiet: Boolean) {
         if (_session.value !is Session.Ready) return
         val date = visibleDate.value
@@ -216,6 +246,7 @@ class AppController(context: Context) {
         refreshSummary()
         refreshTags()
         refreshTeams()
+        refreshNotifications()
         currentUser()?.let { loadProfile(it) }
         _statsVersion.value++
         // Send what was changed offline, and keep the offline copy fresh (at most every 2 minutes).
@@ -256,6 +287,8 @@ class AppController(context: Context) {
             }
             "profile" -> pendingProfile = true
             "invites" -> refreshTeams()
+            "notifications" -> refreshNotifications(announce = true)
+            "comments" -> store.commentsChanged(c.taskId, c.thread)
             "teams" -> {
                 refreshTeams()
                 // An admin's view of the team's tasks follows along (someone completed one).

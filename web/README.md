@@ -137,7 +137,7 @@ All endpoints except `/api/health` and `/api/config` need `Authorization: Bearer
 | GET | `/api/summary?from=&to=` | Per-day counts for the calendar (max 92 days): `pending, done, cancelled`, and `missed` (tasks that were on the day unfinished and moved on) |
 | GET | `/api/search?q=&today=&limit=` | Ranked search over all tasks (`limit` 1–100, default 30). Words, "phrases", `#tag`/`tag:`, `is:open\|done\|cancelled\|late`, `p:high\|medium\|low\|none`, `date:today\|tomorrow\|yesterday\|week\|month\|YYYY-MM-DD`, `before:`, `after:`, `has:steps\|images\|notes`. Returns `{ results (tasks, each with an optional match {field, text}), total, fuzzy, terms, suggestions }` |
 | POST | `/api/tasks` | `{ title, date, priority?, notes?, id?, dueAt? }` (client `id` makes retries safe; `dueAt` is a time limit, local `YYYY-MM-DDTHH:MM`) |
-| PATCH | `/api/tasks/:id` | Any of `title, notes, priority, date, status, postponed, tagIds, subtasks, dueAt` (`dueAt: null` removes it). On a team task, someone who isn't its team's admin may change `status` (not to cancelled), `date`, `postponed`, `notes`, their own `tagIds` and tick `subtasks`; anything else is 403, and so is deleting it |
+| PATCH | `/api/tasks/:id` | Any of `title, notes, priority, date, status, postponed, tagIds, subtasks, dueAt` (`dueAt: null` removes it). On a team task, someone who isn't its team's admin may change `status` (not to cancelled), `date`, `postponed`, `notes`, their own `tagIds` and tick `subtasks`; anything else is 403, and so is deleting it. An approved task, or a shared copy someone else finished, stays as it is for them |
 | POST | `/api/tasks/:id/postpone` | `{ today, from? }` moves to the day after today (or after its own date, if later). With `from` (the day it was on), a repeat finds it already moved and leaves it |
 | DELETE | `/api/tasks/:id` | Its images are kept for a day so Undo can bring them back |
 | POST | `/api/tasks/:id/attachments` | `{ id, image, thumb, width, height }` (JPEG/PNG/WebP data URLs, resized on the device; max 6 MB, 20 per task). Returns the task |
@@ -148,7 +148,7 @@ All endpoints except `/api/health` and `/api/config` need `Authorization: Bearer
 | PATCH | `/api/tags/:id` | Any of `name, color, logo, position` |
 | DELETE | `/api/tags/:id` | Also removes it from tasks |
 | GET | `/api/stats?from=&to=&today=` | Month summary: per day (with `missed`), per tag, per priority, overdue, postponed |
-| GET | `/api/events` | Live sync (Server-Sent Events): `ready`, then `change` `{type: tasks\|tags\|profile\|teams\|invites, dates, teamId, source}` whenever something changes for you (on another device, or a teammate). Send `X-Client-Id` on writes so a device can skip its own changes. |
+| GET | `/api/events` | Live sync (Server-Sent Events): `ready`, then `change` `{type: tasks\|tags\|profile\|teams\|invites\|notifications\|comments, dates, teamId, taskId, thread, source}` whenever something changes for you (on another device, or a teammate). Send `X-Client-Id` on writes so a device can skip its own changes. |
 | GET | `/download/android` | The Android APK, when the server has one (public; `GET /api/config` says `android: { size, updatedAt }` or `null`) |
 
 ### Teams
@@ -158,8 +158,8 @@ A team has one **owner**, **admins** and **members**. Admins invite people by em
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/api/teams` | `{ teams, invites }`: my teams (`role` is mine; `members`; `invites` for admins only) and invites waiting for my email |
-| POST | `/api/teams` | `{ name, color?, id? }`: I become the owner |
-| PATCH | `/api/teams/:id` | Admins: `{ name?, color? }` |
+| POST | `/api/teams` | `{ name, color?, logo?, id? }`: I become the owner (`logo`: PNG/JPEG/WebP data URL, ~128px) |
+| PATCH | `/api/teams/:id` | Admins: `{ name?, color?, logo? }` (`logo: null` removes it) |
 | DELETE | `/api/teams/:id` | Owner only |
 | POST | `/api/teams/:id/invites` | Admins: `{ emails: [..] (up to 50), role?: member\|admin }` returns `{ team, invited, alreadyMembers }` |
 | DELETE | `/api/teams/:id/invites/:inviteId` | Admins: cancel an invite |
@@ -167,10 +167,33 @@ A team has one **owner**, **admins** and **members**. Admins invite people by em
 | POST | `/api/invites/:id/accept` | Join (the email must be verified); `/decline` turns it down |
 | PATCH | `/api/teams/:id/members/:uid` | `{ role }`: admins make members admins; the owner also makes admins members, or hands the team over (`owner`) |
 | DELETE | `/api/teams/:id/members/:uid` | Leave (my own uid; not the owner) or remove someone (admins remove members; the owner anyone) |
-| GET | `/api/teams/:id/tasks?from=&to=` | Admins: the team's tasks on those days (max 92) plus every open one; tags left out |
-| POST | `/api/teams/:id/tasks` | Admins: `{ assignee, title, date, notes?, priority?, subtasks?, dueAt?, id?, today? }` |
-| PATCH | `/api/teams/:id/tasks/:taskId` | Admins: any of `assignee` (moves it, with its images; the person's tags stay behind), `title, notes, priority, date, status, subtasks, dueAt` |
+| GET | `/api/teams/:id/tasks?from=&to=&today=` | The team's tasks on those days (max 92) plus every open one, with `comments` (count); tags left out. Admins see all; members the ones they have or gave |
+| POST | `/api/teams/:id/tasks` | Admins (or members, with `membersCanAssign`): `{ title, date, assignee \| assignees: [..] \| groupId, mode?: each\|first, notes?, priority?, subtasks?, dueAt?, needsReview?, teamTagIds?, id?, today? }`; several people return `{ tasks }` (ids `<id>-0`, `<id>-1`…, sharing `groupId`) |
+| PATCH | `/api/teams/:id/tasks/:taskId` | Admins, or whoever gave it: any of `assignee` (moves it, with its images and files; the person's tags stay behind), `title, notes, priority, date, status, subtasks, dueAt, needsReview, teamTagIds` |
 | DELETE | `/api/teams/:id/tasks/:taskId` | Admins |
+| POST | `/api/teams/:id/tasks/:taskId/review` | `{ decision: approve\|return, note? }` on a task `review: waiting` (the note becomes a comment) |
+| POST | `/api/teams/:id/tasks/:taskId/nudge` | A reminder to its person (open tasks; at most every 30 minutes) |
+| POST | `/api/teams/:id/tasks/:taskId/attachments` | Admins add an image to someone's team task (same body as `/api/tasks/:id/attachments`) |
+| POST | `/api/teams/:id/tasks/:taskId/files` | Admins add a file: `{ id, name, data }` (`data`: a base64 data URL, up to 10 MB, 20 per task) |
+| POST | `/api/tasks/:id/files` | A file on my own task (same body) |
+| GET / DELETE | `/api/files/:id` | Download (always as an attachment) / remove (its person, whoever added it, or a team admin) |
+| GET / POST | `/api/tasks/:id/comments` | Comments on a team task (`{ text, id? }`); for its person, whoever gave it, the people sharing it, and admins |
+| DELETE | `/api/comments/:id` | Your own, or any as an admin |
+| GET | `/api/notifications?after=&limit=` | `{ notifications, unread }`, newest first |
+| POST | `/api/notifications/read` | `{ upTo }` (all up to that id) or `{ id }` |
+| PATCH | `/api/teams/:id` | Admins also: `{ settings: { membersCanAssign } }` |
+| POST | `/api/teams/:id/archive` | Owner: `{ archived }`; an archived team is read-only (writes answer 409) |
+| POST / PATCH / DELETE | `/api/teams/:id/groups[/:groupId]` | Admins: sub-groups `{ name, color?, members: [uid] }` |
+| POST / PATCH / DELETE | `/api/teams/:id/tags[/:tagId]` | Admins: team tags `{ name, color? }` |
+| GET / POST / PATCH / DELETE | `/api/teams/:id/templates[/:templateId]` | Admins (list also for members who may give tasks): `{ name, data: { title, notes?, priority?, subtasks?, dueTime?, teamTagIds?, needsReview? } }` |
+| GET / POST / PATCH / DELETE | `/api/teams/:id/recurring[/:recurringId]` | Admins: `{ data: { ...template, assignees, mode? }, rule: { freq: daily\|weekdays\|weekly\|monthly, days?, day? }, today? }`; PATCH also `{ active }` |
+| GET / POST / DELETE | `/api/teams/:id/link` | Admins: the invite link `{ link: { token, url, qr } }` (`qr`: PNG data URL); POST makes a new one |
+| GET / POST | `/api/join/:token` | Anyone signed in: see the team / ask to join (`status`: none, requested, member) |
+| POST | `/api/teams/:id/requests/:uid` | Admins: `{ approve }` |
+| PATCH | `/api/teams/:id/members/:uid` | Also `{ title }`: a job title (your own, or anyone's as an admin; `null` clears it) |
+| GET | `/api/teams/:id/activity?before=` | Admins: the activity log, 50 at a time |
+
+Background jobs (every 15 minutes): repeating tasks, late notices (once a day per person and team), the admins' morning summary (after `DIGEST_HOUR_UTC`, default 3) and the Monday report. Set `PUBLIC_URL` so invite links use your address (otherwise taken from each request).
 
 Tasks carry `tagIds: []`; send `tagIds` on create/update to set them (max 10, must be your own tags).
 

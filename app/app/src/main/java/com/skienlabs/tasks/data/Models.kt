@@ -37,12 +37,37 @@ data class Task(
     val teamId: String? = null,
     val assignee: String? = null,
     val assignedBy: String? = null,
+    /** Team tasks (2.0): done waits for an admin's sign-off ([review]: waiting, returned, approved). */
+    val needsReview: Boolean = false,
+    val review: String? = null,
+    /** One task for several people: their copies share [groupId]; [groupMode] each or first. */
+    val groupId: String? = null,
+    val groupMode: String? = null,
+    /** "First one to finish closes it": who finished, on the copies that closed. */
+    val closedBy: String? = null,
+    val teamTagIds: List<String> = emptyList(),
+    val recurringId: String? = null,
+    val files: List<TaskFile> = emptyList(),
+    /** Comment count (on a team's board). */
+    val comments: Int = 0,
 ) {
     val isCarried get() = carriedFrom != null && carriedFrom < date
     val isPending get() = status == Status.PENDING
     val isDone get() = status == Status.DONE
     val isCancelled get() = status == Status.CANCELLED
 }
+
+/** A file on a task (PDF, document, sheet…); downloaded from /api/files/{id}. */
+@Immutable
+@Serializable
+data class TaskFile(
+    val id: String,
+    val name: String = "file",
+    val mime: String = "application/octet-stream",
+    val size: Long = 0,
+    val addedBy: String? = null,
+    val createdAt: Long = 0,
+)
 
 /** A step of a task; steps form a tree through [parentId] (see Steps.kt). */
 @Immutable
@@ -177,6 +202,8 @@ data class Member(
     val email: String? = null,
     val photo: String? = null,
     val joinedAt: Long = 0,
+    /** Job title ("Designer"), set by the person or an admin. */
+    val title: String? = null,
 )
 
 /** Someone invited to a team who hasn't joined yet (only admins see these). */
@@ -198,14 +225,26 @@ data class Team(
     val id: String,
     val name: String,
     val color: String = "blue",
+    /** Small PNG/JPEG/WebP data URL, like a tag's logo. */
+    val logo: String? = null,
     val createdBy: String? = null,
     val createdAt: Long = 0,
     val updatedAt: Long = 0,
     val role: String = Role.MEMBER,
     val members: List<Member> = emptyList(),
     val invites: List<TeamInvite> = emptyList(),
+    /** Archived: everything stays readable, nothing changes until its owner brings it back. */
+    val archived: Boolean = false,
+    val settings: TeamSettings = TeamSettings(),
+    val groups: List<TeamGroup> = emptyList(),
+    val tags: List<TeamTag> = emptyList(),
+    /** People asking to join through the invite link (admins only). */
+    val requests: List<JoinRequest> = emptyList(),
 ) {
     val isAdmin get() = role == Role.OWNER || role == Role.ADMIN
+    /** May I give tasks here? */
+    val canGive get() = !archived && (isAdmin || settings.membersCanAssign)
+    fun tag(id: String) = tags.firstOrNull { it.id == id }
     fun member(uid: String?) = members.firstOrNull { it.uid == uid }
 }
 
@@ -217,6 +256,7 @@ data class Invite(
     val teamId: String,
     val teamName: String,
     val teamColor: String = "blue",
+    val teamLogo: String? = null,
     val role: String = Role.MEMBER,
     val email: String = "",
     val invitedBy: String? = null,
@@ -263,7 +303,90 @@ data class Change(
     val tasks: Boolean = false,
     val teamId: String? = null,
     val source: String? = null,
+    val taskId: String? = null,
+    val thread: String? = null,
 )
 
 const val MAX_TAGS_PER_TASK = 10
 const val MAX_IMAGES_PER_TASK = 20
+
+@Immutable @Serializable data class TeamSettings(val membersCanAssign: Boolean = false)
+@Immutable @Serializable data class TeamGroup(val id: String, val name: String, val color: String = "blue", val members: List<String> = emptyList())
+@Immutable @Serializable data class TeamTag(val id: String, val name: String, val color: String = "blue")
+@Immutable @Serializable
+data class JoinRequest(val uid: String, val name: String = "", val email: String? = null, val photo: String? = null, val createdAt: Long = 0)
+
+/** A comment on a team task (one thread is shared by the copies of a task given to several people). */
+@Immutable @Serializable
+data class Comment(val id: String, val thread: String = "", val uid: String, val name: String = "", val photo: String? = null, val text: String, val createdAt: Long = 0)
+@Serializable data class CommentsResponse(val comments: List<Comment> = emptyList())
+
+/** Team news for me: a task given, a comment, a review, a reminder… */
+@Immutable @Serializable
+data class AppNotification(
+    val id: Long,
+    val kind: String,
+    val teamId: String? = null,
+    val taskId: String? = null,
+    val actor: String? = null,
+    val title: String,
+    val body: String? = null,
+    val createdAt: Long = 0,
+    val read: Boolean = false,
+)
+@Serializable data class NotificationsResponse(val notifications: List<AppNotification> = emptyList(), val unread: Int = 0)
+@Serializable data class UnreadResponse(val unread: Int = 0)
+
+@Immutable @Serializable data class Rule(val freq: String, val days: List<Int>? = null, val day: Int? = null)
+
+/** A task the team gives often; also the shape of a repeating task's contents. */
+@Immutable @Serializable
+data class Template(
+    val id: String = "",
+    val name: String = "",
+    val title: String = "",
+    val notes: String = "",
+    val priority: Int = 4,
+    val subtasks: List<Subtask> = emptyList(),
+    val dueTime: String? = null,
+    val teamTagIds: List<String> = emptyList(),
+    val needsReview: Boolean = false,
+)
+@Serializable data class TemplatesResponse(val templates: List<Template> = emptyList())
+
+@Immutable @Serializable
+data class Recurring(
+    val id: String,
+    val title: String = "",
+    val notes: String = "",
+    val priority: Int = 4,
+    val subtasks: List<Subtask> = emptyList(),
+    val dueTime: String? = null,
+    val teamTagIds: List<String> = emptyList(),
+    val needsReview: Boolean = false,
+    val assignees: List<String> = emptyList(),
+    val mode: String = "each",
+    val rule: Rule = Rule("daily"),
+    val nextDate: String = "",
+    val active: Boolean = true,
+)
+@Serializable data class RecurringResponse(val recurring: List<Recurring> = emptyList())
+
+@Immutable @Serializable
+data class Activity(
+    val id: Long,
+    val uid: String? = null,
+    val name: String = "",
+    val action: String,
+    val taskId: String? = null,
+    val detail: kotlinx.serialization.json.JsonObject? = null,
+    val createdAt: Long = 0,
+)
+@Serializable data class ActivityResponse(val activity: List<Activity> = emptyList())
+
+@Immutable @Serializable data class TeamLink(val token: String, val url: String, val qr: String, val createdAt: Long = 0)
+@Serializable data class LinkResponse(val link: TeamLink? = null)
+@Immutable @Serializable data class JoinTeam(val id: String, val name: String, val color: String = "blue", val logo: String? = null, val memberCount: Int = 0)
+@Serializable data class JoinInfo(val team: JoinTeam, val status: String)
+@Serializable data class JoinStatus(val status: String)
+@Serializable data class TasksResponse(val tasks: List<Task> = emptyList())

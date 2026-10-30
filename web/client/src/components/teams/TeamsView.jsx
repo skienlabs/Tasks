@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, Box, Button, ButtonBase, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, Divider, IconButton,
   LinearProgress, ListItemIcon, ListItemText, Menu, MenuItem, Tab, Tabs, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
@@ -21,20 +21,35 @@ import RadioButtonUnchecked from '@mui/icons-material/RadioButtonUnchecked';
 import BlockOutlined from '@mui/icons-material/BlockOutlined';
 import Replay from '@mui/icons-material/Replay';
 import CloudOffRounded from '@mui/icons-material/CloudOffRounded';
+import ChatBubbleOutlineRounded from '@mui/icons-material/ChatBubbleOutlineRounded';
+import AttachFileRounded from '@mui/icons-material/AttachFileRounded';
+import NotificationsActiveOutlined from '@mui/icons-material/NotificationsActiveOutlined';
+import VerifiedRounded from '@mui/icons-material/VerifiedRounded';
+import Close from '@mui/icons-material/Close';
+import ArchiveOutlined from '@mui/icons-material/ArchiveOutlined';
+import AddPhotoAlternateOutlined from '@mui/icons-material/AddPhotoAlternateOutlined';
+import HowToRegOutlined from '@mui/icons-material/HowToRegOutlined';
+import { useMediaQuery } from '@mui/material';
 import { hexAlpha, priorityColor, statusColors } from '../../theme.js';
 import { addDays, shortLabel, startOfWeek } from '../../lib/dates.js';
 import { parseDue } from '../../lib/due.js';
 import {
-  acceptInvite, allTasks, areTeamsLoaded, cancelInvite, declineInvite, deleteTeam, deleteTeamTask, isTeamAdmin, loadBoard, loadTeams,
-  myUid, removeMember, selectBoard, selectInvites, selectSync, selectTeam, selectTeams, setMemberRole, showToast,
-  updateTeamTask, useStoreVersion,
+  acceptInvite, addTeamImage, allTasks, answerJoinRequest, areTeamsLoaded, cancelInvite, declineInvite, deleteTeam, deleteTeamTask, isTeamAdmin,
+  loadBoard, loadTeams, myUid, nudgeTask, removeMember, reviewTask, selectBoard, selectInvites, selectSync, selectTeam, selectTeams,
+  setMemberRole, showToast, updateTeamTask, useStoreVersion,
 } from '../../lib/store.js';
+import { prepareImage } from '../../lib/images.js';
+import { progress } from '../../lib/subtasks.js';
+import { formatDate } from '../../lib/dates.js';
 import { DueChip } from '../Due.jsx';
+import { ImageViewer, Thumb } from '../Images.jsx';
 import { AssignDialog, InviteDialog, ShareInvite, TeamFormDialog } from './TeamDialogs.jsx';
-import { PersonAvatar, RolePill, TeamAvatar } from './parts.jsx';
+import { PersonAvatar, ReviewChip, RolePill, SharedChip, TeamAvatar, TeamTagChips } from './parts.jsx';
+import { Comments, ReviewActions, TaskFiles, canManageTask } from './TaskTeamPanel.jsx';
+import { ActivityLog, PersonDialog, Report, TeamCalendar, Workload, cardSx, isLate } from './Insights.jsx';
+import TeamSettings from './TeamSettings.jsx';
 
 const pageSx = { maxWidth: 1140, mx: 'auto', px: { xs: 1.5, sm: 3 }, pt: { xs: 2, sm: 3 }, pb: { xs: 14, md: 6 } };
-const cardSx = (t) => ({ borderRadius: '20px', bgcolor: t.tokens.card, border: `1px solid ${t.tokens.cardBorder}` });
 // The team board: everything given out in the last ~6 weeks and the next 6, plus whatever is still open.
 const boardRange = (today) => [addDays(today, -45), addDays(today, 45)];
 
@@ -88,7 +103,7 @@ function InviteCard({ invite }) {
   };
   return (
     <Box sx={(t) => ({ ...cardSx(t), p: 2, display: 'flex', alignItems: 'center', gap: 1.75, flexWrap: 'wrap', borderColor: hexAlpha(t.palette.primary.main, 0.45) })}>
-      <TeamAvatar team={{ name: invite.teamName, color: invite.teamColor }} size={44} />
+      <TeamAvatar team={{ name: invite.teamName, color: invite.teamColor, logo: invite.teamLogo }} size={44} />
       <Box sx={{ flex: 1, minWidth: 200 }}>
         <Typography sx={{ fontWeight: 600 }}>{invite.teamName}</Typography>
         <Typography variant="body2" color="text.secondary">
@@ -132,7 +147,6 @@ function TeamRow({ team, active, onClick }) {
   );
 }
 
-const isLate = (t, today, now) => t.status === 'pending' && ((t.dueAt && parseDue(t.dueAt) < now) || t.date < today);
 
 /** Admin overview: who finished what, who is behind, over a period. */
 function Overview({ team, board, today, onOpenTasks }) {
@@ -222,21 +236,142 @@ function Overview({ team, board, today, onOpenTasks }) {
 
 const STATUS_ICON = { pending: RadioButtonUnchecked, done: CheckCircle, cancelled: BlockOutlined };
 
-function BoardTask({ task, team, today, onEdit }) {
+/** A team task, as its admins (or the member who gave it) see it: details, sign-off, files, comments. */
+function BoardTaskDialog({ task: initial, team, today, onClose, onEdit }) {
+  useStoreVersion();
+  const fullScreen = useMediaQuery((t) => t.breakpoints.down('sm'));
+  const board = selectBoard(team.id);
+  const task = board?.tasks.find((t) => t.id === initial.id) ?? initial;
+  const [viewer, setViewer] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const imageRef = useRef(null);
+  const manage = canManageTask(task, team);
+  const admin = isTeamAdmin(team);
+  const person = team.members.find((m) => m.uid === task.assignee);
+  const giver = team.members.find((m) => m.uid === task.assignedBy);
+  const steps = task.subtasks ?? [];
+  const p = progress(steps);
+  const images = task.attachments ?? [];
+  const siblings = task.groupId ? (board?.tasks ?? []).filter((t) => t.groupId === task.groupId && t.id !== task.id) : [];
+  const late = isLate(task, today, new Date());
+  const addImages = async (e) => {
+    const files = [...(e.target.files ?? [])];
+    e.target.value = '';
+    setAdding(true);
+    try {
+      for (const f of files) await addTeamImage(team.id, task, await prepareImage(f));
+    } catch (err) {
+      showToast(err.message);
+    } finally {
+      setAdding(false);
+    }
+  };
+  return (
+    <Dialog open onClose={onClose} fullScreen={fullScreen} fullWidth maxWidth="sm">
+      <DialogTitle sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, pr: 1.5 }}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography component="h2" sx={{ fontSize: 20, fontWeight: 500, wordBreak: 'break-word', ...(task.status !== 'pending' && { textDecoration: 'line-through', color: 'text.secondary' }) }}>
+            {task.title}
+          </Typography>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 0.75, alignItems: 'center' }}>
+            <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.6 }}>
+              <PersonAvatar person={person ?? { name: '?' }} size={22} />
+              <Typography variant="body2">{person ? person.name : 'Former member'}</Typography>
+            </Box>
+            <Typography variant="body2" color={late ? 'error' : 'text.secondary'}>· {formatDate(task.date, { weekday: 'short', day: 'numeric', month: 'short' })}</Typography>
+            {task.dueAt && <DueChip task={task} />}
+            <ReviewChip task={task} />
+            <TeamTagChips task={task} teamTags={team.tags} />
+            <SharedChip task={task} count={siblings.length + 1} />
+          </Box>
+        </Box>
+        {manage && !team.archived && (
+          <Tooltip title="Edit or reassign"><IconButton aria-label="Edit task" onClick={() => onEdit(task)}><EditOutlined /></IconButton></Tooltip>
+        )}
+        <IconButton aria-label="Close" onClick={onClose}><Close /></IconButton>
+      </DialogTitle>
+      <DialogContent sx={{ pt: '0 !important' }}>
+        <Typography variant="body2" color="text.secondary">
+          {task.status === 'done' ? `Done ${task.completedAt ? new Date(task.completedAt).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : ''}` : task.status === 'cancelled' ? 'Cancelled' : 'Open'}
+          {giver ? ` · given by ${giver.uid === myUid() ? 'you' : giver.name}` : ''}
+          {task.postponed > 0 ? ` · postponed ${task.postponed === 1 ? 'once' : `${task.postponed} times`}` : ''}
+          {task.recurringId ? ' · repeats' : ''}
+        </Typography>
+        {siblings.length > 0 && (
+          <Box sx={{ mt: 1.5, display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+            {siblings.map((sib) => {
+              const m = team.members.find((x) => x.uid === sib.assignee);
+              const Icon = STATUS_ICON[sib.status] ?? RadioButtonUnchecked;
+              return (
+                <Box key={sib.id} sx={(t) => ({ display: 'inline-flex', alignItems: 'center', gap: 0.5, height: 26, px: 1, borderRadius: 999, bgcolor: t.tokens.chip, fontSize: 13 })}>
+                  <Icon sx={(t) => ({ fontSize: 15, color: sib.status === 'done' ? statusColors(t).done : 'text.secondary' })} />
+                  {m?.name ?? 'Former member'}
+                  {sib.closedBy && <Box component="span" sx={{ color: 'text.secondary' }}>· closed</Box>}
+                </Box>
+              );
+            })}
+          </Box>
+        )}
+        {task.notes && <Typography sx={{ mt: 2, fontSize: 14.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{task.notes}</Typography>}
+        {steps.length > 0 && (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>Steps · {p.done}/{p.total}</Typography>
+            <LinearProgress variant="determinate" value={p.total ? (p.done / p.total) * 100 : 0} sx={(t) => ({ height: 6, borderRadius: 3, bgcolor: t.tokens.chip, mb: 1 })} />
+            {steps.filter((s) => !s.parentId).map((s) => (
+              <Box key={s.id} sx={{ display: 'flex', gap: 1, alignItems: 'center', py: 0.25 }}>
+                {s.done ? <CheckCircle sx={(t) => ({ fontSize: 18, color: statusColors(t).done })} /> : <RadioButtonUnchecked sx={{ fontSize: 18, color: 'text.secondary' }} />}
+                <Typography sx={{ fontSize: 14, ...(s.done && { textDecoration: 'line-through', color: 'text.secondary' }) }}>{s.title}</Typography>
+              </Box>
+            ))}
+          </Box>
+        )}
+        {(images.length > 0 || (manage && !team.archived)) && (
+          <Box sx={{ mt: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.75 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>Images{images.length ? ` · ${images.length}` : ''}</Typography>
+              {manage && !team.archived && (
+                <Button size="small" startIcon={adding ? <CircularProgress size={14} /> : <AddPhotoAlternateOutlined />} disabled={adding} onClick={() => imageRef.current?.click()}>Add image</Button>
+              )}
+              <input ref={imageRef} type="file" accept="image/*" multiple hidden onChange={addImages} />
+            </Box>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {images.map((a, i) => <Thumb key={a.id} attachment={a} size={72} onClick={() => setViewer(i)} label={`Open image ${i + 1}`} />)}
+            </Box>
+          </Box>
+        )}
+        <ReviewActions task={task} team={team} />
+        <TaskFiles task={task} team={team} canAdd={manage && !team.archived} asAdmin={task.assignee !== myUid()} />
+        <Comments task={task} team={team} />
+        {admin && !team.archived && task.status !== 'pending' && (
+          <Button size="small" startIcon={<Replay />} sx={{ mt: 2 }} onClick={() => attempt(() => updateTeamTask(team.id, task, { status: 'pending' }), 'Opened again')}>Open it again</Button>
+        )}
+        <Box sx={{ height: 16 }} />
+      </DialogContent>
+      {viewer !== null && <ImageViewer attachments={images} index={viewer} onIndex={setViewer} onClose={() => setViewer(null)} />}
+    </Dialog>
+  );
+}
+
+function BoardTask({ task, team, today, onOpen, onEdit }) {
   const [menuEl, setMenuEl] = useState(null);
   const [confirm, setConfirm] = useState(false);
   const person = team.members.find((m) => m.uid === task.assignee);
   const Icon = STATUS_ICON[task.status] ?? RadioButtonUnchecked;
   const late = isLate(task, today, new Date());
+  const admin = isTeamAdmin(team);
+  const manage = canManageTask(task, team) && !team.archived;
   const set = (status) => attempt(() => updateTeamTask(team.id, task, { status }));
+  const steps = task.subtasks ?? [];
+  const leaves = steps.filter((s) => !steps.some((c) => c.parentId === s.id));
   return (
     <Box
       sx={(t) => ({
         ...cardSx(t), p: 1.25, pl: 1.5, display: 'flex', alignItems: 'flex-start', gap: 1.25, cursor: 'pointer',
         ...(late && { borderColor: hexAlpha(t.palette.error.main, 0.45) }),
+        ...(task.review === 'waiting' && { borderColor: hexAlpha(t.palette.warning.main, 0.6) }),
         '&:hover': { bgcolor: t.tokens.cardHover },
       })}
-      onClick={() => onEdit(task)}
+      onClick={() => onOpen(task)}
     >
       <Icon sx={(t) => ({ mt: 0.25, fontSize: 22, color: task.status === 'done' ? statusColors(t).done : task.status === 'cancelled' ? 'text.disabled' : priorityColor(t, task.priority) })} />
       <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -250,28 +385,50 @@ function BoardTask({ task, team, today, onEdit }) {
           </Box>
           <Typography variant="body2" color={late && task.date < today ? 'error' : 'text.secondary'}>· {shortLabel(task.date, today)}</Typography>
           {task.dueAt && <DueChip task={task} />}
-          {(task.subtasks?.length ?? 0) > 0 && (
-            <Typography variant="body2" color="text.secondary">
-              · {task.subtasks.filter((s) => s.done && !task.subtasks.some((c) => c.parentId === s.id)).length}/{task.subtasks.filter((s) => !task.subtasks.some((c) => c.parentId === s.id)).length} steps
-            </Typography>
+          <ReviewChip task={task} />
+          <TeamTagChips task={task} teamTags={team.tags} />
+          {leaves.length > 0 && (
+            <Typography variant="body2" color="text.secondary">· {leaves.filter((s) => s.done).length}/{leaves.length} steps</Typography>
+          )}
+          {task.comments > 0 && (
+            <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.4, color: 'text.secondary' }}>
+              <ChatBubbleOutlineRounded sx={{ fontSize: 15 }} /><Typography variant="body2">{task.comments}</Typography>
+            </Box>
+          )}
+          {(task.files?.length ?? 0) + (task.attachments?.length ?? 0) > 0 && (
+            <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.4, color: 'text.secondary' }}>
+              <AttachFileRounded sx={{ fontSize: 15 }} /><Typography variant="body2">{(task.files?.length ?? 0) + (task.attachments?.length ?? 0)}</Typography>
+            </Box>
           )}
           {task.notes && <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 260 }}>· {task.notes.split('\n')[0]}</Typography>}
         </Box>
       </Box>
-      <IconButton
-        size="small"
-        aria-label={`More actions for "${task.title}"`}
-        onClick={(e) => {
-          e.stopPropagation();
-          setMenuEl(e.currentTarget);
-        }}
-      >
-        <MoreVert fontSize="small" />
-      </IconButton>
+      {manage && (
+        <IconButton
+          size="small"
+          aria-label={`More actions for "${task.title}"`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setMenuEl(e.currentTarget);
+          }}
+        >
+          <MoreVert fontSize="small" />
+        </IconButton>
+      )}
       <Menu anchorEl={menuEl} open={Boolean(menuEl)} onClose={() => setMenuEl(null)} onClick={(e) => e.stopPropagation()}>
         <MenuItem onClick={() => { setMenuEl(null); onEdit(task); }}>
           <ListItemIcon><EditOutlined fontSize="small" /></ListItemIcon><ListItemText>Edit or reassign</ListItemText>
         </MenuItem>
+        {task.review === 'waiting' && (
+          <MenuItem onClick={() => { setMenuEl(null); attempt(() => reviewTask(team.id, task, 'approve'), 'Approved'); }}>
+            <ListItemIcon><VerifiedRounded fontSize="small" color="success" /></ListItemIcon><ListItemText>Approve</ListItemText>
+          </MenuItem>
+        )}
+        {task.status === 'pending' && task.assignee !== myUid() && (
+          <MenuItem onClick={() => { setMenuEl(null); attempt(() => nudgeTask(team.id, task), 'Reminder sent'); }}>
+            <ListItemIcon><NotificationsActiveOutlined fontSize="small" /></ListItemIcon><ListItemText>Remind {person?.name.split(' ')[0] ?? ''}</ListItemText>
+          </MenuItem>
+        )}
         {task.status === 'pending' ? (
           <MenuItem onClick={() => { setMenuEl(null); set('cancelled'); }}>
             <ListItemIcon><BlockOutlined fontSize="small" /></ListItemIcon><ListItemText>Cancel task</ListItemText>
@@ -281,9 +438,11 @@ function BoardTask({ task, team, today, onEdit }) {
             <ListItemIcon><Replay fontSize="small" /></ListItemIcon><ListItemText>Open it again</ListItemText>
           </MenuItem>
         )}
-        <MenuItem onClick={() => { setMenuEl(null); setConfirm(true); }} sx={{ color: 'error.main' }}>
-          <ListItemIcon><DeleteOutlined fontSize="small" color="error" /></ListItemIcon><ListItemText>Delete</ListItemText>
-        </MenuItem>
+        {admin && (
+          <MenuItem onClick={() => { setMenuEl(null); setConfirm(true); }} sx={{ color: 'error.main' }}>
+            <ListItemIcon><DeleteOutlined fontSize="small" color="error" /></ListItemIcon><ListItemText>Delete</ListItemText>
+          </MenuItem>
+        )}
       </Menu>
       <Box onClick={(e) => e.stopPropagation()}>
         <Confirm
@@ -303,14 +462,25 @@ function BoardTask({ task, team, today, onEdit }) {
   );
 }
 
-function Board({ team, board, today, onAssign, onEdit }) {
+function Board({ team, board, today, onAssign, onOpen, onEdit, mineOnly }) {
   const [who, setWho] = useState('all');
   const [status, setStatus] = useState('open');
+  const [tag, setTag] = useState('all');
+  const me = myUid();
+  const groups = team.groups ?? [];
+  const matchWho = (t) => {
+    if (who === 'all') return true;
+    if (who.startsWith('g:')) return (groups.find((g) => g.id === who.slice(2))?.members ?? []).includes(t.assignee);
+    return t.assignee === who;
+  };
+  const review = (board?.tasks ?? []).filter((t) => t.review === 'waiting').length;
   const tasks = (board?.tasks ?? [])
-    .filter((t) => who === 'all' || t.assignee === who)
-    .filter((t) => (status === 'open' ? t.status === 'pending' : status === 'done' ? t.status === 'done' : true))
+    .filter((t) => !mineOnly || t.assignedBy === me)
+    .filter(matchWho)
+    .filter((t) => tag === 'all' || (t.teamTagIds ?? []).includes(tag))
+    .filter((t) => (status === 'open' ? t.status === 'pending' : status === 'done' ? t.status === 'done' : status === 'review' ? t.review === 'waiting' : status === 'late' ? isLate(t, today, new Date()) : true))
     .sort((a, b) => {
-      if (status !== 'open' && a.status !== b.status) return a.status === 'pending' ? -1 : 1;
+      if (status === 'all' && a.status !== b.status) return a.status === 'pending' ? -1 : 1;
       const da = a.dueAt ?? `${a.date}T99`;
       const db = b.dueAt ?? `${b.date}T99`;
       return status === 'done' ? (b.completedAt ?? 0) - (a.completedAt ?? 0) : da.localeCompare(db) || a.priority - b.priority;
@@ -318,31 +488,42 @@ function Board({ team, board, today, onAssign, onEdit }) {
   return (
     <Box sx={{ display: 'grid', gap: 1.25, gridTemplateColumns: 'minmax(0, 1fr)' }}>
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-        <TextField select size="small" value={who} onChange={(e) => setWho(e.target.value)} sx={{ minWidth: 180 }} aria-label="Whose tasks">
+        <TextField select size="small" value={who} onChange={(e) => setWho(e.target.value)} sx={{ minWidth: 170 }} aria-label="Whose tasks">
           <MenuItem value="all">Everyone</MenuItem>
-          {team.members.map((m) => <MenuItem key={m.uid} value={m.uid}>{m.name}{m.uid === myUid() ? ' (you)' : ''}</MenuItem>)}
+          {groups.map((g) => <MenuItem key={g.id} value={`g:${g.id}`}>Group: {g.name}</MenuItem>)}
+          {team.members.map((m) => <MenuItem key={m.uid} value={m.uid}>{m.name}{m.uid === me ? ' (you)' : ''}</MenuItem>)}
         </TextField>
+        {(team.tags ?? []).length > 0 && (
+          <TextField select size="small" value={tag} onChange={(e) => setTag(e.target.value)} sx={{ minWidth: 140 }} aria-label="Team tag">
+            <MenuItem value="all">All tags</MenuItem>
+            {team.tags.map((x) => <MenuItem key={x.id} value={x.id}># {x.name}</MenuItem>)}
+          </TextField>
+        )}
         <ToggleButtonGroup exclusive size="small" value={status} onChange={(_, v) => v && setStatus(v)}
-          sx={{ gap: 1, '& .MuiToggleButtonGroup-grouped': { border: 1, borderColor: 'divider', borderRadius: '999px !important', px: 1.5, ml: '0 !important', textTransform: 'none' } }}
+          sx={{ gap: 1, flexWrap: 'wrap', '& .MuiToggleButtonGroup-grouped': { border: 1, borderColor: 'divider', borderRadius: '999px !important', px: 1.5, ml: '0 !important', textTransform: 'none' } }}
         >
           <ToggleButton value="open">Open</ToggleButton>
+          <ToggleButton value="review">To review{review ? ` · ${review}` : ''}</ToggleButton>
+          <ToggleButton value="late">Late</ToggleButton>
           <ToggleButton value="done">Done</ToggleButton>
           <ToggleButton value="all">All</ToggleButton>
         </ToggleButtonGroup>
         <Box sx={{ flex: 1 }} />
         {/* Phones use the floating button instead. */}
-        <Button variant="contained" startIcon={<AddTaskRounded />} onClick={() => onAssign(who === 'all' ? null : who)} sx={{ display: { xs: 'none', md: 'inline-flex' } }}>
-          Give a task
-        </Button>
+        {onAssign && (
+          <Button variant="contained" startIcon={<AddTaskRounded />} onClick={() => onAssign(who === 'all' || who.startsWith('g:') ? null : who)} sx={{ display: { xs: 'none', md: 'inline-flex' } }}>
+            Give a task
+          </Button>
+        )}
       </Box>
       {tasks.length === 0 && (
         <Box sx={(t) => ({ ...cardSx(t), p: 3, textAlign: 'center' })}>
           <Typography color="text.secondary">
-            {status === 'open' ? 'No open team tasks.' : status === 'done' ? 'Nothing completed in the last six weeks.' : 'No team tasks yet.'}
+            {status === 'open' ? 'No open team tasks.' : status === 'review' ? 'Nothing waiting for review.' : status === 'late' ? 'Nothing late. Nice.' : status === 'done' ? 'Nothing completed in the last six weeks.' : 'No team tasks yet.'}
           </Typography>
         </Box>
       )}
-      {tasks.map((t) => <BoardTask key={t.id} task={t} team={team} today={today} onEdit={onEdit} />)}
+      {tasks.map((t) => <BoardTask key={t.id} task={t} team={team} today={today} onOpen={onOpen} onEdit={onEdit} />)}
     </Box>
   );
 }
@@ -447,28 +628,48 @@ function PersonMenu({ team, member }) {
   );
 }
 
-function People({ team, onInvite }) {
+function People({ team, onInvite, onOpenPerson }) {
   const admin = isTeamAdmin(team);
   const [shareFor, setShareFor] = useState(null);
+  const requests = team.requests ?? [];
   return (
     <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: 'minmax(0, 1fr)' }}>
       <Box sx={(t) => ({ ...cardSx(t), p: { xs: 1, sm: 1.5 } })}>
         <Box sx={{ display: 'flex', alignItems: 'center', px: 1, pb: 0.5 }}>
           <Typography sx={{ fontWeight: 600, flex: 1 }}>{team.members.length} {team.members.length === 1 ? 'person' : 'people'}</Typography>
-          {admin && <Button startIcon={<GroupAddRounded />} onClick={onInvite}>Invite</Button>}
+          {admin && !team.archived && <Button startIcon={<GroupAddRounded />} onClick={onInvite}>Invite</Button>}
         </Box>
         {team.members.map((m) => (
           <Box key={m.uid} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: 1, py: 1 }}>
-            <PersonAvatar person={m} size={36} />
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography noWrap sx={{ fontSize: 14.5, fontWeight: 500 }}>{m.name}{m.uid === myUid() ? ' (you)' : ''}</Typography>
-              <Typography variant="body2" color="text.secondary" noWrap>{m.email ?? ''}</Typography>
-            </Box>
+            <ButtonBase onClick={() => onOpenPerson(m)} sx={(t) => ({ flex: 1, minWidth: 0, display: 'flex', gap: 1.5, alignItems: 'center', justifyContent: 'flex-start', textAlign: 'left', borderRadius: 3, '&:hover': { bgcolor: t.tokens.cardHover } })}>
+              <PersonAvatar person={m} size={36} />
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography noWrap sx={{ fontSize: 14.5, fontWeight: 500 }}>{m.name}{m.uid === myUid() ? ' (you)' : ''}</Typography>
+                <Typography variant="body2" color="text.secondary" noWrap>{[m.title, m.email].filter(Boolean).join(' · ')}</Typography>
+              </Box>
+            </ButtonBase>
             <RolePill role={m.role} />
-            {admin ? <PersonMenu team={team} member={m} /> : null}
+            {admin && !team.archived ? <PersonMenu team={team} member={m} /> : null}
           </Box>
         ))}
       </Box>
+
+      {admin && requests.length > 0 && (
+        <Box sx={(t) => ({ ...cardSx(t), p: { xs: 1, sm: 1.5 }, borderColor: hexAlpha(t.palette.primary.main, 0.45) })}>
+          <Typography sx={{ fontWeight: 600, px: 1, pb: 0.5 }}>Asking to join · {requests.length}</Typography>
+          {requests.map((r) => (
+            <Box key={r.uid} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: 1, py: 1, flexWrap: 'wrap' }}>
+              <PersonAvatar person={r} size={36} />
+              <Box sx={{ flex: '1 1 160px', minWidth: 0 }}>
+                <Typography noWrap sx={{ fontSize: 14.5, fontWeight: 500 }}>{r.name}</Typography>
+                <Typography variant="body2" color="text.secondary" noWrap>{r.email ?? ''} · used the invite link</Typography>
+              </Box>
+              <Button size="small" onClick={() => attempt(() => answerJoinRequest(team.id, r.uid, false), 'Request declined')}>Decline</Button>
+              <Button size="small" variant="contained" startIcon={<HowToRegOutlined />} onClick={() => attempt(() => answerJoinRequest(team.id, r.uid, true), `${r.name} joined`)}>Let in</Button>
+            </Box>
+          ))}
+        </Box>
+      )}
 
       {admin && team.invites.length > 0 && (
         <Box sx={(t) => ({ ...cardSx(t), p: { xs: 1, sm: 1.5 } })}>
@@ -505,26 +706,32 @@ function People({ team, onInvite }) {
   );
 }
 
+const ADMIN_TABS = [['overview', 'Overview'], ['tasks', 'Tasks'], ['calendar', 'Calendar'], ['workload', 'Workload'], ['reports', 'Reports'], ['people', 'People'], ['activity', 'Activity'], ['settings', 'Settings']];
+
 function TeamDetail({ team, today, onBack, onOpenDay, wide }) {
   useStoreVersion();
   const admin = isTeamAdmin(team);
+  const canGive = !team.archived && (admin || Boolean(team.settings?.membersCanAssign));
   const [tab, setTab] = useState(admin ? 'overview' : 'mine');
   const [menuEl, setMenuEl] = useState(null);
   const [edit, setEdit] = useState(false);
   const [invite, setInvite] = useState(false);
-  const [assign, setAssign] = useState(null); // { task?, assignee? }
+  const [assign, setAssign] = useState(null); // { task?, assignee?, template? }
+  const [open, setOpen] = useState(null); // a board task shown in full
+  const [person, setPerson] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [boardError, setBoardError] = useState('');
   const board = selectBoard(team.id);
   const { online } = selectSync();
+  const given = (board?.tasks ?? []).some((t) => t.assignedBy === myUid() && t.assignee !== myUid());
 
   useEffect(() => {
-    if (!admin) setTab((t) => (t === 'overview' || t === 'tasks' ? 'mine' : t));
-    else setTab((t) => (t === 'mine' ? 'overview' : t));
+    const adminTabs = ADMIN_TABS.map(([v]) => v).filter((v) => v !== 'people');
+    if (!admin) setTab((t) => (adminTabs.includes(t) ? 'mine' : t));
+    else setTab((t) => (t === 'mine' || t === 'given' ? 'overview' : t));
   }, [admin]);
 
   useEffect(() => {
-    if (!admin) return;
     const [from, to] = boardRange(today);
     setBoardError('');
     loadBoard(team.id, from, to).catch((err) => setBoardError(err.status === 0 ? 'offline' : err.message));
@@ -542,6 +749,8 @@ function TeamDetail({ team, today, onBack, onOpenDay, wide }) {
     action: 'Delete team', danger: true,
     run: () => attempt(() => deleteTeam(team.id), `${team.name} was deleted`),
   };
+  const needsBoard = ['overview', 'tasks', 'calendar', 'workload', 'reports', 'given'].includes(tab);
+  const tabs = admin ? ADMIN_TABS : [['mine', 'My tasks'], ...(given || team.settings?.membersCanAssign ? [['given', 'Given by me']] : []), ['people', 'People']];
 
   return (
     <Box sx={{ minWidth: 0 }}>
@@ -552,19 +761,30 @@ function TeamDetail({ team, today, onBack, onOpenDay, wide }) {
           <Typography component="h2" noWrap sx={{ fontSize: 22, fontWeight: 500 }}>{team.name}</Typography>
           <Typography variant="body2" color="text.secondary" noWrap>
             You are {team.role === 'owner' ? 'the owner' : team.role === 'admin' ? 'an admin' : 'a member'} · {team.members.length} {team.members.length === 1 ? 'person' : 'people'}
+            {team.archived ? ' · archived' : ''}
           </Typography>
         </Box>
-        {admin && wide && <Button variant="outlined" startIcon={<GroupAddRounded />} onClick={() => setInvite(true)}>Invite</Button>}
+        {admin && !team.archived && (
+          <Tooltip title="Edit team">
+            <IconButton aria-label="Edit team" onClick={() => setEdit(true)}><EditOutlined /></IconButton>
+          </Tooltip>
+        )}
+        {admin && wide && !team.archived && <Button variant="outlined" startIcon={<GroupAddRounded />} onClick={() => setInvite(true)}>Invite</Button>}
         <IconButton aria-label="Team options" onClick={(e) => setMenuEl(e.currentTarget)}><MoreVert /></IconButton>
         <Menu anchorEl={menuEl} open={Boolean(menuEl)} onClose={() => setMenuEl(null)}>
-          {admin && (
+          {admin && !team.archived && (
             <MenuItem onClick={() => { setMenuEl(null); setInvite(true); }}>
               <ListItemIcon><GroupAddRounded fontSize="small" /></ListItemIcon><ListItemText>Invite people</ListItemText>
             </MenuItem>
           )}
-          {admin && (
+          {admin && !team.archived && (
             <MenuItem onClick={() => { setMenuEl(null); setEdit(true); }}>
-              <ListItemIcon><EditOutlined fontSize="small" /></ListItemIcon><ListItemText>Rename or recolour</ListItemText>
+              <ListItemIcon><EditOutlined fontSize="small" /></ListItemIcon><ListItemText>Edit team</ListItemText>
+            </MenuItem>
+          )}
+          {admin && (
+            <MenuItem onClick={() => { setMenuEl(null); setTab('settings'); }}>
+              <ListItemIcon><ArchiveOutlined fontSize="small" /></ListItemIcon><ListItemText>Settings</ListItemText>
             </MenuItem>
           )}
           {admin && <Divider />}
@@ -586,39 +806,61 @@ function TeamDetail({ team, today, onBack, onOpenDay, wide }) {
           You&apos;re offline. Team changes need a connection; your own tasks still work.
         </Alert>
       )}
+      {team.archived && (
+        <Alert severity="info" icon={<ArchiveOutlined />} sx={{ mb: 2, borderRadius: 3 }}
+          action={team.role === 'owner' ? <Button color="inherit" size="small" onClick={() => setTab('settings')}>Settings</Button> : null}
+        >
+          This team is archived. You can read everything; nothing new happens in it.
+        </Alert>
+      )}
 
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" allowScrollButtonsMobile sx={{ mb: 2, minHeight: 40, '& .MuiTab-root': { minHeight: 40, textTransform: 'none', fontSize: 15 } }}>
-        {admin && <Tab value="overview" label="Overview" />}
-        {admin && <Tab value="tasks" label="Tasks" />}
-        {!admin && <Tab value="mine" label="My tasks" />}
-        <Tab value="people" label="People" />
+      <Tabs value={tabs.some(([v]) => v === tab) ? tab : tabs[0][0]} onChange={(_, v) => setTab(v)} variant="scrollable" allowScrollButtonsMobile sx={{ mb: 2, minHeight: 40, '& .MuiTab-root': { minHeight: 40, textTransform: 'none', fontSize: 15, minWidth: 0, px: 1.75 } }}>
+        {tabs.map(([v, l]) => <Tab key={v} value={v} label={v === 'people' && admin && team.requests?.length ? `${l} · ${team.requests.length}` : l} />)}
       </Tabs>
 
-      {admin && (tab === 'overview' || tab === 'tasks') && !board && (
+      {needsBoard && !board && (
         boardError
           ? <Alert severity={boardError === 'offline' ? 'warning' : 'error'} sx={{ borderRadius: 3 }}>{boardError === 'offline' ? 'Connect to see your team’s tasks.' : boardError}</Alert>
           : <LinearProgress sx={{ borderRadius: 2 }} />
       )}
       {admin && tab === 'overview' && board && <Overview team={team} board={board} today={today} onOpenTasks={() => setTab('tasks')} />}
       {admin && tab === 'tasks' && board && (
-        <Board team={team} board={board} today={today} onAssign={(assignee) => setAssign({ assignee })} onEdit={(task) => setAssign({ task })} />
+        <Board team={team} board={board} today={today} onAssign={canGive ? (assignee) => setAssign({ assignee }) : null} onOpen={setOpen} onEdit={(task) => setAssign({ task })} />
       )}
+      {admin && tab === 'calendar' && board && <TeamCalendar team={team} board={board} today={today} onOpenTask={setOpen} />}
+      {admin && tab === 'workload' && board && <Workload team={team} board={board} today={today} onOpenPerson={setPerson} />}
+      {admin && tab === 'reports' && board && <Report team={team} board={board} today={today} />}
+      {admin && tab === 'activity' && <ActivityLog team={team} />}
+      {admin && tab === 'settings' && <TeamSettings team={team} onUseTemplate={(template) => setAssign({ template })} onDelete={() => setConfirm(del)} />}
       {!admin && tab === 'mine' && <MyTeamTasks team={team} today={today} onOpenDay={onOpenDay} />}
-      {tab === 'people' && <People team={team} onInvite={() => setInvite(true)} />}
+      {!admin && tab === 'given' && board && (
+        <Board team={team} board={board} today={today} mineOnly onAssign={canGive ? (assignee) => setAssign({ assignee }) : null} onOpen={setOpen} onEdit={(task) => setAssign({ task })} />
+      )}
+      {tab === 'people' && <People team={team} onInvite={() => setInvite(true)} onOpenPerson={setPerson} />}
 
-      {admin && tab !== 'people' && !wide && board && (
+      {canGive && (admin ? !['people', 'activity', 'settings'].includes(tab) : tab === 'given') && !wide && board && (
         <Box sx={{ position: 'fixed', right: 16, bottom: 'calc(96px + env(safe-area-inset-bottom))', zIndex: 2 }}>
           <Button variant="contained" size="large" startIcon={<AddTaskRounded />} onClick={() => setAssign({})} sx={{ borderRadius: 4, height: 56, boxShadow: 3 }}>
             Give a task
           </Button>
         </Box>
       )}
+      {!admin && canGive && wide && tab === 'mine' && (
+        <Button variant="outlined" startIcon={<AddTaskRounded />} onClick={() => setAssign({})} sx={{ mt: 2 }}>Give a task</Button>
+      )}
 
       {edit && <TeamFormDialog open team={team} onClose={() => setEdit(false)} />}
       {invite && <InviteDialog open team={team} onClose={() => setInvite(false)} />}
+      {open && <BoardTaskDialog task={open} team={team} today={today} onClose={() => setOpen(null)} onEdit={(task) => { setOpen(null); setAssign({ task }); }} />}
+      {person && (
+        <PersonDialog team={team} member={team.members.find((m) => m.uid === person.uid) ?? person} board={board} today={today}
+          onClose={() => setPerson(null)} onOpenTask={(t) => { setPerson(null); setOpen(t); }}
+          onAssign={(uid) => { setPerson(null); setAssign({ assignee: uid }); }}
+        />
+      )}
       {assign && (
-        <AssignDialog open team={team} task={assign.task} defaultAssignee={assign.assignee} today={today} onClose={() => setAssign(null)}
-          onSaved={() => showToast(assign.task ? 'Task saved' : 'Task given')}
+        <AssignDialog open team={team} task={assign.task} defaultAssignee={assign.assignee} template={assign.template} today={today} onClose={() => setAssign(null)}
+          onSaved={(_, info) => showToast(assign.task ? 'Task saved' : info?.repeating ? 'Repeating task set up' : info?.count > 1 ? `Task given to ${info.count} people` : 'Task given')}
         />
       )}
       {confirm && (

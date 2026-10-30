@@ -24,9 +24,23 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handle(intent: android.content.Intent?) {
+        val app = (application as TasksApp).controller
         if (intent?.getStringExtra(EXTRA_ACTION) == ACTION_NEW_TASK) {
-            (application as TasksApp).controller.newTaskRequest.value = true
+            app.newTaskRequest.value = true
             intent.removeExtra(EXTRA_ACTION) // not again after rotation
+        }
+        // An invite link: https://<server>/join/<token>
+        intent?.data?.path?.let { path ->
+            com.skienlabs.tasks.ui.teams.joinTokenOf(path)?.let { app.joinRequest.value = it }
+            intent.data = null
+        }
+        // A team notification: open the task if it's mine, else the team.
+        val task = intent?.getStringExtra(com.skienlabs.tasks.notify.TeamNotices.EXTRA_TASK)
+        val team = intent?.getStringExtra(com.skienlabs.tasks.notify.TeamNotices.EXTRA_TEAM)
+        if (task != null || team != null) {
+            app.openNotice(task, team)
+            intent.removeExtra(com.skienlabs.tasks.notify.TeamNotices.EXTRA_TASK)
+            intent.removeExtra(com.skienlabs.tasks.notify.TeamNotices.EXTRA_TEAM)
         }
     }
 

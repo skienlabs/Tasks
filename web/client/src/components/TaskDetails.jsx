@@ -28,6 +28,7 @@ import TimerOutlined from '@mui/icons-material/TimerOutlined';
 import GroupsRounded from '@mui/icons-material/GroupsRounded';
 import { DueChip } from './Due.jsx';
 import { progress } from '../lib/subtasks.js';
+import TaskTeamPanel, { TaskFiles } from './teams/TaskTeamPanel.jsx';
 
 const STATUS = {
   pending: { label: 'Open', icon: RadioButtonUnchecked },
@@ -214,6 +215,8 @@ export default function TaskDetails({ task, today, onClose, onEdit, onManageTags
           </Box>
         </>
       )}
+
+      {task.teamId ? <TaskTeamPanel task={task} /> : <TaskFiles task={task} team={null} canAdd />}
 
       {viewer !== null && (
         <ImageViewer attachments={images} index={viewer} onIndex={setViewer} onClose={() => setViewer(null)} />

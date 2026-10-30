@@ -73,6 +73,101 @@ class TeamsTest {
     }
 
     @Test
+    fun teams2FieldsArriveFromTheServer() {
+        val t = com.skienlabs.tasks.data.AppJson.decodeFromString(
+            Task.serializer(),
+            """{"id":"x1","title":"T","date":"$today","teamId":"tm","needsReview":true,"review":"waiting","groupId":"g1","groupMode":"first",
+              "closedBy":null,"teamTagIds":["tag1"],"recurringId":"r1","files":[{"id":"f1","name":"a.pdf","mime":"application/pdf","size":2048}],"comments":3}""",
+        )
+        assertTrue(t.needsReview)
+        assertEquals("waiting", t.review)
+        assertEquals("first", t.groupMode)
+        assertEquals(listOf("tag1"), t.teamTagIds)
+        assertEquals("a.pdf", t.files.single().name)
+        assertEquals(3, t.comments)
+        val team = com.skienlabs.tasks.data.AppJson.decodeFromString(
+            Team.serializer(),
+            """{"id":"tm","name":"Acme","role":"member","archived":true,"settings":{"membersCanAssign":true},
+              "groups":[{"id":"g","name":"Design","members":["a"]}],"tags":[{"id":"tag1","name":"Urgent","color":"red"}],
+              "members":[{"uid":"a","role":"member","name":"Ann","title":"Designer"}]}""",
+        )
+        assertTrue(team.archived)
+        assertFalse(team.canGive) // archived: nobody gives tasks
+        assertTrue(team.copy(archived = false).canGive) // members may, in this team
+        assertEquals("Designer", team.member("a")?.title)
+        assertEquals("Urgent", team.tag("tag1")?.name)
+    }
+
+    @Test
+    fun notificationsLoadAndMarkRead() = runTest {
+        val api = FakeApi()
+        api.jsonReplies["GET /api/notifications"] = """{"notifications":[
+            {"id":5,"kind":"comment","teamId":"team-acme-1","taskId":"t1","title":"Boss commented","createdAt":1},
+            {"id":4,"kind":"given","teamId":"team-acme-1","taskId":"t1","title":"Boss gave you a task","createdAt":1,"read":true}],"unread":1}"""
+        api.jsonReplies["POST /api/notifications/read"] = """{"unread":0}"""
+        val store = newStore(api)
+        store.start("u", today)
+        advanceUntilIdle()
+        assertTrue(store.loadNotifications().isEmpty()) // the first load only shows them
+        assertEquals(1, store.teams.value.unread)
+        assertEquals(listOf(5L, 4L), store.teams.value.notifications.map { it.id })
+        store.markNotificationsRead(5)
+        assertEquals(0, store.teams.value.unread)
+        assertTrue(store.teams.value.notifications.all { it.read })
+        assertEquals("POST" to "/api/notifications/read", api.jsonCalls.last().let { it.first to it.second })
+        // Newer ones on the next load are returned (for a message).
+        api.jsonReplies["GET /api/notifications"] = """{"notifications":[{"id":6,"kind":"nudge","title":"Reminder","createdAt":2},
+            {"id":5,"kind":"comment","title":"Boss commented","createdAt":1,"read":true}],"unread":1}"""
+        assertEquals(listOf(6L), store.loadNotifications().map { it.id })
+        // The background check posts only unread ones it hasn't shown, oldest first.
+        val list = store.teams.value.notifications
+        assertEquals(listOf(6L), com.skienlabs.tasks.notify.TeamNotices.toPost(list, seen = 5).map { it.id })
+        assertTrue(com.skienlabs.tasks.notify.TeamNotices.toPost(list, seen = 6).isEmpty())
+    }
+
+    @Test
+    fun reviewManyPeopleAndCommentsGoThroughTheServer() = runTest {
+        val api = FakeApi()
+        api.teamList = listOf(acme.copy(role = Role.ADMIN))
+        val mine = Task("t1", "Report", date = today, teamId = acme.id, assignee = "u", assignedBy = "boss", needsReview = true, status = Status.DONE, review = "waiting")
+        api.tasks[mine.id] = mine
+        val store = newStore(api)
+        store.start("u", today)
+        advanceUntilIdle()
+        store.loadTeams()
+        store.syncAll(today)
+        store.loadBoard(acme.id, today, today)
+        advanceUntilIdle()
+
+        // Sent back with a note: the board and my own list show it open again.
+        val back = mine.copy(status = Status.PENDING, review = "returned", completedAt = null)
+        api.jsonReplies["POST /api/teams/${acme.id}/tasks/t1/review"] = com.skienlabs.tasks.data.AppJson.encodeToString(Task.serializer(), back)
+        api.tasks["t1"] = back // what the server now has (the phone fetches it again)
+        api.jsonReplies["GET /api/tasks/t1/comments"] = """{"comments":[{"id":"c1","thread":"t1","uid":"boss","name":"Boss","text":"Bigger logo","createdAt":1}]}"""
+        store.reviewTask(acme.id, mine, approve = false, note = "Bigger logo")
+        advanceUntilIdle()
+        val call = api.jsonCalls.first { it.second.endsWith("/review") }
+        assertEquals("return", call.third!!.let { (it as kotlinx.serialization.json.JsonObject)["decision"]!!.jsonPrimitive.content })
+        assertEquals("returned", store.teams.value.boards[acme.id]!!.tasks.single { it.id == "t1" }.review)
+        assertEquals("returned", store.state.value.tasks["t1"]!!.review)
+        assertEquals(listOf("Bigger logo"), store.teams.value.comments["t1"]!!.map { it.text })
+
+        // One task for two people.
+        api.jsonReplies["POST /api/teams/${acme.id}/tasks"] = """{"tasks":[
+            {"id":"m-0","title":"Plan","date":"$today","teamId":"${acme.id}","assignee":"boss","groupId":"m","groupMode":"first"},
+            {"id":"m-1","title":"Plan","date":"$today","teamId":"${acme.id}","assignee":"u","groupId":"m","groupMode":"first"}]}"""
+        val list = store.assignMany(acme.id, kotlinx.serialization.json.buildJsonObject { put("title", kotlinx.serialization.json.JsonPrimitive("Plan")) })
+        assertEquals(listOf("m-0", "m-1"), list.map { it.id })
+        assertTrue(store.teams.value.boards[acme.id]!!.tasks.any { it.id == "m-1" && it.groupMode == "first" })
+
+        // Comments: posting updates the thread and the board's count.
+        api.jsonReplies["POST /api/tasks/t1/comments"] = """{"comments":[{"id":"c1","thread":"t1","uid":"boss","name":"Boss","text":"Bigger logo"},{"id":"c2","thread":"t1","uid":"u","name":"U","text":"Done"}]}"""
+        store.postComment("t1", "Done")
+        assertEquals(2, store.teams.value.comments["t1"]!!.size)
+        assertEquals(2, store.teams.value.boards[acme.id]!!.tasks.single { it.id == "t1" }.comments)
+    }
+
+    @Test
     fun teamsLoadAreSavedOnThePhoneAndDecideWhatAMemberMayDo() = runTest {
         val api = FakeApi()
         api.teamList = listOf(acme)

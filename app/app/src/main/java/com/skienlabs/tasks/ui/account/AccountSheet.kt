@@ -32,6 +32,8 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -144,29 +146,43 @@ fun AccountSheet(app: AppController, profile: Profile, theme: ThemePref, onDismi
                 (0L until 7L).map { com.skienlabs.tasks.data.Dates.addDays(start, it) }
                     .fold(com.skienlabs.tasks.data.Counts()) { acc, d -> acc.plus(state.summary[d] ?: com.skienlabs.tasks.data.Counts()) }
             }
-            ProfileHero(profile, week)
+            var editingName by rememberSaveable { mutableStateOf(false) }
+            ProfileHero(profile, week, onEditName = { name = profile.name; editingName = true })
+            if (editingName) {
+                AlertDialog(
+                    onDismissRequest = { if (busy.isEmpty()) editingName = false },
+                    title = { Text("Your name") },
+                    text = {
+                        Column {
+                            OutlinedTextField(
+                                value = name, onValueChange = { name = it.take(60) }, singleLine = true, label = { Text("Name") },
+                                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words), modifier = Modifier.fillMaxWidth(),
+                                supportingText = { Text("Shown on your profile and to people in your teams") },
+                            )
+                            msg?.takeIf { it.first }?.let { Text(it.second, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            enabled = name.isNotBlank() && name.trim() != profile.name && busy.isEmpty(),
+                            onClick = {
+                                run("name") {
+                                    app.setProfile(app.api.updateMe(name = name.trim()))
+                                    editingName = false
+                                    app.store.toast("Name saved")
+                                    null
+                                }
+                            },
+                        ) { if (busy == "name") CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Save") }
+                    },
+                    dismissButton = { TextButton(onClick = { editingName = false }, enabled = busy.isEmpty()) { Text("Cancel") } },
+                )
+            }
 
-            Section("Profile") {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = name, onValueChange = { name = it.take(60) }, label = { Text("Your name") }, singleLine = true,
-                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words), modifier = Modifier.weight(1f),
-                    )
-                    Button(
-                        onClick = {
-                            run("name") {
-                                app.setProfile(app.api.updateMe(name = name.trim()))
-                                "Name saved"
-                            }
-                        },
-                        enabled = name.isNotBlank() && name.trim() != profile.name && busy.isEmpty(),
-                    ) {
-                        if (busy == "name") CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary) else Text("Save")
-                    }
-                }
-                if (isPassword && !profile.emailVerified) {
+            if (isPassword) Section("Account") {
+                if (!profile.emailVerified) {
                     Column(
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 12.dp).clip(RoundedCornerShape(14.dp)).background(x.overdueBg).padding(14.dp),
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 12.dp).clip(RoundedCornerShape(14.dp)).background(x.overdueBg).padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text("Check your inbox for a verification link, so you can recover your account if you forget the password.")
@@ -185,8 +201,8 @@ fun AccountSheet(app: AppController, profile: Profile, theme: ThemePref, onDismi
                         }
                     }
                 }
-                if (isPassword && profile.email != null) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                if (profile.email != null) {
+                    if (!profile.emailVerified) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingRow(Icons.Outlined.LockReset, "Change password", "We'll email you a reset link", enabled = busy.isEmpty()) {
                         run("reset") { app.auth.resetPassword(profile.email); "Password reset link sent to ${profile.email}" }
                     }
@@ -259,7 +275,7 @@ fun AccountSheet(app: AppController, profile: Profile, theme: ThemePref, onDismi
  * glowing ring, name, email, how they sign in, and this week at a glance.
  */
 @Composable
-internal fun ProfileHero(profile: Profile, week: com.skienlabs.tasks.data.Counts) {
+internal fun ProfileHero(profile: Profile, week: com.skienlabs.tasks.data.Counts, onEditName: (() -> Unit)? = null) {
     val x = LocalExtra.current
     val isPassword = profile.provider == "password"
     val since = if (profile.createdAt > 0) {
@@ -289,11 +305,23 @@ internal fun ProfileHero(profile: Profile, week: com.skienlabs.tasks.data.Counts
                 },
                 contentAlignment = Alignment.Center,
             ) { Avatar(profile, 82.dp) }
-            Text(
-                profile.name, Modifier.padding(top = 12.dp),
-                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
-            )
+            Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Balances the edit button, so the name stays centred.
+                if (onEditName != null) Box(Modifier.size(32.dp))
+                Text(
+                    profile.name, Modifier.weight(1f, fill = false),
+                    style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Medium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
+                )
+                if (onEditName != null) {
+                    Box(
+                        Modifier.padding(start = 4.dp).size(32.dp).clip(CircleShape)
+                            .background(if (x.dark) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.7f))
+                            .clickable(onClick = onEditName),
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Outlined.Edit, "Edit your name", Modifier.size(16.dp)) }
+                }
+            }
             Text(profile.email ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             FlowRow(
                 Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),

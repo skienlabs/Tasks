@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.outlined.AddTask
+import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -50,6 +51,11 @@ import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.NotificationsActive
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Verified
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -114,6 +120,7 @@ import com.skienlabs.tasks.ui.theme.LocalExtra
 import com.skienlabs.tasks.ui.theme.Palette
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.time.Instant
@@ -185,11 +192,21 @@ fun TeamsScreen(
     today: String,
     myUid: String?,
     baseUrl: String,
+    openTeam: String? = null,
+    joinToken: String? = null,
+    onHandled: () -> Unit = {},
     onOpenTask: (Task) -> Unit,
 ) {
     val teamsState by store.teams.collectAsStateWithLifecycle()
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
+    var joining by remember { mutableStateOf<String?>(null) } // "" = paste a link
+    // Opened from a notification or an invite link.
+    LaunchedEffect(openTeam, joinToken) {
+        if (openTeam != null) selected = openTeam
+        if (joinToken != null) joining = joinToken
+        if (openTeam != null || joinToken != null) onHandled()
+    }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { runCatching { store.loadTeams() } }
 
@@ -204,6 +221,7 @@ fun TeamsScreen(
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Teams", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { joining = "" }) { Text("Join") }
                     FilledTonalButton(onClick = { creating = true }) {
                         Icon(Icons.Outlined.Groups, null, Modifier.size(18.dp)); Text("  New team")
                     }
@@ -221,7 +239,10 @@ fun TeamsScreen(
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                         Text(t.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            "${t.members.size} ${if (t.members.size == 1) "person" else "people"}" + if (t.isAdmin && t.invites.isNotEmpty()) " · ${t.invites.size} invited" else "",
+                            "${t.members.size} ${if (t.members.size == 1) "person" else "people"}" +
+                                (if (t.isAdmin && t.invites.isNotEmpty()) " · ${t.invites.size} invited" else "") +
+                                (if (t.isAdmin && t.requests.isNotEmpty()) " · ${t.requests.size} asking to join" else "") +
+                                (if (t.archived) " · archived" else ""),
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -248,6 +269,9 @@ fun TeamsScreen(
         }
     }
     if (creating) TeamFormSheet(store, null, onDismiss = { creating = false }) { selected = it.id }
+    joining?.let { token ->
+        JoinSheet(store, token.ifBlank { null }, onDismiss = { joining = null }) { id -> joining = null; selected = id }
+    }
 }
 
 @Composable
@@ -256,7 +280,7 @@ private fun InviteCard(store: Store, invite: Invite, onJoined: (Team) -> Unit) {
     var busy by remember { mutableStateOf("") }
     Column(Modifier.fillMaxWidth().card(MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)).padding(14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TeamMark(invite.teamName, invite.teamColor, 44.dp)
+            TeamMark(invite.teamName, invite.teamColor, 44.dp, invite.teamLogo)
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
                 Text(invite.teamName, style = MaterialTheme.typography.titleMedium)
                 Text(
@@ -280,7 +304,10 @@ private fun InviteCard(store: Store, invite: Invite, onJoined: (Team) -> Unit) {
     }
 }
 
-private enum class TeamTab(val label: String) { OVERVIEW("Overview"), TASKS("Tasks"), MINE("My tasks"), PEOPLE("People") }
+private enum class TeamTab(val label: String) {
+    OVERVIEW("Overview"), TASKS("Tasks"), CALENDAR("Calendar"), WORKLOAD("Workload"), REPORTS("Reports"),
+    MINE("My tasks"), GIVEN("Given by me"), PEOPLE("People"), ACTIVITY("Activity"), SETTINGS("Settings"),
+}
 
 private fun isLate(t: Task, today: String, now: LocalDateTime): Boolean =
     t.isPending && ((Due.parse(t.dueAt)?.isBefore(now) == true) || t.date < today)
@@ -290,21 +317,29 @@ private fun isLate(t: Task, today: String, now: LocalDateTime): Boolean =
 private fun TeamDetail(store: Store, team: Team, today: String, myUid: String?, baseUrl: String, onOpenTask: (Task) -> Unit, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val admin = team.isAdmin
-    val tabs = if (admin) listOf(TeamTab.OVERVIEW, TeamTab.TASKS, TeamTab.PEOPLE) else listOf(TeamTab.MINE, TeamTab.PEOPLE)
+    val teamsState by store.teams.collectAsStateWithLifecycle()
+    val sync by store.sync.collectAsStateWithLifecycle()
+    val board = teamsState.boards[team.id]
+    val gave = board?.tasks?.any { it.assignedBy == myUid && it.assignee != myUid } == true
+    val tabs = if (admin) {
+        listOf(TeamTab.OVERVIEW, TeamTab.TASKS, TeamTab.CALENDAR, TeamTab.WORKLOAD, TeamTab.REPORTS, TeamTab.PEOPLE, TeamTab.ACTIVITY, TeamTab.SETTINGS)
+    } else listOfNotNull(TeamTab.MINE, if (gave || team.settings.membersCanAssign) TeamTab.GIVEN else null, TeamTab.PEOPLE)
     var tab by rememberSaveable(team.id) { mutableStateOf(tabs.first()) }
     if (tab !in tabs) tab = tabs.first()
     var menu by remember { mutableStateOf(false) }
     var edit by remember { mutableStateOf(false) }
     var invite by remember { mutableStateOf(false) }
     var assign by remember { mutableStateOf<Pair<Task?, String?>?>(null) }
+    var template by remember { mutableStateOf<com.skienlabs.tasks.data.Template?>(null) }
+    var openTask by remember { mutableStateOf<Task?>(null) }
+    var person by remember { mutableStateOf<Member?>(null) }
     var confirm by remember { mutableStateOf<Confirm?>(null) }
-    val teamsState by store.teams.collectAsStateWithLifecycle()
-    val sync by store.sync.collectAsStateWithLifecycle()
-    val board = teamsState.boards[team.id]
     var boardError by remember(team.id) { mutableStateOf<String?>(null) }
+    val deleteTeam = Confirm(
+        "Delete ${team.name}?", "The team and its invites are deleted for everyone. Tasks it gave out stay in each person's list, as their own.", "Delete team",
+    ) { store.deleteTeam(team.id); store.toast("${team.name} was deleted") }
 
     LaunchedEffect(team.id, admin, today) {
-        if (!admin) return@LaunchedEffect
         val (from, to) = boardRange(today)
         boardError = null
         try {
@@ -326,12 +361,16 @@ private fun TeamDetail(store: Store, team: Team, today: String, myUid: String?, 
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
                     )
                 }
+                if (admin && !team.archived) IconButton(onClick = { edit = true }) { Icon(Icons.Outlined.Edit, "Edit team") }
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Team options") }
                     DropdownMenu(menu, { menu = false }) {
-                        if (admin) {
+                        if (admin && !team.archived) {
                             DropdownMenuItem(text = { Text("Invite people") }, leadingIcon = { Icon(Icons.Outlined.GroupAdd, null) }, onClick = { menu = false; invite = true })
-                            DropdownMenuItem(text = { Text("Rename or recolour") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { menu = false; edit = true })
+                            DropdownMenuItem(text = { Text("Edit team") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { menu = false; edit = true })
+                        }
+                        if (admin) {
+                            DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Outlined.Settings, null) }, onClick = { menu = false; tab = TeamTab.SETTINGS })
                             HorizontalDivider()
                         }
                         if (team.role != Role.OWNER) {
@@ -351,9 +390,7 @@ private fun TeamDetail(store: Store, team: Team, today: String, myUid: String?, 
                                 leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) },
                                 onClick = {
                                     menu = false
-                                    confirm = Confirm(
-                                        "Delete ${team.name}?", "The team and its invites are deleted for everyone. Tasks it gave out stay in each person's list, as their own.", "Delete team",
-                                    ) { store.deleteTeam(team.id); store.toast("${team.name} was deleted") }
+                                    confirm = deleteTeam
                                 },
                             )
                         }
@@ -370,22 +407,44 @@ private fun TeamDetail(store: Store, team: Team, today: String, myUid: String?, 
                     Text("  You're offline. Team changes need a connection; your own tasks still work.", style = MaterialTheme.typography.bodySmall)
                 }
             }
-            PrimaryTabRow(selectedTabIndex = tabs.indexOf(tab), containerColor = Color.Transparent) {
-                tabs.forEach { t -> Tab(selected = tab == t, onClick = { tab = t }, text = { Text(t.label) }) }
+            if (team.archived) {
+                Text(
+                    "This team is archived. You can read everything; nothing new happens in it.",
+                    Modifier.padding(horizontal = 16.dp, vertical = 4.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(LocalExtra.current.chip).padding(10.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
-            when (tab) {
-                TeamTab.OVERVIEW, TeamTab.TASKS -> when {
-                    board == null && boardError != null -> Text(boardError!!, Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    board == null -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp))
-                    tab == TeamTab.OVERVIEW -> Overview(team, board.tasks, today, myUid) { tab = TeamTab.TASKS }
-                    else -> BoardList(store, team, board.tasks, today, myUid) { t -> assign = t to null }
+            androidx.compose.material3.PrimaryScrollableTabRow(
+                selectedTabIndex = tabs.indexOf(tab), containerColor = Color.Transparent, edgePadding = 8.dp,
+            ) {
+                tabs.forEach { t ->
+                    val label = if (t == TeamTab.PEOPLE && admin && team.requests.isNotEmpty()) "${t.label} · ${team.requests.size}" else t.label
+                    Tab(selected = tab == t, onClick = { tab = t }, text = { Text(label) })
                 }
-                TeamTab.MINE -> MyTeamTasks(store, team, today, onOpenTask)
-                TeamTab.PEOPLE -> People(store, team, myUid, baseUrl) { invite = true }
+            }
+            val needsBoard = tab in setOf(TeamTab.OVERVIEW, TeamTab.TASKS, TeamTab.CALENDAR, TeamTab.WORKLOAD, TeamTab.REPORTS, TeamTab.GIVEN)
+            when {
+                needsBoard && board == null && boardError != null -> Text(boardError!!, Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                needsBoard && board == null -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp))
+                else -> when (tab) {
+                    TeamTab.OVERVIEW -> Overview(team, board!!.tasks, today, myUid) { tab = TeamTab.TASKS }
+                    TeamTab.TASKS -> BoardList(store, team, board!!.tasks, today, myUid, mineOnly = false, onOpen = { openTask = it }) { t -> assign = t to null }
+                    TeamTab.GIVEN -> BoardList(store, team, board!!.tasks, today, myUid, mineOnly = true, onOpen = { openTask = it }) { t -> assign = t to null }
+                    TeamTab.CALENDAR -> TeamCalendar(team, board!!.tasks, today) { openTask = it }
+                    TeamTab.WORKLOAD -> Workload(team, board!!.tasks, today) { person = it }
+                    TeamTab.REPORTS -> TeamReport(team, board!!.tasks, today)
+                    TeamTab.MINE -> MyTeamTasks(store, team, today, onOpenTask)
+                    TeamTab.PEOPLE -> People(store, team, myUid, baseUrl, onPerson = { person = it }) { invite = true }
+                    TeamTab.ACTIVITY -> ActivityLog(store, team)
+                    TeamTab.SETTINGS -> TeamSettingsPane(store, team, onUseTemplate = { template = it; assign = null to null }) { confirm = deleteTeam }
+                }
             }
         }
-        if (admin && tab != TeamTab.PEOPLE && board != null) {
+        val fabTab = if (admin) tab !in setOf(TeamTab.PEOPLE, TeamTab.ACTIVITY, TeamTab.SETTINGS) else tab == TeamTab.GIVEN || tab == TeamTab.MINE
+        if (team.canGive && fabTab && board != null) {
+            val (fabBg, fabFg) = com.skienlabs.tasks.ui.theme.fabColors()
             ExtendedFloatingActionButton(
+                containerColor = fabBg, contentColor = fabFg,
                 onClick = { assign = null to null },
                 icon = { Icon(Icons.Outlined.AddTask, null) }, text = { Text("Give a task") },
                 modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
@@ -395,7 +454,11 @@ private fun TeamDetail(store: Store, team: Team, today: String, myUid: String?, 
 
     if (edit) TeamFormSheet(store, team, onDismiss = { edit = false })
     if (invite) InviteSheet(store, team, baseUrl) { invite = false }
-    assign?.let { (task, who) -> AssignSheet(store, team, task, who, today, myUid) { assign = null } }
+    assign?.let { (task, who) -> AssignSheet(store, team, task, who, today, myUid, template) { assign = null; template = null } }
+    openTask?.let { t -> BoardTaskSheet(store, team, t, today, onEdit = { openTask = null; assign = it to null }) { openTask = null } }
+    person?.let { m ->
+        PersonSheet(store, team, m, board?.tasks, today, onOpen = { person = null; openTask = it }, onAssign = { uid -> person = null; assign = null to uid }) { person = null }
+    }
     confirm?.let { c -> ConfirmDialog(c, store) { confirm = null } }
 }
 
@@ -507,12 +570,23 @@ private fun Overview(team: Team, tasks: List<Task>, today: String, myUid: String
 }
 
 @Composable
-private fun BoardList(store: Store, team: Team, tasks: List<Task>, today: String, myUid: String?, onEdit: (Task) -> Unit) {
-    var who by rememberSaveable { mutableStateOf<String?>(null) }
+private fun BoardList(store: Store, team: Team, tasks: List<Task>, today: String, myUid: String?, mineOnly: Boolean, onOpen: (Task) -> Unit, onEdit: (Task) -> Unit) {
+    var who by rememberSaveable { mutableStateOf<String?>(null) } // a uid, or "g:<group id>"
     var status by rememberSaveable { mutableStateOf("open") }
+    var tagFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var whoMenu by remember { mutableStateOf(false) }
-    val shown = tasks.filter { who == null || it.assignee == who }
-        .filter { when (status) { "open" -> it.isPending; "done" -> it.isDone; else -> true } }
+    var tagMenu by remember { mutableStateOf(false) }
+    val now = rememberNow()
+    fun matchWho(t: Task): Boolean {
+        val w = who ?: return true
+        if (w.startsWith("g:")) return team.groups.firstOrNull { it.id == w.drop(2) }?.members?.contains(t.assignee) == true
+        return t.assignee == w
+    }
+    val toReview = tasks.count { it.review == "waiting" }
+    val shown = tasks.filter { !mineOnly || it.assignedBy == myUid }
+        .filter { matchWho(it) }
+        .filter { tagFilter == null || tagFilter in it.teamTagIds }
+        .filter { when (status) { "open" -> it.isPending; "done" -> it.isDone; "review" -> it.review == "waiting"; "late" -> isLate(it, today, now); else -> true } }
         .sortedWith(
             if (status == "done") compareByDescending { it.completedAt ?: 0 }
             else compareBy<Task>({ !it.isPending }, { it.dueAt ?: "${it.date}T99" }, { it.priority }),
@@ -521,29 +595,40 @@ private fun BoardList(store: Store, team: Team, tasks: List<Task>, today: String
         item {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box {
-                    FilterChip(selected = who != null, onClick = { whoMenu = true }, label = { Text(who?.let { team.member(it)?.name } ?: "Everyone") })
+                    val whoLabel = who?.let { w -> if (w.startsWith("g:")) team.groups.firstOrNull { it.id == w.drop(2) }?.name else team.member(w)?.name } ?: "Everyone"
+                    FilterChip(selected = who != null, onClick = { whoMenu = true }, label = { Text(whoLabel) })
                     DropdownMenu(whoMenu, { whoMenu = false }) {
                         DropdownMenuItem(text = { Text("Everyone") }, onClick = { who = null; whoMenu = false })
+                        team.groups.forEach { g -> DropdownMenuItem(text = { Text("Group: ${g.name}") }, onClick = { who = "g:${g.id}"; whoMenu = false }) }
                         team.members.forEach { m -> DropdownMenuItem(text = { Text(m.name + if (m.uid == myUid) " (you)" else "") }, onClick = { who = m.uid; whoMenu = false }) }
                     }
                 }
-                listOf("open" to "Open", "done" to "Done", "all" to "All").forEach { (k, l) -> FilterChip(selected = status == k, onClick = { status = k }, label = { Text(l) }) }
+                if (team.tags.isNotEmpty()) Box {
+                    FilterChip(selected = tagFilter != null, onClick = { tagMenu = true }, label = { Text(tagFilter?.let { team.tag(it)?.name?.let { n -> "# $n" } } ?: "All tags") })
+                    DropdownMenu(tagMenu, { tagMenu = false }) {
+                        DropdownMenuItem(text = { Text("All tags") }, onClick = { tagFilter = null; tagMenu = false })
+                        team.tags.forEach { t -> DropdownMenuItem(text = { Text("# ${t.name}") }, onClick = { tagFilter = t.id; tagMenu = false }) }
+                    }
+                }
+                listOf("open" to "Open", "review" to "To review" + if (toReview > 0) " · $toReview" else "", "late" to "Late", "done" to "Done", "all" to "All").forEach { (k, l) ->
+                    FilterChip(selected = status == k, onClick = { status = k }, label = { Text(l) })
+                }
             }
         }
         if (shown.isEmpty()) {
             item {
                 Text(
-                    when (status) { "open" -> "No open team tasks."; "done" -> "Nothing completed in the last six weeks."; else -> "No team tasks yet." },
+                    when (status) { "open" -> "No open team tasks."; "review" -> "Nothing waiting for review."; "late" -> "Nothing late. Nice."; "done" -> "Nothing completed in the last six weeks."; else -> "No team tasks yet." },
                     Modifier.fillMaxWidth().card().padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
-        items(shown, key = { it.id }) { t -> BoardRow(store, team, t, today, onEdit) }
+        items(shown, key = { it.id }) { t -> BoardRow(store, team, t, today, myUid, onOpen, onEdit) }
     }
 }
 
 @Composable
-private fun BoardRow(store: Store, team: Team, task: Task, today: String, onEdit: (Task) -> Unit) {
+private fun BoardRow(store: Store, team: Team, task: Task, today: String, myUid: String?, onOpen: (Task) -> Unit, onEdit: (Task) -> Unit) {
     val x = LocalExtra.current
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
@@ -551,7 +636,9 @@ private fun BoardRow(store: Store, team: Team, task: Task, today: String, onEdit
     val person = team.member(task.assignee)
     val late = isLate(task, today, rememberNow())
     Row(
-        Modifier.fillMaxWidth().card(if (late) x.overdue.copy(alpha = 0.45f) else null).clickable { onEdit(task) }.padding(start = 12.dp, top = 10.dp, bottom = 10.dp),
+        Modifier.fillMaxWidth().card(
+            when { task.review == "waiting" -> Color(0xFFFDD663).copy(alpha = 0.7f); late -> x.overdue.copy(alpha = 0.45f); else -> null },
+        ).clickable { onOpen(task) }.padding(start = 12.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Icon(
@@ -572,15 +659,34 @@ private fun BoardRow(store: Store, team: Team, task: Task, today: String, onEdit
                         color = if (late && task.date < today) x.overdue else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if (task.dueAt != null) DueChip(task)
+                ReviewChip(task)
+                TeamTagChips(task, team)
                 val p = Steps.progress(task.subtasks)
                 if (p.total > 0) Text("${p.done}/${p.total} steps", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (task.comments > 0) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.ChatBubbleOutline, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(" ${task.comments}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                val files = task.files.size + task.attachments.size
+                if (files > 0) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.AttachFile, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(" $files", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             if (task.notes.isNotBlank()) Text(task.notes.lineSequence().first(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Box {
+        if (canManage(task, team, myUid) && !team.archived) Box {
             IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "More actions for \"${task.title}\"") }
             DropdownMenu(menu, { menu = false }) {
                 DropdownMenuItem(text = { Text("Edit or reassign") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { menu = false; onEdit(task) })
+                if (task.review == "waiting") DropdownMenuItem(text = { Text("Approve") }, leadingIcon = { Icon(Icons.Outlined.Verified, null, tint = x.done) }, onClick = {
+                    menu = false
+                    store.attempt(scope, "Approved") { store.reviewTask(team.id, task, approve = true) }
+                })
+                if (task.isPending && task.assignee != myUid) DropdownMenuItem(
+                    text = { Text("Remind ${person?.name?.substringBefore(' ') ?: ""}") }, leadingIcon = { Icon(Icons.Outlined.NotificationsActive, null) },
+                    onClick = { menu = false; store.attempt(scope, "Reminder sent") { store.nudge(team.id, task) } },
+                )
                 if (task.isPending) {
                     DropdownMenuItem(text = { Text("Cancel task") }, leadingIcon = { Icon(Icons.Filled.Block, null) }, onClick = {
                         menu = false
@@ -592,7 +698,7 @@ private fun BoardRow(store: Store, team: Team, task: Task, today: String, onEdit
                         store.attempt(scope) { store.updateTeamTask(team.id, task, buildJsonObject { put("status", "pending") }) }
                     })
                 }
-                DropdownMenuItem(
+                if (team.isAdmin) DropdownMenuItem(
                     text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) },
                     onClick = {
@@ -603,7 +709,7 @@ private fun BoardRow(store: Store, team: Team, task: Task, today: String, onEdit
                     },
                 )
             }
-        }
+        } else Spacer(Modifier.width(12.dp))
     }
     confirm?.let { c -> ConfirmDialog(c, store) { confirm = null } }
 }
@@ -631,6 +737,8 @@ private fun MyTeamTasks(store: Store, team: Team, today: String, onOpenTask: (Ta
                         val by = team.member(t.assignedBy)?.name
                         Text(Dates.shortLabel(t.date, today) + (by?.let { " · from $it" } ?: ""), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (t.dueAt != null) DueChip(t)
+                        ReviewChip(t)
+                        TeamTagChips(t, team)
                     }
                 }
             }
@@ -639,7 +747,7 @@ private fun MyTeamTasks(store: Store, team: Team, today: String, onOpenTask: (Ta
 }
 
 @Composable
-private fun People(store: Store, team: Team, myUid: String?, baseUrl: String, onInvite: () -> Unit) {
+private fun People(store: Store, team: Team, myUid: String?, baseUrl: String, onPerson: (Member) -> Unit, onInvite: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val admin = team.isAdmin
@@ -648,9 +756,27 @@ private fun People(store: Store, team: Team, myUid: String?, baseUrl: String, on
             Column(Modifier.fillMaxWidth().card().padding(vertical = 8.dp)) {
                 Row(Modifier.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("${team.members.size} ${if (team.members.size == 1) "person" else "people"}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    if (admin) TextButton(onClick = onInvite) { Icon(Icons.Outlined.GroupAdd, null, Modifier.size(18.dp)); Text("  Invite") }
+                    if (admin && !team.archived) TextButton(onClick = onInvite) { Icon(Icons.Outlined.GroupAdd, null, Modifier.size(18.dp)); Text("  Invite") }
                 }
-                team.members.forEach { m -> PersonRow(store, team, m, myUid) }
+                team.members.forEach { m -> PersonRow(store, team, m, myUid) { onPerson(m) } }
+            }
+        }
+        if (admin && team.requests.isNotEmpty()) {
+            item {
+                Column(Modifier.fillMaxWidth().card(MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)).padding(vertical = 8.dp)) {
+                    Text("Asking to join · ${team.requests.size}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
+                    team.requests.forEach { r ->
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            PersonMark(Member(r.uid, name = r.name, email = r.email), 36.dp)
+                            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                                Text(r.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text((r.email ?: "") + " · used the invite link", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            TextButton(onClick = { store.attempt(scope, "Request declined") { store.answerJoinRequest(team.id, r.uid, false) } }) { Text("Decline") }
+                            Button(onClick = { store.attempt(scope, "${r.name} joined") { store.answerJoinRequest(team.id, r.uid, true) } }) { Text("Let in") }
+                        }
+                    }
+                }
             }
         }
         if (admin && team.invites.isNotEmpty()) {
@@ -678,21 +804,24 @@ private fun InviteRow(store: Store, team: Team, i: TeamInvite, scope: kotlinx.co
 }
 
 @Composable
-private fun PersonRow(store: Store, team: Team, m: Member, myUid: String?) {
+private fun PersonRow(store: Store, team: Team, m: Member, myUid: String?, onOpen: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<Confirm?>(null) }
     val scope = rememberCoroutineScope()
     val iOwn = team.role == Role.OWNER
     val me = m.uid == myUid
-    val canPromote = team.isAdmin && !me && m.role == Role.MEMBER
-    val canDemote = iOwn && m.role == Role.ADMIN
-    val canTransfer = iOwn && !me
-    val canRemove = team.isAdmin && !me && m.role != Role.OWNER && (iOwn || m.role == Role.MEMBER)
-    Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    val live = !team.archived
+    val canPromote = live && team.isAdmin && !me && m.role == Role.MEMBER
+    val canDemote = live && iOwn && m.role == Role.ADMIN
+    val canTransfer = live && iOwn && !me
+    val canRemove = live && team.isAdmin && !me && m.role != Role.OWNER && (iOwn || m.role == Role.MEMBER)
+    Row(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         PersonMark(m, 36.dp)
         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             Text(m.name + if (me) " (you)" else "", style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            m.email?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            listOfNotNull(m.title, m.email).joinToString(" · ").takeIf { it.isNotBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         RolePill(m.role)
         if (canPromote || canDemote || canTransfer || canRemove) {
@@ -733,22 +862,61 @@ private fun PersonRow(store: Store, team: Team, m: Member, myUid: String?) {
 private fun TeamFormSheet(store: Store, team: Team?, onDismiss: () -> Unit, onSaved: (Team) -> Unit = {}) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var name by rememberSaveable { mutableStateOf(team?.name ?: "") }
     var color by rememberSaveable { mutableStateOf(team?.color ?: "blue") }
+    var logo by remember { mutableStateOf(team?.logo) }
+    var logoChanged by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // A logo, picked and cropped just like a tag's.
+    var cropping by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) scope.launch {
+            busy = true; error = null
+            try {
+                cropping = com.skienlabs.tasks.ui.tags.decodeForCrop(context, uri)
+            } catch (e: IllegalArgumentException) {
+                error = e.message
+            } finally {
+                busy = false
+            }
+        }
+    }
+    cropping?.let { bmp ->
+        com.skienlabs.tasks.ui.tags.LogoCropDialog(
+            bmp,
+            onCancel = { cropping = null },
+            onDone = { data -> logo = data; logoChanged = true; cropping = null },
+            onError = { error = it; cropping = null },
+        )
+    }
     ModalBottomSheet(onDismissRequest = { if (!busy) onDismiss() }, sheetState = sheet) {
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(if (team == null) "New team" else "Team settings", style = MaterialTheme.typography.titleLarge)
+            Text(if (team == null) "New team" else "Edit team", style = MaterialTheme.typography.titleLarge)
+            Text(
+                if (team == null) "A team for your company or crew. You can invite people next." else "Everyone in the team sees the changes.",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TeamMark(name.ifBlank { "Team" }, color, 48.dp)
-                Text(
-                    if (team == null) "  A team for your company or crew. You can invite people next." else "  Everyone in the team sees the new name.",
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                TeamMark(name.ifBlank { "Team" }, color, 64.dp, logo)
+                Column(Modifier.weight(1f).padding(start = 16.dp)) {
+                    Text("Logo", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = { picker.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                            enabled = !busy, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+                        ) {
+                            Icon(Icons.Outlined.AddPhotoAlternate, null, Modifier.size(18.dp)); Text(if (logo == null) "  Add a logo" else "  Change logo")
+                        }
+                        if (logo != null) TextButton(onClick = { logo = null; logoChanged = true }, enabled = !busy, modifier = Modifier.padding(start = 8.dp)) {
+                            Text("Remove", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
             }
             OutlinedTextField(
                 name, { name = it.take(60) }, label = { Text("Team name") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
@@ -770,7 +938,7 @@ private fun TeamFormSheet(store: Store, team: Team?, onDismiss: () -> Unit, onSa
                     error = null
                     scope.launch {
                         try {
-                            val saved = if (team == null) store.createTeam(name, color) else store.updateTeam(team.id, name, color)
+                            val saved = if (team == null) store.createTeam(name, color, logo) else store.updateTeam(team.id, name, color, logo, logoChanged)
                             onSaved(saved)
                             onDismiss()
                         } catch (e: ApiException) {
@@ -862,57 +1030,152 @@ private fun InviteSheet(store: Store, team: Team, baseUrl: String, onDismiss: ()
     }
 }
 
-/** Give someone a task, or edit one already given ([task]). */
+/**
+ * Give a task to one person, several, or a group (each does their own, or the first one to finish
+ * closes it), or set up a repeating one; or edit one already given ([task]).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AssignSheet(store: Store, team: Team, task: Task?, defaultAssignee: String?, today: String, myUid: String?, onDismiss: () -> Unit) {
+private fun AssignSheet(
+    store: Store, team: Team, task: Task?, defaultAssignee: String?, today: String, myUid: String?,
+    startTemplate: com.skienlabs.tasks.data.Template? = null, onDismiss: () -> Unit,
+) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val key = task?.id ?: "new"
-    var assignee by rememberSaveable(key) { mutableStateOf(task?.assignee ?: defaultAssignee ?: team.members.firstOrNull { it.uid != myUid }?.uid ?: myUid ?: "") }
+    val teamsState by store.teams.collectAsStateWithLifecycle()
+    var people by remember(key) {
+        mutableStateOf(listOf(task?.assignee ?: defaultAssignee ?: team.members.firstOrNull { it.uid != myUid }?.uid ?: myUid ?: ""))
+    }
+    var groupId by remember(key) { mutableStateOf<String?>(null) }
+    var mode by rememberSaveable(key) { mutableStateOf("each") }
     var title by rememberSaveable(key) { mutableStateOf(task?.title ?: "") }
     var notes by rememberSaveable(key) { mutableStateOf(task?.notes ?: "") }
     var priority by rememberSaveable(key) { mutableStateOf(task?.priority ?: 4) }
     var date by rememberSaveable(key) { mutableStateOf(task?.date ?: today) }
     var dueAt by rememberSaveable(key) { mutableStateOf(task?.dueAt) }
+    var dueTime by rememberSaveable(key) { mutableStateOf("") }
     var steps by remember(key) { mutableStateOf(task?.subtasks ?: emptyList<Subtask>()) }
+    var needsReview by rememberSaveable(key) { mutableStateOf(task?.needsReview ?: false) }
+    var teamTagIds by remember(key) { mutableStateOf(task?.teamTagIds ?: emptyList()) }
+    var rule by remember(key) { mutableStateOf<com.skienlabs.tasks.data.Rule?>(null) }
+    var files by remember(key) { mutableStateOf(listOf<Triple<String, String, ByteArray>>()) }
     var whoMenu by remember { mutableStateOf(false) }
+    var templateMenu by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    val valid = title.isNotBlank() && team.member(assignee) != null && (dueAt == null || Due.isValid(dueAt)) && (date >= today || date == task?.date)
+    val templates = teamsState.templates[team.id]
+    LaunchedEffect(team.id, task) { if (task == null && team.canGive) runCatching { store.loadTemplates(team.id) } }
+
+    fun apply(tp: com.skienlabs.tasks.data.Template) {
+        title = tp.title; notes = tp.notes; priority = tp.priority; steps = tp.subtasks; needsReview = tp.needsReview
+        teamTagIds = tp.teamTagIds.filter { team.tag(it) != null }
+        if (tp.dueTime != null) { dueTime = tp.dueTime; dueAt = "${date}T${tp.dueTime}" } else dueAt = null
+    }
+    LaunchedEffect(startTemplate) { startTemplate?.let { apply(it) } }
+
+    val filePicker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        scope.launch {
+            for (u in uris) {
+                try {
+                    files = (files + readPicked(context, u)).take(20)
+                } catch (e: ApiException) {
+                    error = e.message
+                }
+            }
+        }
+    }
+
+    val repeating = task == null && rule != null
+    val several = people.size > 1
+    val validPeople = people.isNotEmpty() && people.all { team.member(it) != null }
+    val valid = title.isNotBlank() && validPeople && (repeating || ((dueAt == null || Due.isValid(dueAt)) && (date >= today || date == task?.date)))
+
+    fun body(): kotlinx.serialization.json.JsonObject = buildJsonObject {
+        put("title", title.trim()); put("notes", notes.trim()); put("priority", priority)
+        val clean = Steps.normalize(steps)
+        if (clean.isNotEmpty()) put("subtasks", subtasksJson(clean))
+        if (needsReview) put("needsReview", true)
+        if (teamTagIds.isNotEmpty()) put("teamTagIds", kotlinx.serialization.json.JsonArray(teamTagIds.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+    }
 
     ModalBottomSheet(onDismissRequest = { if (!busy) onDismiss() }, sheetState = sheet) {
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(if (task == null) "Give a task" else "Edit team task", style = MaterialTheme.typography.titleLarge)
-            Box {
-                val m = team.member(assignee)
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).border(1.dp, LocalExtra.current.outline, RoundedCornerShape(12.dp))
-                        .clickable { whoMenu = true }.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    PersonMark(m, 28.dp)
-                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        Text("For", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text((m?.name ?: "Pick someone") + if (m?.uid == myUid) " (you)" else "", style = MaterialTheme.typography.bodyLarge)
-                    }
-                    m?.let { RolePill(it.role) }
-                }
-                DropdownMenu(whoMenu, { whoMenu = false }) {
-                    team.members.forEach { mm ->
-                        DropdownMenuItem(
-                            text = { Text(mm.name + if (mm.uid == myUid) " (you)" else "") },
-                            leadingIcon = { PersonMark(mm, 24.dp) },
-                            onClick = { assignee = mm.uid; whoMenu = false },
-                        )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(if (task == null) "Give a task" else "Edit team task", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                if (task == null && !templates.isNullOrEmpty()) Box {
+                    TextButton(onClick = { templateMenu = true }) { Text("Templates") }
+                    DropdownMenu(templateMenu, { templateMenu = false }) {
+                        templates.forEach { tp -> DropdownMenuItem(text = { Text(tp.name) }, onClick = { templateMenu = false; apply(tp) }) }
                     }
                 }
             }
-            if (task != null && assignee != task.assignee) {
-                Text("It moves to their list; your tags on it stay behind.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (task != null) {
+                Box {
+                    val m = team.member(people.firstOrNull())
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).border(1.dp, LocalExtra.current.outline, RoundedCornerShape(12.dp))
+                            .clickable { whoMenu = true }.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        PersonMark(m, 28.dp)
+                        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                            Text("For", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text((m?.name ?: "Pick someone") + if (m?.uid == myUid) " (you)" else "", style = MaterialTheme.typography.bodyLarge)
+                        }
+                        m?.let { RolePill(it.role) }
+                    }
+                    DropdownMenu(whoMenu, { whoMenu = false }) {
+                        team.members.forEach { mm ->
+                            DropdownMenuItem(
+                                text = { Text(mm.name + if (mm.uid == myUid) " (you)" else "") },
+                                leadingIcon = { PersonMark(mm, 24.dp) },
+                                onClick = { people = listOf(mm.uid); whoMenu = false },
+                            )
+                        }
+                    }
+                }
+                if (people.firstOrNull() != task.assignee) {
+                    Text("It moves to their list; your tags on it stay behind.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("For", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (team.groups.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        team.groups.forEach { g ->
+                            FilterChip(selected = groupId == g.id, onClick = {
+                                if (groupId == g.id) { groupId = null; people = emptyList() } else { groupId = g.id; people = g.members }
+                            }, label = { Text("${g.name} · ${g.members.size}") })
+                        }
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        team.members.forEach { m ->
+                            FilterChip(
+                                selected = m.uid in people,
+                                onClick = { groupId = null; people = if (m.uid in people) people - m.uid else people + m.uid },
+                                leadingIcon = { PersonMark(m, 20.dp) },
+                                label = { Text(m.name + if (m.uid == myUid) " (you)" else "") },
+                            )
+                        }
+                    }
+                }
+                if (several) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                            listOf("each" to "Each their own", "first" to "First one closes it").forEachIndexed { i, (k, l) ->
+                                SegmentedButton(selected = mode == k, onClick = { mode = k }, shape = SegmentedButtonDefaults.itemShape(i, 2)) { Text(l, maxLines = 1) }
+                            }
+                        }
+                        Text(
+                            if (mode == "each") "Everyone gets their own copy to tick off." else "Everyone sees it; when one person finishes, it closes for the others.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
             OutlinedTextField(
                 title, { title = it.replace("\n", " ").take(500) }, label = { Text("Task") }, maxLines = 4, modifier = Modifier.fillMaxWidth(),
@@ -935,18 +1198,70 @@ private fun AssignSheet(store: Store, team: Team, task: Task?, defaultAssignee: 
                     }
                 }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Day", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("Today" to today, "Tomorrow" to Dates.addDays(today, 1), "Next week" to Dates.addDays(today, 7)).forEach { (l, d) ->
-                        FilterChip(selected = date == d, onClick = { date = d }, label = { Text(l) })
+            if (team.tags.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Team tags", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        team.tags.forEach { t ->
+                            FilterChip(selected = t.id in teamTagIds, onClick = { teamTagIds = if (t.id in teamTagIds) teamTagIds - t.id else teamTagIds + t.id }, label = { Text("# ${t.name}") })
+                        }
                     }
-                    if (date !in listOf(today, Dates.addDays(today, 1), Dates.addDays(today, 7))) FilterChip(selected = true, onClick = {}, label = { Text(Dates.shortLabel(date, today)) })
                 }
             }
-            TimeLimitField(dueAt, { dueAt = it }, date)
+            if (task == null && team.isAdmin) RulePicker(rule) { rule = it }
+            if (repeating) {
+                Text("${ruleLabel(rule!!)}, starting today. Each one shows up in their Tasks on its day.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    dueTime, { v -> dueTime = v.filter { it.isDigit() || it == ':' }.take(5) }, label = { Text("Finish by (time, optional)") }, placeholder = { Text("17:00") },
+                    singleLine = true, isError = dueTime.isNotEmpty() && !Regex("^([01]\\d|2[0-3]):[0-5]\\d$").matches(dueTime),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Day", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("Today" to today, "Tomorrow" to Dates.addDays(today, 1), "Next week" to Dates.addDays(today, 7)).forEach { (l, d) ->
+                            FilterChip(selected = date == d, onClick = { date = d }, label = { Text(l) })
+                        }
+                        if (date !in listOf(today, Dates.addDays(today, 1), Dates.addDays(today, 7))) FilterChip(selected = true, onClick = {}, label = { Text(Dates.shortLabel(date, today)) })
+                    }
+                }
+                TimeLimitField(dueAt, { dueAt = it }, date)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Needs sign-off", style = MaterialTheme.typography.bodyLarge)
+                    Text("When it's done, an admin approves it or sends it back", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                androidx.compose.material3.Switch(checked = needsReview, onCheckedChange = { needsReview = it })
+            }
+            if (task == null && !repeating) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(onClick = { filePicker.launch(arrayOf("*/*")) }) { Icon(Icons.Outlined.AttachFile, null, Modifier.size(18.dp)); Text("  Attach files") }
+                    files.forEachIndexed { i, (name, _, bytes) ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("$name · ${fileSize(bytes.size.toLong())}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            IconButton(onClick = { files = files.filterIndexed { j, _ -> j != i } }) { Icon(Icons.Outlined.DeleteOutline, "Remove $name") }
+                        }
+                    }
+                }
+            }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                if (task == null && team.isAdmin) {
+                    TextButton(enabled = !busy && title.isNotBlank(), onClick = {
+                        scope.launch {
+                            try {
+                                val data = JsonObject(body() + listOfNotNull((dueTime.ifBlank { dueAt?.drop(11)?.take(5) })?.let { "dueTime" to kotlinx.serialization.json.JsonPrimitive(it) }).toMap())
+                                store.saveTemplate(team.id, null, title.trim().take(60), data)
+                                store.toast("Saved as a template")
+                            } catch (e: ApiException) {
+                                error = e.message
+                            }
+                        }
+                    }) { Text("Save as template") }
+                    Spacer(Modifier.weight(1f))
+                }
                 TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") }
                 Button(enabled = valid && !busy, modifier = Modifier.padding(start = 8.dp), onClick = {
                     busy = true
@@ -954,25 +1269,46 @@ private fun AssignSheet(store: Store, team: Team, task: Task?, defaultAssignee: 
                     scope.launch {
                         try {
                             val cleanSteps = Steps.normalize(steps)
-                            if (task == null) {
-                                store.assignTask(team.id, buildJsonObject {
-                                    put("assignee", assignee); put("title", title.trim()); put("notes", notes.trim()); put("priority", priority); put("date", date)
-                                    dueAt?.let { put("dueAt", it) }
-                                    if (cleanSteps.isNotEmpty()) put("subtasks", subtasksJson(cleanSteps))
-                                })
-                                store.toast("Task given")
-                            } else {
-                                val patch = buildJsonObject {
-                                    if (assignee != task.assignee) put("assignee", assignee)
-                                    if (title.trim() != task.title) put("title", title.trim())
-                                    if (notes.trim() != task.notes) put("notes", notes.trim())
-                                    if (priority != task.priority) put("priority", priority)
-                                    if (date != task.date) put("date", date)
-                                    if (dueAt != task.dueAt) { if (dueAt == null) put("dueAt", JsonNull) else put("dueAt", dueAt) }
-                                    if (cleanSteps != task.subtasks) put("subtasks", subtasksJson(cleanSteps))
+                            when {
+                                task != null -> {
+                                    val patch = buildJsonObject {
+                                        if (people.first() != task.assignee) put("assignee", people.first())
+                                        if (title.trim() != task.title) put("title", title.trim())
+                                        if (notes.trim() != task.notes) put("notes", notes.trim())
+                                        if (priority != task.priority) put("priority", priority)
+                                        if (date != task.date) put("date", date)
+                                        if (dueAt != task.dueAt) { if (dueAt == null) put("dueAt", JsonNull) else put("dueAt", dueAt) }
+                                        if (cleanSteps != task.subtasks) put("subtasks", subtasksJson(cleanSteps))
+                                        if (needsReview != task.needsReview) put("needsReview", needsReview)
+                                        if (teamTagIds != task.teamTagIds) put("teamTagIds", kotlinx.serialization.json.JsonArray(teamTagIds.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+                                    }
+                                    if (patch.isNotEmpty()) store.updateTeamTask(team.id, task, patch)
+                                    store.toast("Task saved")
                                 }
-                                if (patch.isNotEmpty()) store.updateTeamTask(team.id, task, patch)
-                                store.toast("Task saved")
+                                repeating -> {
+                                    val data = JsonObject(
+                                        body() + ("assignees" to kotlinx.serialization.json.JsonArray(people.map { kotlinx.serialization.json.JsonPrimitive(it) })) +
+                                            ("mode" to kotlinx.serialization.json.JsonPrimitive(mode)) +
+                                            listOfNotNull(dueTime.takeIf { Regex("^([01]\\d|2[0-3]):[0-5]\\d$").matches(it) }?.let { "dueTime" to kotlinx.serialization.json.JsonPrimitive(it) }).toMap(),
+                                    )
+                                    store.saveRecurring(team.id, null, data, rule)
+                                    store.toast("Repeating task set up")
+                                }
+                                else -> {
+                                    val b = JsonObject(body() + ("date" to kotlinx.serialization.json.JsonPrimitive(date)) +
+                                        listOfNotNull(dueAt?.let { "dueAt" to kotlinx.serialization.json.JsonPrimitive(it) }).toMap())
+                                    val list = if (people.size == 1 && groupId == null) {
+                                        listOf(store.assignTask(team.id, JsonObject(b + ("assignee" to kotlinx.serialization.json.JsonPrimitive(people.first())))))
+                                    } else {
+                                        store.assignMany(team.id, JsonObject(b + ("mode" to kotlinx.serialization.json.JsonPrimitive(mode)) +
+                                            (groupId?.let { "groupId" to kotlinx.serialization.json.JsonPrimitive(it) }
+                                                ?: ("assignees" to kotlinx.serialization.json.JsonArray(people.map { kotlinx.serialization.json.JsonPrimitive(it) })))))
+                                    }
+                                    for (t in list) for ((name, mime, bytes) in files) {
+                                        runCatching { store.uploadFile(t, name, mime, bytes, asAdmin = t.assignee != myUid) }.onFailure { store.toast(it.message ?: "Couldn't add $name") }
+                                    }
+                                    store.toast(if (list.size > 1) "Task given to ${list.size} people" else "Task given")
+                                }
                             }
                             onDismiss()
                         } catch (e: ApiException) {
@@ -981,7 +1317,7 @@ private fun AssignSheet(store: Store, team: Team, task: Task?, defaultAssignee: 
                             busy = false
                         }
                     }
-                }) { Text(if (task == null) "Give task" else "Save") }
+                }) { Text(when { task != null -> "Save"; repeating -> "Start repeating"; several -> "Give to ${people.size}"; else -> "Give task" }, maxLines = 1) }
             }
         }
     }

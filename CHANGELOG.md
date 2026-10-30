@@ -4,6 +4,36 @@ One version number for the web app and the Android app. Bug fixes bump the last 
 
 Where it lives: `web/client/package.json` (`version`) and `app/app/build.gradle.kts` (`versionName`, plus `versionCode` +1 for every Android release).
 
+## 2.0.0 · 31 Oct 2026
+
+Teams grow up: everything a small company needs to hand out work, follow it and sign it off, on the web and on Android.
+
+- **Sign-off**: mark a task "Needs sign-off". When the person finishes it, it shows "Waiting for review" and the admins are told; an admin **approves** it or **sends it back** with a note (the note goes into its comments and the task opens again). Approved tasks can only be reopened by an admin.
+- **One task for several people**: pick several people, or a whole **group**, and choose "Each does their own" (everyone gets their own copy) or "First one to finish closes it" (when one finishes, the others' copies close with "Finished by Ann"; reopening it opens them again).
+- **Groups** inside a team (Design, Sales, Night shift…) to give tasks to at once and to filter the board by.
+- **Repeating team tasks**: daily, weekdays, weekly on chosen days, or monthly on a day (the 31st means the month's last day), with an optional finish-by time. Each one appears in the person's list on its day, also in time zones ahead of the server's; pause, resume, change or stop them under Settings.
+- **Templates**: save a task you give often (steps, priority, time, team tags, sign-off) and start from it.
+- **Comments** on team tasks: the person, whoever gave it and the admins talk on the task itself (one thread shared by all copies of a shared task).
+- **Files**: attach PDFs, documents and sheets (up to 10 MB each) to any task; admins can add files and images to someone's team task, and attach files when giving one. Files always download, never open inside the app's pages.
+- **Notifications**: a bell (web and Android) with team news: a task given to you or changed, comments, done / to review / approved / sent back, reminders, late tasks, join requests, the admins' morning summary and the Monday report. Live while the app is open; on Android also in the background (about every 15 minutes, as Android allows); on the web, an optional desktop alert while you're in another tab.
+- **Remind** (nudge) someone about an open task, at most every half hour.
+- **Morning summary for admins** ("Today in Acme: 4 due today · 1 late · 2 to review") and a **weekly report** every Monday (done, late, who did most).
+- **New team pages for admins**: **Calendar** (a month of team tasks, coloured by person), **Workload** (open, due this week, late, urgent and to review per person, busy people marked), **Reports** (this week, last week or 30 days per person: given, done, on time, open, late) with **CSV and PDF export**, **Activity** (who did what, when) and **Settings**.
+- **Person page**: tap someone for their open tasks, late count, done and on-time rate over 30 days, groups, and a quick "Give a task" or "Remind".
+- **Job titles**: set your own, or anyone's as an admin; they show on the people list, the workload and the person page.
+- **Invite link and QR code**: share a link (or let people scan the QR code); they ask to join and an admin lets them in or declines. Make a new link to stop the old one, or turn it off. On Android the link opens the app; "Join" on the Teams screen takes a pasted link.
+- **Team tags** everyone in the team sees (Urgent, Client A…), set by admins, shown on team tasks and used to filter the board; people keep their own tags too.
+- **Who can give tasks**: a setting lets members give tasks too (they follow and edit the ones they gave; only admins delete).
+- **Archive a team**: for a finished project; it stays readable but nothing changes until its owner brings it back.
+- The team board also filters by "To review" and "Late", by group and by team tag, and shows comment and file counts. Members see the tasks they have or gave.
+- **The date strip is a scroll wheel** (Android): flick it and it keeps going (a fast flick travels weeks), with a tick on every day it passes, and it settles on a day, which opens. The month shows while it moves, and the 1st of each month is marked. Tap a day to pick it directly; the selected day stays in the middle.
+- **Swipes ask first** (Android): swiping a task no longer completes or postpones it at once. The card turns green ("Mark as done?") or teal ("Postpone to tomorrow?") with No / Done (or Postpone) on the card itself, so an accidental swipe is harmless. It goes back by itself after a few seconds.
+- **Team logos** (web and Android): add a logo to a team, picked and cropped like a tag's logo. It shows on the team list, the team page and invites. **Edit team** (name, colour, logo) now has its own button on the team page, besides the menu. The new team sheet's text is laid out properly.
+- **Profile**: the name box is gone from the account sheet (Android); a small pencil next to your name on the profile card edits it.
+- Glass White (Android): the floating buttons (+, Give a task) are solid now; they were see-through, so cards showed through them.
+- API: teams take an optional `logo` (PNG/JPEG/WebP data URL, `null` removes it); invites include `teamLogo`. Database v8.
+- API: see the Teams section of web/README.md: review, nudge, many people (`assignees` / `groupId` / `mode`), files (`/api/tasks/:id/files`, `/api/files/:id`), comments, notifications, groups, team tags, templates, repeating tasks, invite links and join requests, job titles, activity, settings and archive. Tasks gain `needsReview, review, groupId, groupMode, closedBy, teamTagIds, recurringId, files`. New live events `notifications` and `comments`. Database v9 (v8 added team logos).
+
 ## 1.9.0 · 28 Oct 2026
 
 - **Teams** (web and Android). Make a team for your company, invite people by their email (Gmail or any other), and give them tasks.

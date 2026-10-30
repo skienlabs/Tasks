@@ -151,10 +151,18 @@ fun TeamBadge(task: Task) {
     }
 }
 
-/** A team's mark: initials on its colour, a rounded square (people are round). */
+/** A team's mark: its logo, or initials on its colour; a rounded square (people are round). */
 @Composable
-fun TeamMark(name: String, color: String, size: Dp = 40.dp) {
+fun TeamMark(name: String, color: String, size: Dp = 40.dp, logo: String? = null) {
     val c = tagColor(color)
+    if (logo != null) {
+        val shape = RoundedCornerShape(if (size > 32.dp) 12.dp else 8.dp)
+        Box(
+            Modifier.size(size).clip(shape).background(Color.White).border(1.dp, c.copy(alpha = 0.4f), shape).padding(size * 0.08f),
+            contentAlignment = Alignment.Center,
+        ) { com.skienlabs.tasks.ui.common.TagAvatar(com.skienlabs.tasks.data.Tag(id = "team", name = name, color = color, logo = logo), size * 0.84f) }
+        return
+    }
     val initials = name.split(Regex("\\s+")).filter { it.isNotBlank() }.take(2).joinToString("") { it.take(1).uppercase() }
     Box(
         Modifier.size(size).clip(RoundedCornerShape(if (size > 32.dp) 12.dp else 8.dp)).background(c.copy(alpha = if (LocalExtra.current.dark) 0.16f else 0.12f))
@@ -166,7 +174,7 @@ fun TeamMark(name: String, color: String, size: Dp = 40.dp) {
 }
 
 @Composable
-fun TeamMark(team: Team, size: Dp = 40.dp) = TeamMark(team.name, team.color, size)
+fun TeamMark(team: Team, size: Dp = 40.dp) = TeamMark(team.name, team.color, size, team.logo)
 
 @Composable
 fun PersonMark(m: Member?, size: Dp = 32.dp) {

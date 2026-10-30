@@ -140,6 +140,133 @@ const MIGRATIONS = [
   ALTER TABLE tasks ADD COLUMN due_at TEXT;
   CREATE INDEX idx_tasks_team_date ON tasks (team_id, date);
   `,
+  // v8: a team's logo (small PNG/JPEG/WebP data URL, like tag logos).
+  `
+  ALTER TABLE teams ADD COLUMN logo TEXT;
+  `,
+  // v9 (2.0): teams grow up. Review/sign-off, one task for several people, team tags, recurring
+  // tasks, templates, comments, sub-groups, job titles, invite links, activity, notifications,
+  // files on team tasks, archived teams and team settings.
+  `
+  ALTER TABLE teams ADD COLUMN archived_at INTEGER;
+  ALTER TABLE teams ADD COLUMN settings TEXT NOT NULL DEFAULT '{}';
+  ALTER TABLE team_members ADD COLUMN title TEXT;
+
+  ALTER TABLE tasks ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tasks ADD COLUMN review TEXT;
+  ALTER TABLE tasks ADD COLUMN group_id TEXT;
+  ALTER TABLE tasks ADD COLUMN group_mode TEXT;
+  ALTER TABLE tasks ADD COLUMN closed_by TEXT;
+  ALTER TABLE tasks ADD COLUMN team_tag_ids TEXT;
+  ALTER TABLE tasks ADD COLUMN recurring_id TEXT;
+  CREATE INDEX idx_tasks_group ON tasks (group_id) WHERE group_id IS NOT NULL;
+
+  CREATE TABLE task_files (
+    id          TEXT PRIMARY KEY,
+    uid         TEXT NOT NULL,
+    task_id     TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    mime        TEXT NOT NULL,
+    size        INTEGER NOT NULL,
+    added_by    TEXT,
+    created_at  INTEGER NOT NULL,
+    orphaned_at INTEGER
+  );
+  CREATE INDEX idx_task_files_task ON task_files (uid, task_id);
+
+  CREATE TABLE task_comments (
+    id         TEXT PRIMARY KEY,
+    thread     TEXT NOT NULL,
+    team_id    TEXT NOT NULL REFERENCES teams (id) ON DELETE CASCADE,
+    uid        TEXT NOT NULL,
+    text       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_task_comments_thread ON task_comments (thread, created_at);
+
+  CREATE TABLE team_groups (
+    id         TEXT PRIMARY KEY,
+    team_id    TEXT NOT NULL REFERENCES teams (id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    color      TEXT NOT NULL DEFAULT 'blue',
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE team_group_members (
+    group_id TEXT NOT NULL REFERENCES team_groups (id) ON DELETE CASCADE,
+    uid      TEXT NOT NULL,
+    PRIMARY KEY (group_id, uid)
+  );
+
+  CREATE TABLE team_tags (
+    id         TEXT PRIMARY KEY,
+    team_id    TEXT NOT NULL REFERENCES teams (id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    color      TEXT NOT NULL DEFAULT 'blue',
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE team_templates (
+    id         TEXT PRIMARY KEY,
+    team_id    TEXT NOT NULL REFERENCES teams (id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    data       TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE team_recurring (
+    id         TEXT PRIMARY KEY,
+    team_id    TEXT NOT NULL REFERENCES teams (id) ON DELETE CASCADE,
+    data       TEXT NOT NULL,
+    rule       TEXT NOT NULL,
+    next_date  TEXT NOT NULL,
+    active     INTEGER NOT NULL DEFAULT 1,
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE team_links (
+    team_id    TEXT PRIMARY KEY REFERENCES teams (id) ON DELETE CASCADE,
+    token      TEXT NOT NULL UNIQUE,
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE team_requests (
+    team_id    TEXT NOT NULL REFERENCES teams (id) ON DELETE CASCADE,
+    uid        TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (team_id, uid)
+  );
+
+  CREATE TABLE team_activity (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id    TEXT NOT NULL REFERENCES teams (id) ON DELETE CASCADE,
+    uid        TEXT NOT NULL,
+    action     TEXT NOT NULL,
+    task_id    TEXT,
+    detail     TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_team_activity ON team_activity (team_id, id);
+
+  CREATE TABLE notifications (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid        TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    team_id    TEXT,
+    task_id    TEXT,
+    actor      TEXT,
+    title      TEXT NOT NULL,
+    body       TEXT,
+    created_at INTEGER NOT NULL,
+    read_at    INTEGER
+  );
+  CREATE INDEX idx_notifications_uid ON notifications (uid, id);
+
+  CREATE TABLE sweeps (key TEXT PRIMARY KEY, at INTEGER NOT NULL);
+  `,
 ];
 
 export function openDb(file) {
@@ -193,6 +320,10 @@ function migrate(db) {
 
 export const COLUMNS = `id, uid, title, notes, priority, date, status, original_date, postponed,
   created_at, updated_at, completed_at, subtasks, carried_from, team_id, assigned_by, due_at,
+  needs_review, review, group_id, group_mode, closed_by, team_tag_ids, recurring_id,
+  (SELECT json_group_array(json_object('id', f.id, 'name', f.name, 'mime', f.mime, 'size', f.size, 'addedBy', f.added_by,
+      'createdAt', f.created_at))
+    FROM (SELECT * FROM task_files WHERE uid = tasks.uid AND task_id = tasks.id ORDER BY created_at, id) f) AS files,
   (SELECT json_group_array(tag_id) FROM task_tags WHERE task_id = tasks.id) AS tag_ids,
   (SELECT json_group_array(json_object('id', a.id, 'type', a.type, 'width', a.width, 'height', a.height,
       'size', a.size, 'createdAt', a.created_at))
@@ -220,6 +351,15 @@ export function toTask(row) {
     teamId: row.team_id ?? null,
     assignee: row.team_id ? row.uid : null,
     assignedBy: row.assigned_by ?? null,
+    // Team tasks (2.0): sign-off, one task for several people, team tags, repeats.
+    needsReview: Boolean(row.needs_review),
+    review: row.review ?? null,
+    groupId: row.group_id ?? null,
+    groupMode: row.group_mode ?? null,
+    closedBy: row.closed_by ?? null,
+    teamTagIds: row.team_tag_ids ? JSON.parse(row.team_tag_ids) : [],
+    recurringId: row.recurring_id ?? null,
+    files: row.files ? JSON.parse(row.files) : [],
   };
 }
 
@@ -260,8 +400,9 @@ export function createRepo(db) {
     exists: db.prepare('SELECT uid FROM tasks WHERE id = ?'),
     insert: db.prepare(`INSERT INTO tasks
       (id, uid, title, notes, priority, date, status, original_date, postponed,
-       created_at, updated_at, completed_at, subtasks, carried_from, team_id, assigned_by, due_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+       created_at, updated_at, completed_at, subtasks, carried_from, team_id, assigned_by, due_at,
+       needs_review, review, group_id, group_mode, closed_by, team_tag_ids, recurring_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
     update: db.prepare(`UPDATE tasks SET
       title = ?, notes = ?, priority = ?, date = ?, status = ?, postponed = ?,
       updated_at = ?, completed_at = ?, subtasks = ?, carried_from = ?, due_at = ?
@@ -284,6 +425,10 @@ export function createRepo(db) {
     removeAttachment: db.prepare('DELETE FROM attachments WHERE uid = ? AND id = ?'),
     orphanAttachments: db.prepare('UPDATE attachments SET orphaned_at = ? WHERE uid = ? AND task_id = ?'),
     adoptAttachments: db.prepare('UPDATE attachments SET orphaned_at = NULL WHERE uid = ? AND task_id = ?'),
+    adoptFiles: db.prepare('UPDATE task_files SET orphaned_at = NULL WHERE uid = ? AND task_id = ?'),
+    orphanFiles: db.prepare('UPDATE task_files SET orphaned_at = ? WHERE uid = ? AND task_id = ?'),
+    expiredFiles: db.prepare('SELECT id FROM task_files WHERE orphaned_at IS NOT NULL AND orphaned_at < ?'),
+    dropFile: db.prepare('DELETE FROM task_files WHERE id = ?'),
     expiredAttachments: db.prepare('SELECT id, type FROM attachments WHERE orphaned_at IS NOT NULL AND orphaned_at < ?'),
     removeAttachmentById: db.prepare('DELETE FROM attachments WHERE id = ?'),
     summary: db.prepare(`SELECT date,
@@ -430,9 +575,13 @@ export function createRepo(db) {
           t.id, uid, t.title, t.notes, t.priority, t.date, t.status, t.originalDate,
           t.postponed, t.createdAt, t.updatedAt, t.completedAt ?? null, JSON.stringify(t.subtasks ?? []),
           t.carriedFrom ?? null, t.teamId ?? null, t.teamId ? (t.assignedBy ?? null) : null, t.dueAt ?? null,
+          t.teamId && t.needsReview ? 1 : 0, t.teamId ? (t.review ?? null) : null, t.teamId ? (t.groupId ?? null) : null,
+          t.teamId && t.groupId ? (t.groupMode ?? 'each') : null, t.teamId ? (t.closedBy ?? null) : null,
+          t.teamId && t.teamTagIds?.length ? JSON.stringify(t.teamTagIds) : null, t.teamId ? (t.recurringId ?? null) : null,
         );
         writeTaskTags(t.id, t.tagIds ?? []);
         stmts.adoptAttachments.run(uid, t.id); // re-created by "Undo": its images come back
+        stmts.adoptFiles.run(uid, t.id);
       });
       return this.get(uid, t.id);
     },
@@ -507,7 +656,10 @@ export function createRepo(db) {
     remove(uid, id, now = Date.now()) {
       return tx(() => {
         const removed = Number(stmts.remove.run(uid, id).changes) > 0;
-        if (removed) stmts.orphanAttachments.run(now, uid, id);
+        if (removed) {
+          stmts.orphanAttachments.run(now, uid, id);
+          stmts.orphanFiles.run(now, uid, id);
+        }
         return removed;
       });
     },
@@ -539,6 +691,15 @@ export function createRepo(db) {
 
     dropAttachment(id) {
       stmts.removeAttachmentById.run(id);
+    },
+
+    /** Files of tasks deleted before `cutoff` (removed for good by the caller). */
+    expiredFiles(cutoff) {
+      return stmts.expiredFiles.all(cutoff);
+    },
+
+    dropFile(id) {
+      stmts.dropFile.run(id);
     },
 
     /**

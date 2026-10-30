@@ -4,148 +4,21 @@ import path from 'node:path';
 import Fastify, { LogController } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { createRepo } from './db.js';
-import { MAX_MEMBERS, MAX_PENDING_INVITES, MAX_TEAMS_PER_USER, createTeamsRepo } from './teams.js';
+import { createTeamsRepo } from './teams.js';
+import { registerTeamRoutes } from './teamRoutes.js';
 import { MAX_SUBTASKS, SUBTASK_TITLE_MAX, normalizeSubtasks, progress } from './subtasks.js';
 import { createEvents } from './events.js';
 import { hasFilters, parseQuery, searchTasks, suggest } from './search.js';
 import { AuthError } from './auth.js';
 import { addDays, daysBetween, isValidDate, maxDate } from './dates.js';
 
-const DATE = { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' };
-const ID = { type: 'string', pattern: '^[A-Za-z0-9_-]{8,64}$' };
-const TITLE = { type: 'string', minLength: 1, maxLength: 500 };
-const NOTES = { type: 'string', maxLength: 5000 };
-const PRIORITY = { type: 'integer', minimum: 1, maximum: 4 };
-const STATUS = { type: 'string', enum: ['pending', 'done', 'cancelled'] };
-const COUNT = { type: 'integer', minimum: 0, maximum: 100000 };
-const TAG_IDS = { type: 'array', maxItems: 10, uniqueItems: true, items: ID };
-export const TAG_COLORS = ['blue', 'red', 'green', 'yellow', 'orange', 'purple', 'pink', 'teal', 'indigo', 'brown', 'grey'];
-const TAG_NAME = { type: 'string', minLength: 1, maxLength: 40 };
-const TAG_COLOR = { type: 'string', enum: TAG_COLORS };
-// Small raster logo, resized in the browser before upload (~96px). SVG is not accepted.
-const TAG_LOGO = {
-  anyOf: [
-    { type: 'null' },
-    { type: 'string', maxLength: 60000, pattern: '^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$' },
-  ],
-};
-const MAX_TAGS = 50;
-const SUBTASKS = {
-  type: 'array',
-  maxItems: MAX_SUBTASKS,
-  items: {
-    type: 'object',
-    required: ['id', 'title'],
-    properties: {
-      id: ID,
-      parentId: { anyOf: [{ type: 'null' }, ID] },
-      title: { type: 'string', minLength: 1, maxLength: SUBTASK_TITLE_MAX },
-      done: { type: 'boolean' },
-    },
-    additionalProperties: false,
-  },
-};
-// Images are resized on the device first (~1600 px JPEG, a few hundred KB).
-const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
-const MAX_THUMB_BYTES = 300 * 1024;
-const MAX_ATTACHMENTS = 20;
-const IMAGE_DATA_URL = '^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$';
-const ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
-const TIMESTAMP = { type: 'integer', minimum: 0 };
-// A deadline: local date and time on the device ("2026-10-30T17:00"), or null for none.
-const DUE_AT = { anyOf: [{ type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$' }, { type: 'null' }] };
-const UID = { type: 'string', minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' };
-const TEAM_NAME = { type: 'string', minLength: 1, maxLength: 60 };
-const EMAIL = { type: 'string', minLength: 3, maxLength: 254 };
-const MAX_INVITES_AT_ONCE = 50;
+import {
+  DATE, ID, TITLE, NOTES, PRIORITY, STATUS, COUNT, TAG_IDS, TAG_COLORS, TAG_NAME, TAG_COLOR, TAG_LOGO, MAX_TAGS, SUBTASKS, MAX_IMAGE_BYTES, MAX_THUMB_BYTES, MAX_ATTACHMENTS, IMAGE_DATA_URL, ORPHAN_TTL_MS, TIMESTAMP, DUE_AT, UID, TEAM_NAME, EMAIL, MAX_INVITES_AT_ONCE, HttpError, assertDate, assertDueAt, sameSteps, INVISIBLE, cleanLine, cleanName, cleanTitle, cleanNotes, assertLogo, decodeImage, MIME, resolveStatus,
+} from './common.js';
+export { TAG_COLORS } from './common.js';
 
 const PUBLIC_PATHS = new Set(['/api/health', '/api/config']);
 const APK_NAME = 'Tasks.apk';
-
-class HttpError extends Error {
-  constructor(statusCode, message) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-
-function assertDate(value, name) {
-  if (!isValidDate(value)) throw new HttpError(400, `${name} must be a real date (YYYY-MM-DD)`);
-}
-
-function assertDueAt(value) {
-  if (value == null) return;
-  const [day, time] = value.split('T');
-  const [h, m] = time.split(':').map(Number);
-  if (!isValidDate(day) || h > 23 || m > 59) throw new HttpError(400, 'Deadline must be a real date and time');
-}
-
-/** True when two step lists differ only in what is ticked off. */
-function sameSteps(a, b) {
-  return a.length === b.length && a.every((x, i) => x.id === b[i].id && x.parentId === b[i].parentId && x.title === b[i].title);
-}
-
-// Control characters (except tab/newline) and zero-width characters are dropped.
-const INVISIBLE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B-\u200D\u2060\uFEFF]/g;
-
-function cleanLine(value, what) {
-  const s = value.toWellFormed().normalize('NFC').replace(INVISIBLE, '').replace(/\s+/g, ' ').trim();
-  if (!s) throw new HttpError(400, `${what} cannot be empty`);
-  return s;
-}
-
-const cleanName = (name) => cleanLine(name, 'Name');
-const cleanTitle = (title) => cleanLine(title, 'Title');
-const cleanNotes = (notes) => notes.toWellFormed().normalize('NFC').replace(INVISIBLE, '').replace(/\r\n?/g, '\n').trim();
-
-/** Logo must really be a PNG, JPEG or WebP image of the type it claims. */
-function assertLogo(logo) {
-  if (logo == null) return;
-  const [, type, b64] = logo.match(/^data:image\/(png|jpeg|webp);base64,(.*)$/) || [];
-  if (!type || b64.length % 4 !== 0) throw new HttpError(400, 'Logo is not a valid image');
-  const buf = Buffer.from(b64, 'base64');
-  const ok = {
-    png: buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
-    jpeg: buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff,
-    webp: buf.length > 12 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP',
-  }[type];
-  if (!ok) throw new HttpError(400, 'Logo is not a valid image');
-}
-
-/** Decodes a data URL and checks the bytes really are that image type. */
-function decodeImage(dataUrl, what, maxBytes) {
-  const [, type, b64] = dataUrl.match(/^data:image\/(png|jpeg|webp);base64,(.*)$/s) || [];
-  if (!type || b64.length % 4 !== 0) throw new HttpError(400, `${what} is not a valid image`);
-  const buf = Buffer.from(b64, 'base64');
-  if (buf.length > maxBytes) throw new HttpError(413, `${what} is too large`);
-  const ok = {
-    png: buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
-    jpeg: buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff,
-    webp: buf.length > 12 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP',
-  }[type];
-  if (!ok) throw new HttpError(400, `${what} is not a valid image`);
-  return { type, buf };
-}
-
-const MIME = { jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
-
-/**
- * Status for a task with steps. Explicit status in the request wins, except that a
- * task can't be marked done while steps are open. Without one, a change to the
- * steps decides: all done -> done, otherwise pending (a cancelled task stays cancelled).
- */
-function resolveStatus(current, requested, subtasks, subtasksChanged) {
-  const p = progress(subtasks);
-  if (requested !== undefined) {
-    if (requested === 'done' && p.total > 0 && p.done < p.total) {
-      const left = p.total - p.done;
-      throw new HttpError(409, `Finish the remaining ${left} step${left === 1 ? '' : 's'} first`);
-    }
-    return requested;
-  }
-  if (subtasksChanged && p.total > 0 && current !== 'cancelled') return p.done === p.total ? 'done' : 'pending';
-  return current;
-}
 
 export function buildApp({ db, verify, config, logger = false, events = createEvents(), clock = () => Date.now() }) {
   const repo = createRepo(db);
@@ -194,12 +67,10 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
   };
   const tellTasks = (req, uid, ...dates) => tell(req, [uid], { type: 'tasks', dates: [...new Set(dates.filter(Boolean))] });
   const tellTeam = (req, teamId, extra = []) => tell(req, [...teams.memberUids(teamId), ...extra], { type: 'teams', teamId });
-  /** A team task changed: its team's admins refresh their view of it. */
-  const teamTaskTouched = (req, ...tasks) => {
-    for (const teamId of new Set(tasks.map((t) => t?.teamId).filter(Boolean))) {
-      tell(req, teams.adminUids(teamId), { type: 'teams', teamId, tasks: true });
-    }
-  };
+  // Set once the team routes are registered (below); used by the personal task routes.
+  let hooks = null;
+  /** A team task changed: everyone following it (its admins, whoever gave it) refreshes. */
+  const teamTaskTouched = (req, ...tasks) => hooks.touched(req, ...tasks);
   const isAdminRole = (role) => role === 'owner' || role === 'admin';
   const isTeamAdmin = (teamId, uid) => isAdminRole(teams.role(teamId, uid));
 
@@ -214,6 +85,11 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
   };
   const carryOver = (req, today) => {
     if (!today || !plausibleToday(today)) return;
+    try {
+      hooks.runRecurring(today); // repeating team tasks for this person's day (time zones)
+    } catch (err) {
+      req.log.error(err, 'repeating tasks failed');
+    }
     const from = repo.carryOver(req.user.uid, today);
     // Other devices refresh those days; this device gets the moved tasks in its own reply.
     if (from.length) taskChange(req, today, ...from);
@@ -520,13 +396,9 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
 
     // A task from a team: the person it's given to works on it (done, postpone, steps, notes,
     // their own tags); what the task *is* stays with the team's admins.
-    if (current.teamId && !isTeamAdmin(current.teamId, uid)) {
-      const changes = (b.title !== undefined && cleanTitle(b.title) !== current.title)
-        || (b.priority !== undefined && b.priority !== current.priority)
-        || (b.dueAt !== undefined && b.dueAt !== current.dueAt)
-        || (b.status !== undefined && b.status !== current.status && (b.status === 'cancelled' || current.status === 'cancelled'))
-        || (b.subtasks !== undefined && !sameSteps(normalizeSubtasks(b.subtasks), current.subtasks));
-      if (changes) throw new HttpError(403, 'Only team admins can change this task. You can complete it, postpone it, tick its steps and add notes.');
+    if (current.teamId) {
+      const refused = hooks.memberMayChange(current, b, uid);
+      if (refused) throw new HttpError(403, refused);
     }
 
     if (b.tagIds !== undefined && !repo.ownsTags(uid, b.tagIds)) throw new HttpError(400, 'Unknown tag');
@@ -551,9 +423,11 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
       next.completedAt = status === 'done' ? next.updatedAt : null;
     }
     const saved = repo.update(uid, next);
+    hooks.afterWork(req, current, saved);
+    const fresh = saved.teamId ? repo.get(uid, saved.id) : saved; // sign-off state may have changed
     taskChange(req, current.date, saved.date);
-    teamTaskTouched(req, saved);
-    return saved;
+    teamTaskTouched(req, fresh);
+    return fresh;
   });
 
   app.post('/api/tasks/:id/postpone', {
@@ -591,6 +465,7 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
       postponed: current.postponed + 1,
       updatedAt: Date.now(),
     });
+    hooks.afterWork(req, current, saved);
     taskChange(req, current.date, saved.date);
     teamTaskTouched(req, saved);
     return saved;
@@ -683,8 +558,9 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     let a = repo.getAttachment(req.user.uid, req.params.id);
     if (!a) {
       // A team admin may look at the images on the tasks of their team.
+      // So may whoever gave the task, and the others who share it.
       const t = teams.attachmentWithTeam(req.params.id);
-      if (t && t.orphaned_at == null && t.team_id && isTeamAdmin(t.team_id, req.user.uid)) a = t;
+      if (t && t.orphaned_at == null && t.team_id && hooks.canSee(teams.taskAny(t.task_id), req.user.uid)) a = t;
     }
     if (!a) throw new HttpError(404, 'Image not found');
     const file = filePath(a.id, a.type, req.query.size === 'thumb');
@@ -718,6 +594,7 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
         removeFiles(a.id, a.type);
         repo.dropAttachment(a.id);
       }
+      hooks.sweepFiles(Date.now() - ORPHAN_TTL_MS);
     } catch (err) {
       app.log.error(err, 'attachment cleanup failed');
     }
@@ -802,362 +679,11 @@ export function buildApp({ db, verify, config, logger = false, events = createEv
     return reply.code(204).send();
   });
 
-  // ---- Teams ---------------------------------------------------------------
-  // Someone makes a team and invites people by email. An invite waits in the app until that
-  // person signs in with the same (verified) email and accepts it. Owner and admins hand out
-  // tasks, follow them and manage people; members work on the tasks given to them.
-  const teamParams = {
-    type: 'object', required: ['id'], properties: { id: ID }, additionalProperties: false,
-  };
-  const emailRe = config.devAuth ? /^[^\s@<>,;"]+@[^\s@<>,;"]+$/ : /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;".]{2,}$/;
-
-  /** The team and the caller's role in it; 404 for people outside it (it isn't theirs to know about). */
-  function teamFor(req, teamId, { admin = false, owner = false } = {}) {
-    const team = teams.get(teamId);
-    const role = team && teams.role(teamId, req.user.uid);
-    if (!role) throw new HttpError(404, 'Team not found');
-    if (owner && role !== 'owner') throw new HttpError(403, 'Only the team owner can do this');
-    if (admin && !isAdminRole(role)) throw new HttpError(403, 'Only team admins can do this');
-    return { team, role };
-  }
-  const myView = (req, teamId) => teams.viewFor(teamId, req.user.uid);
-
-  app.get('/api/teams', async (req) => ({
-    teams: teams.listFor(req.user.uid),
-    invites: teams.myInvites(req.user.emailVerified ? req.user.email : null),
-  }));
-
-  app.post('/api/teams', {
-    schema: {
-      body: {
-        type: 'object', required: ['name'],
-        properties: { id: ID, name: TEAM_NAME, color: TAG_COLOR },
-        additionalProperties: false,
-      },
-    },
-  }, async (req, reply) => {
-    const uid = req.user.uid;
-    const b = req.body;
-    if (b.id) {
-      if (teams.role(b.id, uid)) return reply.code(200).send(myView(req, b.id)); // a retry
-      if (teams.teamIdTaken(b.id)) throw new HttpError(409, 'Id already in use');
-    }
-    if (teams.teamCount(uid) >= MAX_TEAMS_PER_USER) throw new HttpError(400, `You can be in at most ${MAX_TEAMS_PER_USER} teams`);
-    const id = b.id || crypto.randomUUID();
-    teams.create(uid, { id, name: cleanName(b.name), color: b.color || 'blue' });
-    tellTeam(req, id);
-    return reply.code(201).send(myView(req, id));
-  });
-
-  app.patch('/api/teams/:id', {
-    schema: {
-      params: teamParams,
-      body: {
-        type: 'object', minProperties: 1,
-        properties: { name: TEAM_NAME, color: TAG_COLOR },
-        additionalProperties: false,
-      },
-    },
-  }, async (req) => {
-    const { team } = teamFor(req, req.params.id, { admin: true });
-    teams.update(team.id, {
-      name: req.body.name !== undefined ? cleanName(req.body.name) : team.name,
-      color: req.body.color ?? team.color,
-    });
-    tellTeam(req, team.id);
-    return myView(req, team.id);
-  });
-
-  app.delete('/api/teams/:id', { schema: { params: teamParams } }, async (req, reply) => {
-    const { team } = teamFor(req, req.params.id, { owner: true });
-    const members = teams.memberUids(team.id);
-    const owners = teams.remove(team.id); // its tasks stay with their people, as their own
-    tell(req, members, { type: 'teams', teamId: team.id });
-    const days = new Map();
-    for (const { uid, date } of owners) days.set(uid, [...(days.get(uid) ?? []), date]);
-    for (const [uid, dates] of days) tellTasks(req, uid, ...dates);
-    return reply.code(204).send();
-  });
-
-  // -- Invites
-  app.post('/api/teams/:id/invites', {
-    schema: {
-      params: teamParams,
-      body: {
-        type: 'object', required: ['emails'],
-        properties: {
-          emails: { type: 'array', minItems: 1, maxItems: MAX_INVITES_AT_ONCE, items: EMAIL },
-          role: { type: 'string', enum: ['admin', 'member'] },
-        },
-        additionalProperties: false,
-      },
-    },
-  }, async (req) => {
-    const { team } = teamFor(req, req.params.id, { admin: true });
-    const role = req.body.role ?? 'member';
-    const emails = [...new Set(req.body.emails.map((e) => e.trim().toLowerCase()))];
-    const bad = emails.filter((e) => !emailRe.test(e));
-    if (bad.length) throw new HttpError(400, `Not an email address: ${bad.slice(0, 3).join(', ')}`);
-    const alreadyMembers = emails.filter((e) => teams.isMemberEmail(team.id, e));
-    const invited = emails.filter((e) => !alreadyMembers.includes(e));
-    if (teams.inviteCount(team.id) + invited.length > MAX_PENDING_INVITES) {
-      throw new HttpError(400, `A team can have at most ${MAX_PENDING_INVITES} invites waiting`);
-    }
-    if (teams.memberCount(team.id) + invited.length > MAX_MEMBERS) {
-      throw new HttpError(400, `A team can have at most ${MAX_MEMBERS} people`);
-    }
-    if (invited.length) {
-      teams.addInvites(team.id, invited.map((email) => ({ id: crypto.randomUUID(), email, role })), req.user.uid);
-    }
-    tellTeam(req, team.id);
-    // People who already use the app see the invite right away.
-    tell(req, invited.flatMap((e) => teams.uidsByEmail(e)), { type: 'invites' });
-    return { team: myView(req, team.id), invited, alreadyMembers };
-  });
-
-  app.delete('/api/teams/:id/invites/:inviteId', {
-    schema: {
-      params: {
-        type: 'object', required: ['id', 'inviteId'], properties: { id: ID, inviteId: ID }, additionalProperties: false,
-      },
-    },
-  }, async (req) => {
-    const { team } = teamFor(req, req.params.id, { admin: true });
-    const invite = teams.invite(req.params.inviteId);
-    if (!invite || invite.team_id !== team.id) throw new HttpError(404, 'Invite not found');
-    teams.removeInvite(invite.id);
-    teams.touch(team.id);
-    tellTeam(req, team.id);
-    tell(req, teams.uidsByEmail(invite.email), { type: 'invites' });
-    return myView(req, team.id);
-  });
-
-  // Invites show only to a verified owner of the address (anyone can sign up with any email).
-  app.get('/api/invites', async (req) => ({ invites: teams.myInvites(req.user.emailVerified ? req.user.email : null) }));
-
-  /** An invite for the caller's own email address. */
-  function myInvite(req) {
-    const invite = teams.invite(req.params.id);
-    if (!invite || !req.user.email || invite.email !== req.user.email) throw new HttpError(404, 'Invite not found');
-    if (!req.user.emailVerified) {
-      throw new HttpError(403, 'Verify your email address first (check your inbox), then sign in again to join');
-    }
-    return invite;
-  }
-
-  app.post('/api/invites/:id/accept', { schema: { params: idParams } }, async (req) => {
-    const invite = myInvite(req);
-    if (!teams.role(invite.team_id, req.user.uid)) {
-      if (teams.teamCount(req.user.uid) >= MAX_TEAMS_PER_USER) throw new HttpError(400, `You can be in at most ${MAX_TEAMS_PER_USER} teams`);
-      if (teams.memberCount(invite.team_id) >= MAX_MEMBERS) throw new HttpError(400, 'This team is full');
-    }
-    repo.upsertUser(req.user); // teammates see the name and email right away
-    teams.accept(invite, req.user.uid);
-    tellTeam(req, invite.team_id);
-    tell(req, [req.user.uid], { type: 'invites' });
-    return { team: myView(req, invite.team_id) };
-  });
-
-  app.post('/api/invites/:id/decline', { schema: { params: idParams } }, async (req, reply) => {
-    const invite = myInvite(req);
-    teams.removeInvite(invite.id);
-    teams.touch(invite.team_id);
-    tell(req, teams.adminUids(invite.team_id), { type: 'teams', teamId: invite.team_id });
-    tell(req, [req.user.uid], { type: 'invites' });
-    return reply.code(204).send();
-  });
-
-  // -- People
-  const memberParams = {
-    type: 'object', required: ['id', 'uid'], properties: { id: ID, uid: UID }, additionalProperties: false,
-  };
-
-  app.patch('/api/teams/:id/members/:uid', {
-    schema: {
-      params: memberParams,
-      body: {
-        type: 'object', required: ['role'],
-        properties: { role: { type: 'string', enum: ['owner', 'admin', 'member'] } },
-        additionalProperties: false,
-      },
-    },
-  }, async (req) => {
-    const { team, role: mine } = teamFor(req, req.params.id, { admin: true });
-    const target = req.params.uid;
-    const theirs = teams.role(team.id, target);
-    if (!theirs) throw new HttpError(404, 'This person is not in the team');
-    const next = req.body.role;
-    if (next === theirs) return myView(req, team.id);
-    if (next === 'owner') {
-      if (mine !== 'owner') throw new HttpError(403, 'Only the owner can hand the team over');
-      teams.transfer(team.id, req.user.uid, target);
-    } else {
-      if (theirs === 'owner') throw new HttpError(403, "The owner's role changes only when they hand the team over");
-      // Admins can make more admins; only the owner can take that back.
-      if (mine !== 'owner' && !(theirs === 'member' && next === 'admin')) {
-        throw new HttpError(403, 'Only the owner can change an admin back to a member');
-      }
-      teams.setRole(team.id, target, next);
-      teams.touch(team.id);
-    }
-    tellTeam(req, team.id);
-    return myView(req, team.id);
-  });
-
-  app.delete('/api/teams/:id/members/:uid', { schema: { params: memberParams } }, async (req, reply) => {
-    const { team, role: mine } = teamFor(req, req.params.id);
-    const target = req.params.uid;
-    const self = target === req.user.uid;
-    const theirs = self ? mine : teams.role(team.id, target);
-    if (!theirs) throw new HttpError(404, 'This person is not in the team');
-    if (self) {
-      if (mine === 'owner') throw new HttpError(409, 'Hand the team over to someone else first, or delete the team');
-    } else if (!isAdminRole(mine)) {
-      throw new HttpError(403, 'Only team admins can remove people');
-    } else if (theirs === 'owner' || (theirs === 'admin' && mine !== 'owner')) {
-      throw new HttpError(403, theirs === 'owner' ? 'The owner cannot be removed' : 'Only the owner can remove an admin');
-    }
-    const members = teams.memberUids(team.id);
-    const days = teams.removeMember(team.id, target); // their team tasks stay with them, as their own
-    tell(req, members, { type: 'teams', teamId: team.id });
-    if (days.length) tellTasks(req, target, ...days);
-    return reply.code(204).send();
-  });
-
-  // -- Tasks given out by the team
-  const teamTaskParams = {
-    type: 'object', required: ['id', 'taskId'], properties: { id: ID, taskId: ID }, additionalProperties: false,
-  };
-
-  app.get('/api/teams/:id/tasks', {
-    schema: {
-      params: teamParams,
-      querystring: {
-        type: 'object', required: ['from', 'to'], properties: { from: DATE, to: DATE }, additionalProperties: false,
-      },
-    },
-  }, async (req) => {
-    const { team } = teamFor(req, req.params.id, { admin: true });
-    const { from, to } = req.query;
-    assertDate(from, 'from');
-    assertDate(to, 'to');
-    const span = daysBetween(from, to);
-    if (span < 0 || span > 92) throw new HttpError(400, 'Range must be 0-92 days');
-    return { tasks: teams.tasks(team.id, from, to) };
-  });
-
-  /** The person a task goes to must be in the team. */
-  function assigneeIn(teamId, uid) {
-    if (!teams.role(teamId, uid)) throw new HttpError(400, 'That person is not in the team');
-    return uid;
-  }
-
-  app.post('/api/teams/:id/tasks', {
-    schema: {
-      params: teamParams,
-      body: {
-        type: 'object', required: ['title', 'date', 'assignee'],
-        properties: {
-          id: ID, assignee: UID, title: TITLE, notes: NOTES, priority: PRIORITY, date: DATE,
-          subtasks: SUBTASKS, dueAt: DUE_AT, today: DATE,
-        },
-        additionalProperties: false,
-      },
-    },
-  }, async (req, reply) => {
-    const { team } = teamFor(req, req.params.id, { admin: true });
-    const b = req.body;
-    assertDate(b.date, 'date');
-    if (b.today) assertDate(b.today, 'today');
-    assertDueAt(b.dueAt);
-    if (b.id) {
-      const existing = teams.task(team.id, b.id);
-      if (existing) return reply.code(200).send(existing); // a retry
-      if (repo.idTaken(b.id)) throw new HttpError(409, 'Id already in use');
-    }
-    const earliest = b.today && plausibleToday(b.today) ? b.today : addDays(new Date(clock()).toISOString().slice(0, 10), -1);
-    if (b.date < earliest) throw new HttpError(400, 'Tasks can only be given for today or a later day');
-    const assignee = assigneeIn(team.id, b.assignee);
-    const now = Date.now();
-    const subtasks = normalizeSubtasks(b.subtasks ?? []);
-    const saved = repo.insert(assignee, {
-      id: b.id || crypto.randomUUID(),
-      title: cleanTitle(b.title),
-      notes: cleanNotes(b.notes || ''),
-      priority: b.priority ?? 4,
-      date: b.date,
-      status: 'pending',
-      originalDate: b.date,
-      postponed: 0,
-      carriedFrom: null,
-      createdAt: now,
-      updatedAt: now,
-      completedAt: null,
-      tagIds: [],
-      subtasks,
-      dueAt: b.dueAt ?? null,
-      teamId: team.id,
-      assignedBy: req.user.uid,
-    });
-    tellTasks(req, assignee, saved.date);
-    teamTaskTouched(req, saved);
-    return reply.code(201).send(teams.task(team.id, saved.id));
-  });
-
-  app.patch('/api/teams/:id/tasks/:taskId', {
-    schema: {
-      params: teamTaskParams,
-      body: {
-        type: 'object', minProperties: 1,
-        properties: {
-          assignee: UID, title: TITLE, notes: NOTES, priority: PRIORITY, date: DATE, status: STATUS,
-          subtasks: SUBTASKS, dueAt: DUE_AT,
-        },
-        additionalProperties: false,
-      },
-    },
-  }, async (req) => {
-    const { team } = teamFor(req, req.params.id, { admin: true });
-    const current = teams.task(team.id, req.params.taskId);
-    if (!current) throw new HttpError(404, 'Task not found');
-    const b = req.body;
-    if (b.date !== undefined) assertDate(b.date, 'date');
-    if (b.dueAt !== undefined) assertDueAt(b.dueAt);
-    const owner = b.assignee !== undefined ? assigneeIn(team.id, b.assignee) : current.assignee;
-    const next = { ...current, tagIds: undefined, updatedAt: Date.now() };
-    if (b.title !== undefined) next.title = cleanTitle(b.title);
-    if (b.notes !== undefined) next.notes = cleanNotes(b.notes);
-    if (b.priority !== undefined) next.priority = b.priority;
-    if (b.date !== undefined && b.date !== current.date) {
-      next.date = b.date;
-      next.carriedFrom = null;
-    }
-    if (b.dueAt !== undefined) next.dueAt = b.dueAt;
-    if (b.subtasks !== undefined) next.subtasks = normalizeSubtasks(b.subtasks);
-    const status = resolveStatus(current.status, b.status, next.subtasks, b.subtasks !== undefined);
-    if (status !== current.status) {
-      next.status = status;
-      next.completedAt = status === 'done' ? next.updatedAt : null;
-    }
-    // Everything is checked by now: move it to its new person and save the changes, as one.
-    teams.tx(() => {
-      if (owner !== current.assignee) teams.reassign(current.id, owner);
-      repo.update(owner, next);
-    });
-    const saved = teams.task(team.id, current.id);
-    tellTasks(req, owner, current.date, saved.date);
-    if (owner !== current.assignee) tellTasks(req, current.assignee, current.date);
-    teamTaskTouched(req, saved);
-    return saved;
-  });
-
-  app.delete('/api/teams/:id/tasks/:taskId', { schema: { params: teamTaskParams } }, async (req, reply) => {
-    const { team } = teamFor(req, req.params.id, { admin: true });
-    const current = teams.task(team.id, req.params.taskId);
-    if (!current || !repo.remove(current.assignee, current.id)) throw new HttpError(404, 'Task not found');
-    tellTasks(req, current.assignee, current.date);
-    teamTaskTouched(req, current);
-    return reply.code(204).send();
+  // ---- Teams (see teamRoutes.js) -------------------------------------------
+  hooks = registerTeamRoutes(app, {
+    repo, teams, config, clock, tell, tellTasks, tellTeam, isAdminRole, isTeamAdmin, plausibleToday, idParams,
+    filesDir, filePath, writeFileAtomic, removeFiles, changed,
+    publish: (uids, change) => { for (const uid of new Set(uids)) events.publish(uid, change, null); },
   });
 
   // ---- Stats (summary page) -----------------------------------------------

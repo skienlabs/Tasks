@@ -183,6 +183,27 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
     }
     LaunchedEffect(profile.uid) { app.refreshTags() }
 
+    // A notification or an invite link opens Teams (the screen picks the team or the join sheet).
+    val openTeamRequest by app.openTeamRequest.collectAsStateWithLifecycle()
+    val joinRequest by app.joinRequest.collectAsStateWithLifecycle()
+    val openTaskRequest by app.openTaskRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(openTaskRequest, state.tasks.size) {
+        val t = openTaskRequest?.let { state.tasks[it] } ?: return@LaunchedEffect
+        app.openTaskRequest.value = null
+        searching = false
+        tab = TAB_TASKS
+        if (filter != null && filter !in t.tagIds) setFilter(null)
+        app.visibleDate.value = t.date
+        sheet = Sheet.TaskView(t.id, t.date)
+    }
+    LaunchedEffect(openTeamRequest, joinRequest) {
+        if (openTeamRequest != null || joinRequest != null) {
+            searching = false
+            sheet = null
+            tab = TAB_TEAMS
+        }
+    }
+
     // "+" on the widget: open a new task for today.
     val newTaskRequest by app.newTaskRequest.collectAsStateWithLifecycle()
     LaunchedEffect(newTaskRequest) {
@@ -199,6 +220,8 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
     val notifPermission = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
     ) { scope.launch { com.skienlabs.tasks.notify.DailySummary.reschedule(context) } }
+    // Team news while the app is closed (checked about every 15 minutes).
+    LaunchedEffect(profile.uid) { com.skienlabs.tasks.notify.TeamNotices.schedule(context) }
     LaunchedEffect(profile.uid) {
         if (android.os.Build.VERSION.SDK_INT < 33 || com.skienlabs.tasks.notify.DailySummary.canNotify(context)) return@LaunchedEffect
         if (app.prefs.notificationsAsked.first() || !app.prefs.dailySummary.first().enabled) return@LaunchedEffect
@@ -248,6 +271,7 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
         com.skienlabs.tasks.ui.day.LocalGreetingName provides firstName,
         com.skienlabs.tasks.ui.teams.LocalTeams provides teams,
         com.skienlabs.tasks.ui.teams.LocalMyUid provides profile.uid,
+        com.skienlabs.tasks.ui.teams.LocalStore provides store,
     ) {
     Scaffold(
         topBar = {
@@ -274,6 +298,10 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
                         IconButton(onClick = { go(today) }) { Icon(Icons.Outlined.Today, "Go to today") }
                     }
                     SyncBadge(sync)
+                    com.skienlabs.tasks.ui.teams.NotificationsButton(store) { n ->
+                        // My task: open it in its day; anything else about a team: open the team.
+                        app.openNotice(n.taskId, n.teamId)
+                    }
                     IconButton(onClick = { searching = true }) { Icon(Icons.Outlined.Search, "Search tasks") }
                     IconButton(onClick = { sheet = Sheet.Account }) { Avatar(profile, 32.dp) }
                 },
@@ -316,7 +344,8 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
         },
         floatingActionButton = {
             if (tab == TAB_TASKS) {
-                FloatingActionButton(onClick = {
+                val (fabBg, fabFg) = com.skienlabs.tasks.ui.theme.fabColors()
+                FloatingActionButton(containerColor = fabBg, contentColor = fabFg, onClick = {
                     haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
                     sheet = Sheet.TaskEdit(null)
                 }) { Icon(Icons.Filled.Add, "New task") }
@@ -333,22 +362,7 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
                     AnimatedVisibility(profile.provider == "password" && !profile.emailVerified && !hideVerify) {
                         VerifyBanner(profile.email ?: "", onVerify = { sheet = Sheet.Account }, onHide = { scope.launch { app.prefs.setHideVerify(profile.uid) } })
                     }
-                    val density = LocalDensity.current
-                    Box(
-                        // Swipe the week strip sideways to change week.
-                        Modifier.pointerInput(Unit) {
-                            var total = 0f
-                            detectHorizontalDragGestures(
-                                onDragStart = { total = 0f },
-                                onDragEnd = {
-                                    val min = with(density) { 56.dp.toPx() }
-                                    if (abs(total) > min) go(Dates.addDays(app.visibleDate.value, if (total < 0) 7 else -7))
-                                },
-                            ) { _, dx -> total += dx }
-                        },
-                    ) {
-                        WeekStrip(date, today, { state.summary[it] }, ::go)
-                    }
+                    WeekStrip(date, today, { state.summary[it] }, ::go)
                     if (state.tags.isNotEmpty()) {
                         TagFilterRow(state.tags, filter, ::setFilter) { tab = TAB_TAGS }
                     }
@@ -392,7 +406,11 @@ fun HomeScreen(app: AppController, profile: Profile, theme: ThemePref) {
                     tab = TAB_TASKS
                     go(d)
                 }
-                TAB_TEAMS -> com.skienlabs.tasks.ui.teams.TeamsScreen(store, today, profile.uid, com.skienlabs.tasks.BuildConfig.API_URL) { t ->
+                TAB_TEAMS -> com.skienlabs.tasks.ui.teams.TeamsScreen(
+                    store, today, profile.uid, com.skienlabs.tasks.BuildConfig.API_URL,
+                    openTeam = openTeamRequest, joinToken = joinRequest,
+                    onHandled = { app.openTeamRequest.value = null; app.joinRequest.value = null },
+                ) { t ->
                     tab = TAB_TASKS
                     if (filter != null && filter !in t.tagIds) setFilter(null)
                     go(t.date)

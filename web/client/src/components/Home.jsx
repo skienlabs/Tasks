@@ -30,6 +30,8 @@ import ThemePicker from './ThemePicker.jsx';
 const SummaryView = lazy(() => import('./SummaryView.jsx'));
 const TeamsView = lazy(() => import('./teams/TeamsView.jsx'));
 import Logo from './Logo.jsx';
+import NotificationsButton, { useNotificationsPolling } from './Notifications.jsx';
+import JoinDialog, { joinToken } from './JoinDialog.jsx';
 import MiniCalendar from './MiniCalendar.jsx';
 import DayView from './DayView.jsx';
 import TaskDialog from './TaskDialog.jsx';
@@ -39,7 +41,7 @@ import { TagAvatar } from './TagChip.jsx';
 import Toast from './Toast.jsx';
 import { addDays, formatDate, fromKey, isValidKey, monthGrid, startOfWeek, todayKey } from '../lib/dates.js';
 import {
-  areTagsLoaded, flush, isDayLoaded, lastSyncedAt, loadBoard, loadDay, loadSummary, loadTags, loadTeams, loadedDates, selectBoard,
+  areTagsLoaded, commentsChanged, flush, getTask, isDayLoaded, loadNotifications, lastSyncedAt, loadBoard, loadDay, loadSummary, loadTags, loadTeams, loadedDates, selectBoard,
   selectInvites, selectSummary, selectSync, selectTag, selectTags, showToast, syncAll, useStoreVersion,
 } from '../lib/store.js';
 import { startLive } from '../lib/live.js';
@@ -198,6 +200,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
   const [searchOpen, setSearchOpen] = useState(false);
   const [hideVerify, setHideVerify] = useState(() => readPref('tasks.hideVerify') === profile.uid);
   const [blocked, setBlocked] = useState(null); // { kind: 'forbidden' | 'session', message }
+  const [join, setJoin] = useState(() => joinToken()); // opened from a team's invite link
   const [failed, setFailed] = useState(() => new Set()); // days whose load failed
   const addInputRef = useRef(null);
   const editTask = useCallback((task) => setDialog({ task }), []);
@@ -350,7 +353,9 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
     };
     const stop = startLive({
       onChange: (c) => {
-        if (c.type === 'tasks') queue({ tasks: true, dates: c.dates || [] });
+        if (c.type === 'notifications') loadNotifications().catch(() => {});
+        else if (c.type === 'comments') commentsChanged(c);
+        else if (c.type === 'tasks') queue({ tasks: true, dates: c.dates || [] });
         else if (c.type === 'tags') queue({ tags: true, ...(c.tasks ? { tasks: true } : {}) });
         else if (c.type === 'profile') queue({ profile: true });
         else if (c.type === 'invites' || c.type === 'teams') {
@@ -373,6 +378,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
         // Back online: send what was changed offline, then refresh the whole offline copy.
         flush().then(() => syncAll(liveRef.current.today)).catch(() => {});
         queue({ all: true });
+        loadNotifications().catch(() => {});
       },
     });
     return () => {
@@ -414,6 +420,25 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
     selectDate(d);
     setTimeout(() => setSelectedId(id), 0);
   }, [selectDate]);
+
+  // New team news while the app is open: a short toast (the bell keeps the list).
+  useNotificationsPolling(useCallback((fresh) => {
+    if (fresh.length === 1) showToast(fresh[0].title);
+    else showToast(`${fresh.length} new notifications`);
+  }, []));
+
+  /** A notification opens what it's about: my task in its day, or the team. */
+  const openNotification = useCallback((n) => {
+    const mine = n.taskId ? getTask(n.taskId) : null;
+    if (mine) {
+      openFromTeam(mine.date, mine.id);
+      return;
+    }
+    if (n.teamId) {
+      setTeamId(n.teamId);
+      goView('teams');
+    }
+  }, [openFromTeam, goView]);
 
   // Ctrl/Cmd+K opens search from anywhere, even while typing.
   useEffect(() => {
@@ -649,6 +674,7 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
           )}
           <Box sx={{ flex: 1 }} />
           <SyncBadge />
+          <NotificationsButton onOpen={openNotification} />
           <ButtonBase
             onClick={() => setSearchOpen(true)}
             aria-label="Search tasks"
@@ -1000,6 +1026,21 @@ export default function Home({ user, profile, onProfile, mode, themePref, onThem
         photo={user.photoURL}
         onProfile={onProfile}
       />
+      {join && (
+        <JoinDialog
+          token={join}
+          onClose={() => {
+            setJoin(null);
+            window.history.replaceState(null, '', '/');
+          }}
+          onOpenTeam={(id) => {
+            setJoin(null);
+            window.history.replaceState(null, '', '/');
+            setTeamId(id);
+            goView('teams');
+          }}
+        />
+      )}
       <Toast />
     </Box>
   );

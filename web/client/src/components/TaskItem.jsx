@@ -16,6 +16,7 @@ import { ImageStrip, ImageViewer } from './Images.jsx';
 import { carriedLabel, isCarried, shortLabel } from '../lib/dates.js';
 import { completeTask, postponeTask, restoreTask, selectTaskTags, useStoreVersion } from '../lib/store.js';
 import { DueChip, TeamBadge } from './Due.jsx';
+import { ReviewChip, TeamTagChips } from './teams/parts.jsx';
 import { taskAccess } from '../lib/store.js';
 
 function Meta({ icon, children, color = 'text.secondary' }) {
@@ -204,6 +205,8 @@ function TaskItem({ task, today, showOrigin, selected, onSelect, onEdit, onManag
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 0.6 }}>
             {task.dueAt && <DueChip task={task} />}
             {task.teamId && <TeamBadge task={task} />}
+            {task.teamId && <ReviewChip task={task} />}
+            {task.teamId && <TeamTagChips task={task} />}
             {carried && <CarriedBadge task={task} today={today} muted={!pending} tag={tags[0]} />}
           </Box>
         )}
